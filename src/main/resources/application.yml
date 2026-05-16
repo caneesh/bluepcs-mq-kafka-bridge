@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: mq-kafka-bridge
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+
+bridge:
+  kafka:
+    topic: ${KAFKA_TOPIC:bridge-events}
+  hdfs:
+    base-path: ${HDFS_BASE_PATH:/data/bridge/payloads}
+    temp-suffix: .tmp
+    replication: 3
+  api:
+    base-url: ${API_BASE_URL:http://localhost:8080}
+    timeout-seconds: 30
+  ledger:
+    storage-path: ${LEDGER_PATH:/data/bridge/ledger}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.enterprise.bridge: DEBUG
+    org.apache.kafka: WARN
+    org.apache.hadoop: WARN

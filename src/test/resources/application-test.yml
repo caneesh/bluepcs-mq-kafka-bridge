@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: mq-kafka-bridge-test
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+bridge:
+  kafka:
+    topic: test-bridge-events
+    timeout-seconds: 5
+  hdfs:
+    base-path: /tmp/test/hdfs
+    temp-suffix: .tmp
+  api:
+    base-url: http://localhost:8080
+    timeout-seconds: 5
+  ledger:
+    storage-path: /tmp/test/ledger
+  recovery:
+    max-retries: 3
+    interval-ms: 60000
+
+logging:
+  level:
+    com.enterprise.bridge: DEBUG
