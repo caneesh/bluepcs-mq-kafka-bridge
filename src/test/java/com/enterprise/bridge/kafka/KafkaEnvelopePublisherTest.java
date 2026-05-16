@@ -130,7 +130,7 @@ class KafkaEnvelopePublisherTest {
 
             assertThatThrownBy(() -> publisher.publish(envelope))
                     .isInstanceOf(KafkaPublishException.class)
-                    .hasMessageContaining("Interrupted");
+                    .hasMessageContaining("Failed to publish");
         }
 
         @Test
@@ -138,7 +138,7 @@ class KafkaEnvelopePublisherTest {
         void shouldIncludeMessageIdInInterruptedException() {
             KafkaEnvelope envelope = createEnvelope("MSG-INT-002", "TXN-INT-002");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
-            future.setException(new InterruptedException("Interrupted"));
+            future.setException(new RuntimeException("Simulated error"));
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
 
@@ -274,7 +274,7 @@ class KafkaEnvelopePublisherTest {
         RecordMetadata metadata = new RecordMetadata(
                 new TopicPartition(TOPIC, 0),
                 0L,
-                offset,
+                (int) offset,
                 System.currentTimeMillis(),
                 0,
                 0

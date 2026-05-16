@@ -47,6 +47,7 @@ public class RecoveryPolicy {
 
             case COMPLETED:
             case DUPLICATE_DETECTED:
+            case KAFKA_PUBLISHED:
                 return RecoveryAction.NO_ACTION;
 
             case FAILED_PARSE:

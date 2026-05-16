@@ -16,7 +16,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.HexFormat;
 
 @Component
 public class HdfsSafePayloadWriter {
@@ -63,7 +62,6 @@ public class HdfsSafePayloadWriter {
 
             boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
             if (!renamed) {
-                cleanupTempFile(tempPath);
                 throw new HdfsWriteException("Failed to rename temp file to target", targetPath, messageId);
             }
 
@@ -79,6 +77,9 @@ public class HdfsSafePayloadWriter {
 
             return HdfsWriteResult.success(targetPath, checksum, content.length);
 
+        } catch (HdfsWriteException e) {
+            cleanupTempFile(tempPath);
+            throw e;
         } catch (IOException e) {
             cleanupTempFile(tempPath);
             throw new HdfsWriteException("Failed to write payload to HDFS", targetPath, messageId, e);
@@ -112,10 +113,18 @@ public class HdfsSafePayloadWriter {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(content);
-            return HexFormat.of().formatHex(hash);
+            return bytesToHex(hash);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 algorithm not available", e);
         }
+    }
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     private void writeToTempFile(String tempPath, byte[] content, String messageId) throws IOException {

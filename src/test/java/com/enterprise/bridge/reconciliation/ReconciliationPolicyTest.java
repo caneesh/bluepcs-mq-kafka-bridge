@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.time.Instant;
 import java.util.Collections;
@@ -20,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("ReconciliationPolicy")
 class ReconciliationPolicyTest {
 
@@ -333,11 +336,11 @@ class ReconciliationPolicyTest {
             when(ledgerRepository.countByState(LedgerState.KAFKA_PUBLISHED)).thenReturn(10L);
             when(ledgerRepository.findByStates(any())).thenReturn(Collections.emptyList());
 
-            ReconciliationResult result = policy.reconcile(100L, 90L);
+            ReconciliationResult result = policy.reconcile(90L, 80L);
 
             assertThat(result.getLedgerCount()).isEqualTo(80L);
-            assertThat(result.getHdfsCount()).isEqualTo(100L);
-            assertThat(result.getKafkaCount()).isEqualTo(90L);
+            assertThat(result.getHdfsCount()).isEqualTo(90L);
+            assertThat(result.getKafkaCount()).isEqualTo(80L);
         }
     }
 

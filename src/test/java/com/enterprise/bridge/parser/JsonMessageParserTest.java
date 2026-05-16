@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,18 +29,13 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should parse complete payload with all fields")
         void shouldParseCompletePayload() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890",
-                    "timestamp": "2024-01-15T10:30:00Z",
-                    "data": {
-                        "amount": 100.50,
-                        "currency": "USD"
-                    }
-                }
-                """;
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"," +
+                    "\"timestamp\": \"2024-01-15T10:30:00Z\"," +
+                    "\"data\": {\"amount\": 100.50, \"currency\": \"USD\"}" +
+                    "}";
             MqMessage message = createMessage("MSG-001", payload);
 
             ParsedPayload result = parser.parse(message);
@@ -59,13 +53,11 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should parse payload without optional timestamp")
         void shouldParsePayloadWithoutTimestamp() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"" +
+                    "}";
             MqMessage message = createMessage("MSG-002", payload);
 
             ParsedPayload result = parser.parse(message);
@@ -78,13 +70,11 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should parse payload without optional data field")
         void shouldParsePayloadWithoutData() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"" +
+                    "}";
             MqMessage message = createMessage("MSG-003", payload);
 
             ParsedPayload result = parser.parse(message);
@@ -96,14 +86,12 @@ class JsonMessageParserTest {
         @DisplayName("should parse timestamp as epoch milliseconds")
         void shouldParseEpochTimestamp() {
             long epochMillis = 1705315800000L;
-            String payload = String.format("""
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890",
-                    "timestamp": %d
-                }
-                """, epochMillis);
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"," +
+                    "\"timestamp\": " + epochMillis +
+                    "}";
             MqMessage message = createMessage("MSG-004", payload);
 
             ParsedPayload result = parser.parse(message);
@@ -114,20 +102,12 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should parse nested data structures")
         void shouldParseNestedData() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890",
-                    "data": {
-                        "customer": {
-                            "id": "CUST-001",
-                            "name": "John Doe"
-                        },
-                        "items": ["item1", "item2"]
-                    }
-                }
-                """;
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"," +
+                    "\"data\": {\"customer\": {\"id\": \"CUST-001\", \"name\": \"John Doe\"}, \"items\": [\"item1\", \"item2\"]}" +
+                    "}";
             MqMessage message = createMessage("MSG-005", payload);
 
             ParsedPayload result = parser.parse(message);
@@ -155,10 +135,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception for incomplete JSON")
         void shouldThrowForIncompleteJson() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345"
-                """;
+            String payload = "{\"transactionId\": \"TXN-12345\"";
             MqMessage message = createMessage("MSG-ERR-002", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -205,12 +182,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception when transactionId is missing")
         void shouldThrowWhenTransactionIdMissing() {
-            String payload = """
-                {
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{\"eventType\": \"ORDER_CREATED\", \"entityId\": \"ENT-67890\"}";
             MqMessage message = createMessage("MSG-MF-001", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -221,12 +193,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception when eventType is missing")
         void shouldThrowWhenEventTypeMissing() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{\"transactionId\": \"TXN-12345\", \"entityId\": \"ENT-67890\"}";
             MqMessage message = createMessage("MSG-MF-002", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -237,12 +204,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception when entityId is missing")
         void shouldThrowWhenEntityIdMissing() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED"
-                }
-                """;
+            String payload = "{\"transactionId\": \"TXN-12345\", \"eventType\": \"ORDER_CREATED\"}";
             MqMessage message = createMessage("MSG-MF-003", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -253,13 +215,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception when transactionId is null")
         void shouldThrowWhenTransactionIdNull() {
-            String payload = """
-                {
-                    "transactionId": null,
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{\"transactionId\": null, \"eventType\": \"ORDER_CREATED\", \"entityId\": \"ENT-67890\"}";
             MqMessage message = createMessage("MSG-MF-004", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -270,13 +226,7 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should throw exception when eventType is empty string")
         void shouldThrowWhenEventTypeEmpty() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "",
-                    "entityId": "ENT-67890"
-                }
-                """;
+            String payload = "{\"transactionId\": \"TXN-12345\", \"eventType\": \"\", \"entityId\": \"ENT-67890\"}";
             MqMessage message = createMessage("MSG-MF-005", payload);
 
             assertThatThrownBy(() -> parser.parse(message))
@@ -316,14 +266,12 @@ class JsonMessageParserTest {
         @Test
         @DisplayName("should handle invalid timestamp gracefully")
         void shouldHandleInvalidTimestampGracefully() {
-            String payload = """
-                {
-                    "transactionId": "TXN-12345",
-                    "eventType": "ORDER_CREATED",
-                    "entityId": "ENT-67890",
-                    "timestamp": "not-a-timestamp"
-                }
-                """;
+            String payload = "{" +
+                    "\"transactionId\": \"TXN-12345\"," +
+                    "\"eventType\": \"ORDER_CREATED\"," +
+                    "\"entityId\": \"ENT-67890\"," +
+                    "\"timestamp\": \"not-a-timestamp\"" +
+                    "}";
             MqMessage message = createMessage("MSG-TS-001", payload);
 
             ParsedPayload result = parser.parse(message);

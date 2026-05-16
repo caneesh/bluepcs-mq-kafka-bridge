@@ -80,10 +80,18 @@ public class HadoopFileOperations implements HdfsFileOperations {
             while ((bytesRead = inputStream.read(buffer)) != -1) {
                 digest.update(buffer, 0, bytesRead);
             }
-            return java.util.HexFormat.of().formatHex(digest.digest());
+            return bytesToHex(digest.digest());
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IOException("SHA-256 not available", e);
         }
+    }
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 
     @Override

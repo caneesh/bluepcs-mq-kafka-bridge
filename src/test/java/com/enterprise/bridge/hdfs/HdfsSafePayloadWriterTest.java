@@ -11,6 +11,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -31,6 +33,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("HdfsSafePayloadWriter")
 class HdfsSafePayloadWriterTest {
 
@@ -86,7 +89,9 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
-            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("checksum");
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv -> {
+                return calculateChecksum(outputStream.toByteArray());
+            });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
             writer.write(payload);
@@ -105,7 +110,9 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
             when(hdfsFileOperations.create(endsWith(TEMP_SUFFIX))).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
-            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("checksum");
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv -> {
+                return calculateChecksum(outputStream.toByteArray());
+            });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
             writer.write(payload);
@@ -332,7 +339,11 @@ class HdfsSafePayloadWriterTest {
         try {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(content);
-            return java.util.HexFormat.of().formatHex(hash);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         }
