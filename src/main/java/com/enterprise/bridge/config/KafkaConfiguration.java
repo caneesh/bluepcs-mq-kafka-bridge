@@ -39,32 +39,38 @@ public class KafkaConfiguration {
     @Value("${bridge.kafka.request-timeout-ms:30000}")
     private int requestTimeoutMs;
 
-    @Value("${bridge.kafka.security.protocol:PLAINTEXT}")
+    @Value("${bridge.kafka.security-protocol:PLAINTEXT}")
     private String securityProtocol;
 
-    @Value("${bridge.kafka.sasl.mechanism:}")
+    @Value("${bridge.kafka.sasl-mechanism:}")
     private String saslMechanism;
 
-    @Value("${bridge.kafka.sasl.jaas-config:}")
+    @Value("${bridge.kafka.sasl-jaas-config:}")
     private String saslJaasConfig;
 
-    @Value("${bridge.kafka.sasl.kerberos.service-name:}")
+    @Value("${bridge.kafka.kerberos-service-name:}")
     private String kerberosServiceName;
 
-    @Value("${bridge.kafka.ssl.truststore-location:}")
+    @Value("${bridge.kafka.jaas-config-path:}")
+    private String jaasConfigPath;
+
+    @Value("${bridge.kafka.truststore-location:}")
     private String truststoreLocation;
 
-    @Value("${bridge.kafka.ssl.truststore-password:}")
+    @Value("${bridge.kafka.truststore-password:}")
     private String truststorePassword;
 
-    @Value("${bridge.kafka.ssl.keystore-location:}")
+    @Value("${bridge.kafka.keystore-location:}")
     private String keystoreLocation;
 
-    @Value("${bridge.kafka.ssl.keystore-password:}")
+    @Value("${bridge.kafka.keystore-password:}")
     private String keystorePassword;
 
-    @Value("${bridge.kafka.ssl.key-password:}")
+    @Value("${bridge.kafka.key-password:}")
     private String keyPassword;
+
+    @Value("${bridge.kafka.request-size:4194400}")
+    private int requestSize;
 
     private AdminClient adminClient;
 
@@ -83,6 +89,7 @@ public class KafkaConfiguration {
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
         props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs);
+        props.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, requestSize);
 
         addSecurityProperties(props);
 
@@ -120,7 +127,11 @@ public class KafkaConfiguration {
         if (saslMechanism != null && !saslMechanism.isEmpty()) {
             props.put("sasl.mechanism", saslMechanism);
 
-            if (saslJaasConfig != null && !saslJaasConfig.isEmpty()) {
+            // Use file-based JAAS config if path provided (Talend compatibility)
+            if (jaasConfigPath != null && !jaasConfigPath.isEmpty()) {
+                System.setProperty("java.security.auth.login.config", jaasConfigPath);
+                logger.info("Using file-based JAAS config: {}", jaasConfigPath);
+            } else if (saslJaasConfig != null && !saslJaasConfig.isEmpty()) {
                 props.put("sasl.jaas.config", saslJaasConfig);
             }
 

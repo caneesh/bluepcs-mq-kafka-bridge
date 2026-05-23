@@ -1,0 +1,86 @@
+# =============================================================================
+# TEST ENVIRONMENT CONFIGURATION TEMPLATE
+# =============================================================================
+# Use with: --spring.profiles.active=test-env
+# =============================================================================
+
+bridge:
+  validate-only: ${VALIDATE_ONLY:false}
+
+  mq:
+    host: ${MQ_HOST}
+    port: ${MQ_PORT:1414}
+    queue-manager: ${MQ_QUEUE_MANAGER}
+    channel: ${MQ_CHANNEL}
+    queue: ${MQ_QUEUE}
+    username: ${MQ_USERNAME}
+    password: ${MQ_PASSWORD}
+    listener-enabled: ${MQ_LISTENER_ENABLED:false}
+    concurrency: 1
+    receive-timeout: 5000
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    topic: ${KAFKA_TOPIC}
+    audit-topic: ${KAFKA_AUDIT_TOPIC:bridge-audit-test}
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    request-size: 4194400
+    delivery-timeout-ms: 120000
+    request-timeout-ms: 30000
+
+  hdfs:
+    namenode: ${HDFS_NAMENODE}
+    base-path: ${HDFS_BASE_PATH}
+    replication: 2
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:true}
+      principal: ${HDFS_KERBEROS_PRINCIPAL}
+      keytab: ${HDFS_KERBEROS_KEYTAB}
+
+  api:
+    base-url: ${API_BASE_URL}
+    timeout-seconds: 30
+    retry-attempts: 3
+    retry-delay-ms: 1000
+
+  security:
+    token-url: ${OAUTH_TOKEN_URL}
+    client-id: ${OAUTH_CLIENT_ID}
+    client-secret: ${OAUTH_CLIENT_SECRET}
+
+  audit:
+    enabled: true
+
+  recovery:
+    enabled: false
+
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    producer:
+      acks: all
+      retries: 3
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+      ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION}
+      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+
+logging:
+  level:
+    com.enterprise.bridge: DEBUG
+    org.apache.kafka: INFO
+    org.apache.hadoop: INFO
+
+management:
+  endpoint:
+    health:
+      show-details: always
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

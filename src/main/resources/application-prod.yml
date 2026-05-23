@@ -1,61 +1,182 @@
 # Production Environment Profile
-# Requires: All real integrations with hardened settings
+# Generated from Talend property file: prod_product_bluepcs_mq_listener_talend_param.prm
 #
-# MANDATORY - Deployment team must provide:
-# - KAFKA_BOOTSTRAP_SERVERS: Kafka cluster brokers
-# - KAFKA_SECURITY_PROTOCOL: SASL_SSL for production
-# - KAFKA_SASL_MECHANISM: Authentication mechanism (GSSAPI, SCRAM-SHA-512, etc.)
-# - KAFKA_SASL_JAAS_CONFIG: JAAS configuration string
-# - KAFKA_SSL_TRUSTSTORE_LOCATION, KAFKA_SSL_TRUSTSTORE_PASSWORD
-#
-# - HBASE_ZOOKEEPER_QUORUM: ZooKeeper ensemble
-# - HBASE_LEDGER_TABLE: Production table name
-#
-# - HDFS_NAMENODE: NameNode URI
-# - HDFS_BASE_PATH: Production payload path
-# - HDFS_KERBEROS_ENABLED: true for Kerberos clusters
-# - HDFS_KERBEROS_PRINCIPAL, HDFS_KERBEROS_KEYTAB
-# - HADOOP_CONF_DIR: Path to Hadoop configuration
-#
-# - MQ_HOST, MQ_PORT: IBM MQ server
-# - MQ_QUEUE_MANAGER, MQ_CHANNEL: MQ configuration
-# - MQ_USERNAME, MQ_PASSWORD: Service account credentials
-# - MQ_SSL_CIPHER_SUITE: SSL cipher for MQ (if enabled)
-#
-# - API_BASE_URL: Marketing Plan API endpoint
-# - OAUTH_TOKEN_URL: OAuth2 token endpoint
-# - OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET: Service credentials
+# MANDATORY ENVIRONMENT VARIABLES - Deployment team must set:
+# - MQ_PASSWORD: IBM MQ service account password
+# - KAFKA_TRUSTSTORE_PASSWORD: Kafka SSL truststore password
+# - OAUTH_CLIENT_SECRET: OAuth2 client secret for API authentication
+# - API_PASSWORD: Marketing Plan API password
+# - HDFS_KERBEROS_KEYTAB: Path to Kerberos keytab (if different from default)
 
 bridge:
-  hdfs:
-    replication: 3
-  kafka:
-    delivery-timeout-ms: 120000
-    request-timeout-ms: 30000
-  api:
-    timeout-seconds: 30
+  # ============================================================================
+  # IBM MQ Configuration
+  # Source: cv_MQ_* properties from Talend
+  # ============================================================================
   mq:
+    host: ${MQ_HOST:penuslika02.app.hscint.net}
+    port: ${MQ_PORT:1412}
+    queue-manager: ${MQ_QUEUE_MANAGER:MQGP1}
+    channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
+    queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.PROD.BLOB}
+    username: ${MQ_USERNAME:bluepcsapp}
+    password: ${MQ_PASSWORD}
     concurrency: 2
     receive-timeout: 10000
-  recovery:
+    # SSL configuration (if enabled)
+    ssl:
+      enabled: ${MQ_SSL_ENABLED:false}
+      cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
+      truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}
+      truststore-password: ${MQ_SSL_TRUSTSTORE_PASSWORD:}
+
+  # ============================================================================
+  # Kafka Configuration
+  # Source: cv_kfk_* properties from Talend
+  # ============================================================================
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:penuslika02.app.hscint.net:9093,penuslika03.app.hscint.net:9093,penuslika04.app.hscint.net:9093,penuslika05.app.hscint.net:9093,parentlika05.app.hscint.net:9093}
+    topic: ${KAFKA_TOPIC:QDA_PRODUCT_PMM_PRODUCT_GOLD_PRO}
+    audit-topic: ${KAFKA_AUDIT_TOPIC:QDA_PRODUCT_BRIDGE_AUDIT}
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:/datalakedm/prod/gold/integration/conf/product/prod_kfka_jaas_sasl_jaas.conf}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:ep-kafka}
+    # SSL/TLS settings
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    keystore-location: ${KAFKA_KEYSTORE_LOCATION:}
+    keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
+    key-password: ${KAFKA_KEY_PASSWORD:}
+    # Producer settings
+    request-size: ${KAFKA_REQUEST_SIZE:4194400}
+    delivery-timeout-ms: 120000
+    request-timeout-ms: 30000
+    acks: all
+    retries: 5
+
+  # ============================================================================
+  # HDFS Configuration
+  # Source: cv_hfsx_* properties from Talend
+  # ============================================================================
+  hdfs:
+    namenode: ${HDFS_NAMENODE:hdfs://pensulika04.app.hscint.net:8020}
+    base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
+    archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}
+    replication: ${HDFS_REPLICATION:3}
+    temp-suffix: .tmp
+    # Kerberos authentication
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:true}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:e4193139@HSCINT.NET}
+      keytab: ${HDFS_KERBEROS_KEYTAB:/etc/security/keytabs/e4193139.keytab}
+      namenode-principal: ${HDFS_NAMENODE_PRINCIPAL:nn/_HOST@HSCINT.NET}
+      resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:yarn/_HOST@HSCINT.NET}
+
+  # ============================================================================
+  # HBase Configuration (opt-in via 'hbase' profile)
+  # Source: cv_hv_* properties from Talend
+  # ============================================================================
+  hbase:
+    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:penuslika02.app.hscint.net,penuslika03.app.hscint.net,penuslika04.app.hscint.net}
+    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
+    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
+    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
+
+  # ============================================================================
+  # Marketing Plan API Configuration
+  # Source: cv_planitfeb_api_url, cv_security_token_* from Talend
+  # ============================================================================
+  api:
+    base-url: ${API_BASE_URL:https://api-gateway-v2-wv.hscint.net/xps_product_catalog/v3/plans}
+    timeout-seconds: ${API_TIMEOUT_SECONDS:30}
+    retry-attempts: ${API_RETRY_ATTEMPTS:3}
+    retry-delay-ms: ${API_RETRY_DELAY_MS:1000}
+
+  # ============================================================================
+  # OAuth2 Security Configuration
+  # Source: cv_security_token_*, cv_clientSecret, cv_serviceaccount from Talend
+  # ============================================================================
+  security:
+    token-url: ${OAUTH_TOKEN_URL:https://f5-app-gw-api-wv.hscint.net/sts/v6/jwt_clustered_token_internal}
+    client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
+    client-secret: ${OAUTH_CLIENT_SECRET}
+    scope: ${OAUTH_SCOPE:}
+    username: ${API_USERNAME:e4193139}
+    password: ${API_PASSWORD:}
+
+  # ============================================================================
+  # Audit and Logging Configuration
+  # Source: cv_Hive_Audit_tblname, cv_log_file_dir from Talend
+  # ============================================================================
+  audit:
+    hive-table: ${AUDIT_HIVE_TABLE:bluepcs_mq_listener}
     enabled: true
+
+  logging:
+    directory: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}
+
+  # ============================================================================
+  # Recovery Configuration
+  # ============================================================================
+  recovery:
+    enabled: ${RECOVERY_ENABLED:true}
     max-retries: 5
     interval-ms: 120000
 
+# ============================================================================
+# Spring Kafka Configuration
+# ============================================================================
 spring:
   kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:penuslika02.app.hscint.net:9093,penuslika03.app.hscint.net:9093,penuslika04.app.hscint.net:9093,penuslika05.app.hscint.net:9093,parentlika05.app.hscint.net:9093}
     producer:
       acks: all
       retries: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.request.size: ${KAFKA_REQUEST_SIZE:4194400}
+        delivery.timeout.ms: 120000
+        request.timeout.ms: 30000
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+      sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:ep-kafka}
+      ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
+      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+      ssl.keystore.location: ${KAFKA_KEYSTORE_LOCATION:}
+      ssl.keystore.password: ${KAFKA_KEYSTORE_PASSWORD:}
+      ssl.key.password: ${KAFKA_KEY_PASSWORD:}
 
+# ============================================================================
+# Hadoop Configuration
+# ============================================================================
+hadoop:
+  conf-dir: ${HADOOP_CONF_DIR:/etc/hadoop/conf}
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
 logging:
   level:
     com.enterprise.bridge: INFO
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
     org.apache.hbase: WARN
+    com.ibm.mq: WARN
+  file:
+    name: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}/bridge-application.log
 
+# ============================================================================
+# Actuator Configuration
+# ============================================================================
 management:
   endpoint:
     health:
       show-details: when_authorized
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

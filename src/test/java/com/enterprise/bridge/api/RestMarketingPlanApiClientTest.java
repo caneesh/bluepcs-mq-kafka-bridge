@@ -163,8 +163,11 @@ class RestMarketingPlanApiClientTest {
     class ServerErrorHandling {
 
         @Test
-        @DisplayName("should throw retryable exception on 500")
+        @DisplayName("should throw retryable exception on 500 after retries exhausted")
         void shouldThrowRetryableOn500() {
+            // Enqueue enough responses for all retry attempts
+            mockServer.enqueue(new MockResponse().setResponseCode(500));
+            mockServer.enqueue(new MockResponse().setResponseCode(500));
             mockServer.enqueue(new MockResponse().setResponseCode(500));
 
             client = createClient();
@@ -179,8 +182,11 @@ class RestMarketingPlanApiClientTest {
         }
 
         @Test
-        @DisplayName("should throw retryable exception on 503")
+        @DisplayName("should throw retryable exception on 503 after retries exhausted")
         void shouldThrowRetryableOn503() {
+            // Enqueue enough responses for all retry attempts
+            mockServer.enqueue(new MockResponse().setResponseCode(503));
+            mockServer.enqueue(new MockResponse().setResponseCode(503));
             mockServer.enqueue(new MockResponse().setResponseCode(503));
 
             client = createClient();
@@ -195,8 +201,11 @@ class RestMarketingPlanApiClientTest {
         }
 
         @Test
-        @DisplayName("should throw retryable exception on 502")
+        @DisplayName("should throw retryable exception on 502 after retries exhausted")
         void shouldThrowRetryableOn502() {
+            // Enqueue enough responses for all retry attempts
+            mockServer.enqueue(new MockResponse().setResponseCode(502));
+            mockServer.enqueue(new MockResponse().setResponseCode(502));
             mockServer.enqueue(new MockResponse().setResponseCode(502));
 
             client = createClient();

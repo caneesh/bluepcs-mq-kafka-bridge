@@ -10,6 +10,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -31,11 +32,16 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
     private final String baseUrl;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final int retryAttempts;
+    private final long retryDelayMs;
 
+    @Autowired
     public RestMarketingPlanApiClient(
             JwtTokenProvider jwtTokenProvider,
             @Value("${bridge.api.base-url:http://localhost:8080}") String baseUrl,
-            @Value("${bridge.api.timeout-seconds:30}") int timeoutSeconds) {
+            @Value("${bridge.api.timeout-seconds:30}") int timeoutSeconds,
+            @Value("${bridge.api.retry-attempts:3}") int retryAttempts,
+            @Value("${bridge.api.retry-delay-ms:1000}") long retryDelayMs) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.baseUrl = baseUrl;
         this.httpClient = new OkHttpClient.Builder()
@@ -44,6 +50,8 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .build();
         this.objectMapper = new ObjectMapper();
+        this.retryAttempts = retryAttempts;
+        this.retryDelayMs = retryDelayMs;
     }
 
     public RestMarketingPlanApiClient(
@@ -54,18 +62,39 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         this.baseUrl = baseUrl;
         this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper();
+        this.retryAttempts = 3;
+        this.retryDelayMs = 1000;
     }
 
     @Override
     public EnrichmentResult enrich(ParsedPayload payload) throws EnrichmentException {
         String entityId = payload.getEntityId();
+        EnrichmentException lastException = null;
 
+        for (int attempt = 1; attempt <= retryAttempts; attempt++) {
+            try {
+                return attemptEnrich(payload, entityId, attempt);
+            } catch (EnrichmentException e) {
+                lastException = e;
+                if (!e.isRetryable() || attempt >= retryAttempts) {
+                    throw e;
+                }
+                logger.warn("Retryable error on attempt {}/{} for entityId {}: {}",
+                        attempt, retryAttempts, entityId, e.getMessage());
+                sleep(retryDelayMs * attempt);
+            }
+        }
+        throw lastException;
+    }
+
+    private EnrichmentResult attemptEnrich(ParsedPayload payload, String entityId, int attempt)
+            throws EnrichmentException {
         HttpUrl url = HttpUrl.parse(baseUrl + "/api/v1/marketing-plans/" + entityId);
         if (url == null) {
             throw new EnrichmentException("Invalid URL for enrichment", entityId);
         }
 
-        logger.debug("Enriching payload for entityId: {}", entityId);
+        logger.debug("Enriching payload for entityId: {} (attempt {})", entityId, attempt);
 
         Request request = new Request.Builder()
                 .url(url)
@@ -108,6 +137,14 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         } catch (IOException e) {
             logger.error("IO error enriching entityId: {}", entityId, e);
             throw new EnrichmentException("Failed to call enrichment API", entityId, e, true);
+        }
+    }
+
+    private void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

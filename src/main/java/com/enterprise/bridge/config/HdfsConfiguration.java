@@ -39,6 +39,12 @@ public class HdfsConfiguration {
     @Value("${bridge.hdfs.kerberos.keytab:}")
     private String kerberosKeytab;
 
+    @Value("${bridge.hdfs.kerberos.namenode-principal:}")
+    private String namenodePrincipal;
+
+    @Value("${bridge.hdfs.kerberos.resourcemanager-principal:}")
+    private String resourcemanagerPrincipal;
+
     @PostConstruct
     public void validate() {
         if (basePath == null || basePath.isEmpty()) {
@@ -87,6 +93,14 @@ public class HdfsConfiguration {
         if (kerberosEnabled) {
             configuration.set("hadoop.security.authentication", "kerberos");
             configuration.set("hadoop.security.authorization", "true");
+
+            if (namenodePrincipal != null && !namenodePrincipal.isEmpty()) {
+                configuration.set("dfs.namenode.kerberos.principal", namenodePrincipal);
+            }
+            if (resourcemanagerPrincipal != null && !resourcemanagerPrincipal.isEmpty()) {
+                configuration.set("yarn.resourcemanager.principal", resourcemanagerPrincipal);
+            }
+
             UserGroupInformation.setConfiguration(configuration);
             UserGroupInformation.loginUserFromKeytab(kerberosPrincipal, kerberosKeytab);
             logger.info("Logged in to Kerberos as: {}", kerberosPrincipal);

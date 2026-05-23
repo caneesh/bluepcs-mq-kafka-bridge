@@ -8,6 +8,7 @@ import com.enterprise.bridge.ledger.LedgerRepository;
 import com.enterprise.bridge.ledger.LedgerState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Service
+@Profile("local")
 public class RecoveryService {
 
     private static final Logger logger = LoggerFactory.getLogger(RecoveryService.class);
@@ -65,7 +67,7 @@ public class RecoveryService {
     private void publishAudit(String messageId, String transactionId,
                               AuditEventType eventType, String description) {
         AuditEvent event = AuditEvent.builder()
-                .eventId(UUID.randomUUID().toString())
+                .auditEventId(UUID.randomUUID().toString())
                 .messageId(messageId)
                 .transactionId(transactionId)
                 .eventType(eventType)

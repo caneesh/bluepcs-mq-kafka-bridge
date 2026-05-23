@@ -5,6 +5,7 @@ import com.enterprise.bridge.orchestrator.BridgeOrchestrator;
 import com.enterprise.bridge.orchestrator.ProcessingResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,7 @@ import javax.jms.TextMessage;
 import java.time.Instant;
 
 @Component
+@Profile("!local")
 public class MqMessageListener {
 
     private static final Logger logger = LoggerFactory.getLogger(MqMessageListener.class);

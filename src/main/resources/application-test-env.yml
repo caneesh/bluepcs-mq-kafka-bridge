@@ -1,0 +1,116 @@
+# Test Environment Profile
+# Generated from Talend property file: test_product_bluepcs_mq_listener_talend_param.prm
+#
+# Use with: --spring.profiles.active=test-env
+
+bridge:
+  # ============================================================================
+  # IBM MQ Configuration (Test Environment)
+  # ============================================================================
+  mq:
+    host: ${MQ_HOST:teenuslika02.app.test.hscint.net}
+    port: ${MQ_PORT:1412}
+    queue-manager: ${MQ_QUEUE_MANAGER:MQGPT1}
+    channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
+    queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.UAT.BLOB}
+    username: ${MQ_USERNAME:bluepcsapp}
+    password: ${MQ_PASSWORD}
+    concurrency: 1
+    receive-timeout: 5000
+
+  # ============================================================================
+  # Kafka Configuration (Test Environment)
+  # ============================================================================
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:teenuslika02.app.test.hscint.net:9093,teenuslika03.app.test.hscint.net:9093,teenuslika04.app.test.hscint.net:9093}
+    topic: ${KAFKA_TOPIC:MOCK01_PMM_PRODUCT_COLA_TEST}
+    audit-topic: ${KAFKA_AUDIT_TOPIC:MOCK01_BRIDGE_AUDIT_TEST}
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    request-size: 4194400
+    delivery-timeout-ms: 120000
+    request-timeout-ms: 30000
+
+  # ============================================================================
+  # HDFS Configuration (Test Environment)
+  # ============================================================================
+  hdfs:
+    namenode: ${HDFS_NAMENODE:hdfs://teenuslika04.app.test.hscint.net:8020}
+    base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
+    archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}
+    replication: 2
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:true}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:e4193139@HSCTEST.NET}
+      keytab: ${HDFS_KERBEROS_KEYTAB:/etc/security/keytabs/e4193139.keytab}
+      namenode-principal: ${HDFS_NAMENODE_PRINCIPAL:nn/_HOST@HSCTEST.NET}
+      resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:yarn/_HOST@HSCTEST.NET}
+
+  # ============================================================================
+  # HBase Configuration (Test Environment)
+  # ============================================================================
+  hbase:
+    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:teenuslika02.app.test.hscint.net,teenuslika03.app.test.hscint.net,teenuslika04.app.test.hscint.net}
+    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
+
+  # ============================================================================
+  # Marketing Plan API Configuration (Test Environment)
+  # ============================================================================
+  api:
+    base-url: ${API_BASE_URL:https://api-gateway-v2-wv.test.hscint.net/xps_product_catalog/v3/plans}
+    timeout-seconds: 30
+
+  # ============================================================================
+  # OAuth2 Security Configuration (Test Environment)
+  # ============================================================================
+  security:
+    token-url: ${OAUTH_TOKEN_URL:https://f5-app-gw-wv.test.hscint.net/sts/v6/jwt_token_internal}
+    client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
+    client-secret: ${OAUTH_CLIENT_SECRET}
+    username: ${API_USERNAME:e4193139}
+
+  # ============================================================================
+  # Audit Configuration
+  # ============================================================================
+  audit:
+    hive-table: ${AUDIT_HIVE_TABLE:bluepcs_mq_listener}
+    enabled: true
+
+  logging:
+    directory: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}
+
+  recovery:
+    enabled: false
+
+# ============================================================================
+# Spring Kafka Configuration
+# ============================================================================
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:teenuslika02.app.test.hscint.net:9093,teenuslika03.app.test.hscint.net:9093,teenuslika04.app.test.hscint.net:9093}
+    producer:
+      acks: all
+      retries: 3
+    properties:
+      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+      sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+      ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
+      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+logging:
+  level:
+    com.enterprise.bridge: DEBUG
+    org.apache.kafka: INFO
+    org.apache.hadoop: INFO
+
+management:
+  endpoint:
+    health:
+      show-details: always

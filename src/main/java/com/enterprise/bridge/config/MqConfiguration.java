@@ -59,6 +59,12 @@ public class MqConfiguration {
     @Value("${bridge.mq.receive-timeout:5000}")
     private long receiveTimeout;
 
+    @Value("${bridge.mq.listener-enabled:false}")
+    private boolean listenerEnabled;
+
+    @Value("${bridge.validate-only:false}")
+    private boolean validateOnly;
+
     @Bean
     public ConnectionFactory mqConnectionFactory() throws Exception {
         MQConnectionFactory factory = new MQConnectionFactory();
@@ -98,6 +104,18 @@ public class MqConfiguration {
         factory.setConcurrency(String.valueOf(concurrency));
         factory.setReceiveTimeout(receiveTimeout);
         factory.setErrorHandler(t -> logger.error("JMS listener error", t));
+
+        // Disable auto-start if listener is disabled or in validate-only mode
+        boolean shouldStart = listenerEnabled && !validateOnly;
+        factory.setAutoStartup(shouldStart);
+
+        if (validateOnly) {
+            logger.info("JMS listener auto-start DISABLED (validate-only mode)");
+        } else if (!listenerEnabled) {
+            logger.info("JMS listener auto-start DISABLED (bridge.mq.listener-enabled=false)");
+        } else {
+            logger.info("JMS listener auto-start ENABLED");
+        }
 
         logger.info("Configured JMS listener factory with CLIENT_ACKNOWLEDGE and concurrency: {}", concurrency);
         return factory;

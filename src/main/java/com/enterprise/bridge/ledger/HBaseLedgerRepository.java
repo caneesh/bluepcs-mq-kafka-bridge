@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-@Profile("!local")
+@Profile("hbase")
 public class HBaseLedgerRepository implements LedgerRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(HBaseLedgerRepository.class);

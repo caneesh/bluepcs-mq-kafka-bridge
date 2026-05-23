@@ -7,6 +7,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileChecksum;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -24,7 +25,7 @@ public class HadoopFileOperations implements HdfsFileOperations {
     private final Configuration configuration;
     private FileSystem fileSystem;
 
-    public HadoopFileOperations(Configuration configuration) {
+    public HadoopFileOperations(@Qualifier("hadoopConfiguration") Configuration configuration) {
         this.configuration = configuration;
     }
 

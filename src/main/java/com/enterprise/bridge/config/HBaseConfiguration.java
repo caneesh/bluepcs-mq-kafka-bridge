@@ -13,7 +13,7 @@ import javax.annotation.PreDestroy;
 import java.io.IOException;
 
 @Configuration
-@Profile("!local")
+@Profile("hbase")
 public class HBaseConfiguration {
 
     private static final Logger logger = LoggerFactory.getLogger(HBaseConfiguration.class);
