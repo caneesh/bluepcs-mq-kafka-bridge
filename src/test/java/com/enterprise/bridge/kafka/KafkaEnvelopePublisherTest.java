@@ -257,6 +257,7 @@ class KafkaEnvelopePublisherTest {
                 0L,
                 (int) offset,
                 System.currentTimeMillis(),
+                null,  // checksum (deprecated in Kafka 2.8.x)
                 0,
                 0
         );
