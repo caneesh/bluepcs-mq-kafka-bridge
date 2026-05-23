@@ -1,5 +1,6 @@
 package com.enterprise.bridge.hdfs;
 
+import com.enterprise.bridge.core.ProcessingContext;
 import com.enterprise.bridge.model.EnrichedPayload;
 import com.enterprise.bridge.model.HdfsWriteResult;
 import com.enterprise.bridge.model.ParsedPayload;
@@ -57,7 +58,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should write payload and return success result")
         void shouldWritePayloadSuccessfully() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-001", "TXN-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-001", "TXN-001", "event-id-001");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -81,9 +82,28 @@ class HdfsSafePayloadWriterTest {
         }
 
         @Test
+        @DisplayName("should use eventId in file path")
+        void shouldUseEventIdInFilePath() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002", "deterministic-event-id");
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+            when(hdfsFileOperations.exists(anyString())).thenReturn(false);
+            when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv -> {
+                return calculateChecksum(outputStream.toByteArray());
+            });
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+
+            HdfsWriteResult result = writer.write(payload);
+
+            assertThat(result.getHdfsPath()).contains("deterministic-event-id.json");
+        }
+
+        @Test
         @DisplayName("should create parent directories")
         void shouldCreateParentDirectories() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002");
+            EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002", "event-id-002");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -104,7 +124,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should write to temp file first then rename")
         void shouldWriteToTempThenRename() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-003", "TXN-003");
+            EnrichedPayload payload = createEnrichedPayload("MSG-003", "TXN-003", "event-id-003");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -134,7 +154,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should skip write when file already exists")
         void shouldSkipWriteWhenFileExists() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-001", "TXN-DUP-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-001", "TXN-DUP-001", "event-id-dup-001");
             String existingChecksum = "existing-checksum-hash";
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
@@ -154,7 +174,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should return existing path when file exists")
         void shouldReturnExistingPath() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-002", "TXN-DUP-002");
+            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-002", "TXN-DUP-002", "event-id-dup-002");
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
             when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("checksum");
@@ -162,7 +182,7 @@ class HdfsSafePayloadWriterTest {
             HdfsWriteResult result = writer.write(payload);
 
             assertThat(result.getHdfsPath()).contains(BASE_PATH);
-            assertThat(result.getHdfsPath()).contains("TXN-DUP-002");
+            assertThat(result.getHdfsPath()).contains("event-id-dup-002");
         }
     }
 
@@ -173,7 +193,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should cleanup temp file on write failure")
         void shouldCleanupTempFileOnWriteFailure() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-001", "TXN-FAIL-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-001", "TXN-FAIL-001", "event-id-fail-001");
             OutputStream failingStream = new OutputStream() {
                 @Override
                 public void write(int b) throws IOException {
@@ -196,7 +216,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should cleanup temp file on rename failure")
         void shouldCleanupTempFileOnRenameFailure() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-002", "TXN-FAIL-002");
+            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-002", "TXN-FAIL-002", "event-id-fail-002");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(contains(".json"))).thenReturn(false);
@@ -216,7 +236,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should handle cleanup failure gracefully")
         void shouldHandleCleanupFailureGracefully() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-003", "TXN-FAIL-003");
+            EnrichedPayload payload = createEnrichedPayload("MSG-FAIL-003", "TXN-FAIL-003", "event-id-fail-003");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(contains(".json"))).thenReturn(false);
@@ -239,7 +259,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should throw exception when rename returns false")
         void shouldThrowWhenRenameFails() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-REN-001", "TXN-REN-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-REN-001", "TXN-REN-001", "event-id-ren-001");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -256,7 +276,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should include target path in exception")
         void shouldIncludeTargetPathInException() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-REN-002", "TXN-REN-002");
+            EnrichedPayload payload = createEnrichedPayload("MSG-REN-002", "TXN-REN-002", "event-id-ren-002");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -280,7 +300,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should validate checksum after write")
         void shouldValidateChecksumAfterWrite() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-CHK-001", "TXN-CHK-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-CHK-001", "TXN-CHK-001", "event-id-chk-001");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -301,7 +321,7 @@ class HdfsSafePayloadWriterTest {
         @Test
         @DisplayName("should throw exception on checksum mismatch")
         void shouldThrowOnChecksumMismatch() throws IOException {
-            EnrichedPayload payload = createEnrichedPayload("MSG-CHK-002", "TXN-CHK-002");
+            EnrichedPayload payload = createEnrichedPayload("MSG-CHK-002", "TXN-CHK-002", "event-id-chk-002");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
@@ -316,7 +336,7 @@ class HdfsSafePayloadWriterTest {
         }
     }
 
-    private EnrichedPayload createEnrichedPayload(String messageId, String transactionId) {
+    private EnrichedPayload createEnrichedPayload(String messageId, String transactionId, String eventId) {
         ParsedPayload parsed = new ParsedPayload(
                 messageId,
                 transactionId,
@@ -326,8 +346,10 @@ class HdfsSafePayloadWriterTest {
                 Instant.now(),
                 "{\"test\":\"payload\"}"
         );
+        ProcessingContext ctx = new ProcessingContext(eventId, messageId, Instant.now());
         return new EnrichedPayload(
                 parsed,
+                ctx,
                 Map.of("enriched", "data"),
                 "MP-001",
                 "CAMP-001",

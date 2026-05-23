@@ -29,7 +29,9 @@ public class MqMessageListener {
         String messageId = null;
         try {
             if (!(message instanceof TextMessage)) {
-                logger.warn("Received non-text message, skipping: {}", message.getClass().getName());
+                logger.error("Received unsupported message type {}, acknowledging to discard",
+                        message.getClass().getName());
+                message.acknowledge();
                 return;
             }
 
@@ -52,10 +54,7 @@ public class MqMessageListener {
 
             if (result.isSuccessful()) {
                 message.acknowledge();
-                logger.info("Successfully processed and acknowledged message: {}", messageId);
-            } else if (result.isDuplicate()) {
-                message.acknowledge();
-                logger.info("Acknowledged duplicate message: {}", messageId);
+                logger.info("Successfully processed and acknowledged message: eventId={}", result.getEventId());
             } else {
                 logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
                 throw new MqProcessingException("Processing failed: " + result.getErrorCode(),
@@ -65,6 +64,10 @@ public class MqMessageListener {
         } catch (JMSException e) {
             logger.error("JMS exception processing message: {}", messageId, e);
             throw new MqProcessingException("JMS error", messageId, e.getMessage(), e);
+        } catch (RuntimeException e) {
+            logger.error("Unexpected error processing message {}, will not acknowledge for redelivery",
+                    messageId, e);
+            throw e;
         }
     }
 

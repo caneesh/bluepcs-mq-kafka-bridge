@@ -4,16 +4,16 @@ import java.util.Objects;
 
 public final class ProcessingResult {
 
-    private final String messageId;
+    private final String eventId;
     private final Status status;
     private final String hdfsPath;
     private final String kafkaOffset;
     private final String errorCode;
     private final String errorMessage;
 
-    private ProcessingResult(String messageId, Status status, String hdfsPath,
+    private ProcessingResult(String eventId, Status status, String hdfsPath,
                              String kafkaOffset, String errorCode, String errorMessage) {
-        this.messageId = Objects.requireNonNull(messageId, "messageId must not be null");
+        this.eventId = Objects.requireNonNull(eventId, "eventId must not be null");
         this.status = Objects.requireNonNull(status, "status must not be null");
         this.hdfsPath = hdfsPath;
         this.kafkaOffset = kafkaOffset;
@@ -21,20 +21,16 @@ public final class ProcessingResult {
         this.errorMessage = errorMessage;
     }
 
-    public static ProcessingResult success(String messageId, String hdfsPath, String kafkaOffset) {
-        return new ProcessingResult(messageId, Status.SUCCESS, hdfsPath, kafkaOffset, null, null);
+    public static ProcessingResult success(String eventId, String hdfsPath, String kafkaOffset) {
+        return new ProcessingResult(eventId, Status.SUCCESS, hdfsPath, kafkaOffset, null, null);
     }
 
-    public static ProcessingResult failure(String messageId, String errorCode, String errorMessage) {
-        return new ProcessingResult(messageId, Status.FAILURE, null, null, errorCode, errorMessage);
+    public static ProcessingResult failure(String eventId, String errorCode, String errorMessage) {
+        return new ProcessingResult(eventId, Status.FAILURE, null, null, errorCode, errorMessage);
     }
 
-    public static ProcessingResult duplicate(String messageId) {
-        return new ProcessingResult(messageId, Status.DUPLICATE, null, null, null, null);
-    }
-
-    public String getMessageId() {
-        return messageId;
+    public String getEventId() {
+        return eventId;
     }
 
     public Status getStatus() {
@@ -65,14 +61,10 @@ public final class ProcessingResult {
         return status == Status.FAILURE;
     }
 
-    public boolean isDuplicate() {
-        return status == Status.DUPLICATE;
-    }
-
     @Override
     public String toString() {
         return "ProcessingResult{" +
-                "messageId='" + messageId + '\'' +
+                "eventId='" + eventId + '\'' +
                 ", status=" + status +
                 ", hdfsPath='" + hdfsPath + '\'' +
                 ", kafkaOffset='" + kafkaOffset + '\'' +
@@ -82,7 +74,6 @@ public final class ProcessingResult {
 
     public enum Status {
         SUCCESS,
-        FAILURE,
-        DUPLICATE
+        FAILURE
     }
 }

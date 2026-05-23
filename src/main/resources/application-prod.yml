@@ -1,0 +1,61 @@
+# Production Environment Profile
+# Requires: All real integrations with hardened settings
+#
+# MANDATORY - Deployment team must provide:
+# - KAFKA_BOOTSTRAP_SERVERS: Kafka cluster brokers
+# - KAFKA_SECURITY_PROTOCOL: SASL_SSL for production
+# - KAFKA_SASL_MECHANISM: Authentication mechanism (GSSAPI, SCRAM-SHA-512, etc.)
+# - KAFKA_SASL_JAAS_CONFIG: JAAS configuration string
+# - KAFKA_SSL_TRUSTSTORE_LOCATION, KAFKA_SSL_TRUSTSTORE_PASSWORD
+#
+# - HBASE_ZOOKEEPER_QUORUM: ZooKeeper ensemble
+# - HBASE_LEDGER_TABLE: Production table name
+#
+# - HDFS_NAMENODE: NameNode URI
+# - HDFS_BASE_PATH: Production payload path
+# - HDFS_KERBEROS_ENABLED: true for Kerberos clusters
+# - HDFS_KERBEROS_PRINCIPAL, HDFS_KERBEROS_KEYTAB
+# - HADOOP_CONF_DIR: Path to Hadoop configuration
+#
+# - MQ_HOST, MQ_PORT: IBM MQ server
+# - MQ_QUEUE_MANAGER, MQ_CHANNEL: MQ configuration
+# - MQ_USERNAME, MQ_PASSWORD: Service account credentials
+# - MQ_SSL_CIPHER_SUITE: SSL cipher for MQ (if enabled)
+#
+# - API_BASE_URL: Marketing Plan API endpoint
+# - OAUTH_TOKEN_URL: OAuth2 token endpoint
+# - OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET: Service credentials
+
+bridge:
+  hdfs:
+    replication: 3
+  kafka:
+    delivery-timeout-ms: 120000
+    request-timeout-ms: 30000
+  api:
+    timeout-seconds: 30
+  mq:
+    concurrency: 2
+    receive-timeout: 10000
+  recovery:
+    enabled: true
+    max-retries: 5
+    interval-ms: 120000
+
+spring:
+  kafka:
+    producer:
+      acks: all
+      retries: 5
+
+logging:
+  level:
+    com.enterprise.bridge: INFO
+    org.apache.kafka: WARN
+    org.apache.hadoop: WARN
+    org.apache.hbase: WARN
+
+management:
+  endpoint:
+    health:
+      show-details: when_authorized

@@ -1,5 +1,6 @@
 package com.enterprise.bridge.kafka;
 
+import com.enterprise.bridge.core.ProcessingContext;
 import com.enterprise.bridge.model.EnrichedPayload;
 import com.enterprise.bridge.model.HdfsWriteResult;
 import com.enterprise.bridge.model.KafkaEnvelope;
@@ -31,15 +32,16 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should create envelope with all fields from enriched payload")
         void shouldCreateEnvelopeWithAllFields() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-001", "TXN-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-001", "TXN-001", "event-id-001");
             HdfsWriteResult hdfsResult = HdfsWriteResult.success(
-                    "/data/bridge/payloads/2024/01/15/TXN-001_MSG-001.json",
+                    "/data/bridge/payloads/2024/01/15/event-id-001.json",
                     "abc123checksum",
                     1024
             );
 
             KafkaEnvelope envelope = factory.createEnvelope(payload, hdfsResult);
 
+            assertThat(envelope.getEventId()).isEqualTo("event-id-001");
             assertThat(envelope.getMessageId()).isEqualTo("MSG-001");
             assertThat(envelope.getTransactionId()).isEqualTo("TXN-001");
             assertThat(envelope.getEventType()).isEqualTo("ORDER_CREATED");
@@ -51,8 +53,8 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should propagate HDFS path to envelope")
         void shouldPropagateHdfsPath() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002");
-            String expectedPath = "/data/bridge/payloads/2024/01/15/TXN-002_MSG-002.json";
+            EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002", "event-id-002");
+            String expectedPath = "/data/bridge/payloads/2024/01/15/event-id-002.json";
             HdfsWriteResult hdfsResult = HdfsWriteResult.success(expectedPath, "checksum", 512);
 
             KafkaEnvelope envelope = factory.createEnvelope(payload, hdfsResult);
@@ -63,7 +65,7 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should propagate checksum to envelope")
         void shouldPropagateChecksum() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-003", "TXN-003");
+            EnrichedPayload payload = createEnrichedPayload("MSG-003", "TXN-003", "event-id-003");
             String expectedChecksum = "sha256-abcdef123456789";
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", expectedChecksum, 256);
 
@@ -75,7 +77,7 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should set processedAt timestamp")
         void shouldSetProcessedAtTimestamp() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-004", "TXN-004");
+            EnrichedPayload payload = createEnrichedPayload("MSG-004", "TXN-004", "event-id-004");
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
             Instant before = Instant.now();
@@ -90,7 +92,7 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should set schema version")
         void shouldSetSchemaVersion() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-005", "TXN-005");
+            EnrichedPayload payload = createEnrichedPayload("MSG-005", "TXN-005", "event-id-005");
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
             KafkaEnvelope envelope = factory.createEnvelope(payload, hdfsResult);
@@ -106,8 +108,9 @@ class KafkaEnvelopeFactoryTest {
                     "MSG-006", "TXN-006", "ORDER_CREATED", "ENT-001",
                     Map.of(), eventTime, "{}"
             );
+            ProcessingContext ctx = new ProcessingContext("event-id-006", "MSG-006", Instant.now());
             EnrichedPayload payload = new EnrichedPayload(
-                    parsed, Map.of(), "MP-001", "CAMP-001", Instant.now()
+                    parsed, ctx, Map.of(), "MP-001", "CAMP-001", Instant.now()
             );
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
@@ -122,31 +125,33 @@ class KafkaEnvelopeFactoryTest {
     class KafkaKeyGeneration {
 
         @Test
-        @DisplayName("should generate correct kafka key format")
-        void shouldGenerateCorrectKafkaKey() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-KEY-001", "TXN-KEY-001");
+        @DisplayName("should use eventId as kafka key")
+        void shouldUseEventIdAsKafkaKey() {
+            EnrichedPayload payload = createEnrichedPayload("MSG-KEY-001", "TXN-KEY-001", "event-id-key-001");
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
             KafkaEnvelope envelope = factory.createEnvelope(payload, hdfsResult);
 
-            assertThat(envelope.getKafkaKey()).isEqualTo("ENT-001:TXN-KEY-001");
+            assertThat(envelope.getKafkaKey()).isEqualTo("event-id-key-001");
         }
 
         @Test
-        @DisplayName("should use entityId and transactionId for key")
-        void shouldUseEntityAndTransactionForKey() {
+        @DisplayName("should include originalMqMessageId and bridgeMessageId")
+        void shouldIncludeOriginalMqMessageIdAndBridgeMessageId() {
             ParsedPayload parsed = new ParsedPayload(
                     "MSG-002", "TRANSACTION-ABC", "EVENT", "ENTITY-XYZ",
                     Map.of(), Instant.now(), "{}"
             );
+            ProcessingContext ctx = new ProcessingContext("deterministic-event-id", "MSG-002", Instant.now());
             EnrichedPayload payload = new EnrichedPayload(
-                    parsed, Map.of(), null, null, Instant.now()
+                    parsed, ctx, Map.of(), null, null, Instant.now()
             );
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
             KafkaEnvelope envelope = factory.createEnvelope(payload, hdfsResult);
 
-            assertThat(envelope.getKafkaKey()).isEqualTo("ENTITY-XYZ:TRANSACTION-ABC");
+            assertThat(envelope.getOriginalMqMessageId()).isEqualTo("MSG-002");
+            assertThat(envelope.getBridgeMessageId()).isNotNull();
         }
     }
 
@@ -157,7 +162,7 @@ class KafkaEnvelopeFactoryTest {
         @Test
         @DisplayName("should create envelope from alreadyExists result")
         void shouldCreateEnvelopeFromAlreadyExistsResult() {
-            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-001", "TXN-DUP-001");
+            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-001", "TXN-DUP-001", "event-id-dup-001");
             HdfsWriteResult hdfsResult = HdfsWriteResult.alreadyExists(
                     "/data/existing/file.json",
                     "existing-checksum"
@@ -167,7 +172,7 @@ class KafkaEnvelopeFactoryTest {
 
             assertThat(envelope.getHdfsPath()).isEqualTo("/data/existing/file.json");
             assertThat(envelope.getChecksum()).isEqualTo("existing-checksum");
-            assertThat(envelope.getMessageId()).isEqualTo("MSG-DUP-001");
+            assertThat(envelope.getEventId()).isEqualTo("event-id-dup-001");
         }
     }
 
@@ -182,8 +187,9 @@ class KafkaEnvelopeFactoryTest {
                     "MSG-001", "TXN-001", "EVENT", "ENT-001",
                     Map.of(), Instant.now(), "{}"
             );
+            ProcessingContext ctx = new ProcessingContext("event-id-001", "MSG-001", Instant.now());
             EnrichedPayload payload = new EnrichedPayload(
-                    parsed, Map.of(), null, "CAMP-001", Instant.now()
+                    parsed, ctx, Map.of(), null, "CAMP-001", Instant.now()
             );
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
@@ -200,8 +206,9 @@ class KafkaEnvelopeFactoryTest {
                     "MSG-001", "TXN-001", "EVENT", "ENT-001",
                     Map.of(), Instant.now(), "{}"
             );
+            ProcessingContext ctx = new ProcessingContext("event-id-001", "MSG-001", Instant.now());
             EnrichedPayload payload = new EnrichedPayload(
-                    parsed, Map.of(), "MP-001", null, Instant.now()
+                    parsed, ctx, Map.of(), "MP-001", null, Instant.now()
             );
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 100);
 
@@ -212,7 +219,7 @@ class KafkaEnvelopeFactoryTest {
         }
     }
 
-    private EnrichedPayload createEnrichedPayload(String messageId, String transactionId) {
+    private EnrichedPayload createEnrichedPayload(String messageId, String transactionId, String eventId) {
         ParsedPayload parsed = new ParsedPayload(
                 messageId,
                 transactionId,
@@ -222,8 +229,10 @@ class KafkaEnvelopeFactoryTest {
                 Instant.now(),
                 "{\"test\":\"payload\"}"
         );
+        ProcessingContext ctx = new ProcessingContext(eventId, messageId, Instant.now());
         return new EnrichedPayload(
                 parsed,
+                ctx,
                 Map.of("enriched", "data"),
                 "MP-001",
                 "CAMP-001",

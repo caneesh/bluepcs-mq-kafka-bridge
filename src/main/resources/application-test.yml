@@ -1,0 +1,23 @@
+# Test Environment Profile
+# Requires: All real integrations (Kafka, HBase, MQ, HDFS, REST API)
+#
+# Deployment team must provide:
+# - KAFKA_BOOTSTRAP_SERVERS
+# - HBASE_ZOOKEEPER_QUORUM
+# - HDFS_NAMENODE, HDFS_BASE_PATH
+# - MQ_HOST, MQ_PORT, MQ_QUEUE_MANAGER, MQ_CHANNEL, MQ_USERNAME, MQ_PASSWORD
+# - API_BASE_URL
+# - OAUTH_TOKEN_URL, OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET
+
+bridge:
+  hdfs:
+    replication: 2
+  mq:
+    concurrency: 1
+  recovery:
+    max-retries: 3
+    interval-ms: 30000
+
+logging:
+  level:
+    com.enterprise.bridge: INFO

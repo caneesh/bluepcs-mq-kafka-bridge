@@ -1,5 +1,7 @@
 package com.enterprise.bridge.model;
 
+import com.enterprise.bridge.core.ProcessingContext;
+
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
@@ -8,14 +10,17 @@ import java.util.Objects;
 public final class EnrichedPayload {
 
     private final ParsedPayload parsedPayload;
+    private final ProcessingContext processingContext;
     private final Map<String, Object> enrichmentData;
     private final String marketingPlanId;
     private final String campaignId;
     private final Instant enrichedAt;
 
-    public EnrichedPayload(ParsedPayload parsedPayload, Map<String, Object> enrichmentData,
-                           String marketingPlanId, String campaignId, Instant enrichedAt) {
+    public EnrichedPayload(ParsedPayload parsedPayload, ProcessingContext processingContext,
+                           Map<String, Object> enrichmentData, String marketingPlanId,
+                           String campaignId, Instant enrichedAt) {
         this.parsedPayload = Objects.requireNonNull(parsedPayload, "parsedPayload must not be null");
+        this.processingContext = Objects.requireNonNull(processingContext, "processingContext must not be null");
         this.enrichmentData = enrichmentData != null ? Collections.unmodifiableMap(enrichmentData) : Collections.emptyMap();
         this.marketingPlanId = marketingPlanId;
         this.campaignId = campaignId;
@@ -24,6 +29,10 @@ public final class EnrichedPayload {
 
     public ParsedPayload getParsedPayload() {
         return parsedPayload;
+    }
+
+    public ProcessingContext getProcessingContext() {
+        return processingContext;
     }
 
     public Map<String, Object> getEnrichmentData() {
@@ -40,6 +49,18 @@ public final class EnrichedPayload {
 
     public Instant getEnrichedAt() {
         return enrichedAt;
+    }
+
+    public String getEventId() {
+        return processingContext.getEventId();
+    }
+
+    public String getBridgeMessageId() {
+        return processingContext.getBridgeMessageId();
+    }
+
+    public String getOriginalMqMessageId() {
+        return processingContext.getOriginalMqMessageId();
     }
 
     public String getMessageId() {
@@ -67,18 +88,19 @@ public final class EnrichedPayload {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         EnrichedPayload that = (EnrichedPayload) o;
-        return Objects.equals(parsedPayload, that.parsedPayload);
+        return Objects.equals(processingContext.getEventId(), that.processingContext.getEventId());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(parsedPayload);
+        return Objects.hash(processingContext.getEventId());
     }
 
     @Override
     public String toString() {
         return "EnrichedPayload{" +
-                "parsedPayload=" + parsedPayload +
+                "eventId='" + processingContext.getEventId() + '\'' +
+                ", transactionId='" + parsedPayload.getTransactionId() + '\'' +
                 ", marketingPlanId='" + marketingPlanId + '\'' +
                 ", campaignId='" + campaignId + '\'' +
                 ", enrichedAt=" + enrichedAt +

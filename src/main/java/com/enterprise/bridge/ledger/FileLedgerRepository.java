@@ -5,6 +5,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Repository;
 
 import javax.annotation.PostConstruct;
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Repository
+@Profile("file-ledger")
 public class FileLedgerRepository implements LedgerRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(FileLedgerRepository.class);
@@ -50,11 +53,29 @@ public class FileLedgerRepository implements LedgerRepository {
         try {
             if (Files.exists(storagePath)) {
                 Files.list(storagePath)
-                        .filter(p -> p.toString().endsWith(".json"))
+                        .filter(p -> p.toString().endsWith(".json") && !p.toString().endsWith(".tmp"))
                         .forEach(this::loadEntry);
+                cleanupOrphanedTempFiles();
             }
         } catch (IOException e) {
             logger.error("Failed to load existing ledger entries", e);
+        }
+    }
+
+    private void cleanupOrphanedTempFiles() {
+        try {
+            Files.list(storagePath)
+                    .filter(p -> p.toString().endsWith(".json.tmp"))
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                            logger.warn("Cleaned up orphaned temp file: {}", p);
+                        } catch (IOException e) {
+                            logger.error("Failed to cleanup temp file: {}", p, e);
+                        }
+                    });
+        } catch (IOException e) {
+            logger.error("Failed to cleanup orphaned temp files", e);
         }
     }
 
@@ -82,10 +103,14 @@ public class FileLedgerRepository implements LedgerRepository {
     private void persistEntry(LedgerEntry entry) {
         try {
             Path entryPath = storagePath.resolve(entry.getMessageId() + ".json");
+            Path tempPath = storagePath.resolve(entry.getMessageId() + ".json.tmp");
             String json = objectMapper.writeValueAsString(entry);
-            Files.writeString(entryPath, json,
+            Files.writeString(tempPath, json,
                     StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING);
+            Files.move(tempPath, entryPath,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             logger.error("Failed to persist ledger entry: {}", entry.getMessageId(), e);
             throw new RuntimeException("Failed to persist ledger entry", e);
@@ -132,12 +157,13 @@ public class FileLedgerRepository implements LedgerRepository {
 
     @Override
     public void delete(String messageId) {
-        cache.remove(messageId);
         try {
             Path entryPath = storagePath.resolve(messageId + ".json");
             Files.deleteIfExists(entryPath);
+            cache.remove(messageId);
         } catch (IOException e) {
-            logger.error("Failed to delete ledger entry: {}", messageId, e);
+            logger.error("Failed to delete ledger entry file: {}", messageId, e);
+            throw new RuntimeException("Failed to delete ledger entry", e);
         }
     }
 }

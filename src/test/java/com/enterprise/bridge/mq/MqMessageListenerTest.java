@@ -59,7 +59,7 @@ class MqMessageListenerTest {
             when(textMessage.getJMSDestination()).thenReturn(destination);
             when(destination.toString()).thenReturn("TEST.QUEUE");
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-001", "/path/file.json", "12345")
+                    ProcessingResult.success("event-id-001", "/path/file.json", "12345")
             );
             doNothing().when(textMessage).acknowledge();
 
@@ -78,7 +78,7 @@ class MqMessageListenerTest {
             when(textMessage.getJMSDestination()).thenReturn(destination);
             when(destination.toString()).thenReturn("INPUT.QUEUE");
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-002", "/path", "123")
+                    ProcessingResult.success("event-id-002", "/path", "123")
             );
             doNothing().when(textMessage).acknowledge();
 
@@ -107,24 +107,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-ACK-001", "/path", "123")
-            );
-            doNothing().when(textMessage).acknowledge();
-
-            listener.onMessage(textMessage);
-
-            verify(textMessage).acknowledge();
-        }
-
-        @Test
-        @DisplayName("should acknowledge duplicate messages")
-        void shouldAcknowledgeDuplicateMessages() throws JMSException {
-            when(textMessage.getJMSMessageID()).thenReturn("MSG-ACK-002");
-            when(textMessage.getJMSCorrelationID()).thenReturn(null);
-            when(textMessage.getText()).thenReturn("{}");
-            when(textMessage.getJMSDestination()).thenReturn(null);
-            when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.duplicate("MSG-ACK-002")
+                    ProcessingResult.success("event-id-ack-001", "/path", "123")
             );
             doNothing().when(textMessage).acknowledge();
 
@@ -141,7 +124,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.failure("MSG-ACK-003", "ERROR", "Processing failed")
+                    ProcessingResult.failure("event-id-ack-003", "ERROR", "Processing failed")
             );
 
             assertThatThrownBy(() -> listener.onMessage(textMessage))
@@ -163,7 +146,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.failure("MSG-EXC-001", "PARSE_ERROR", "Invalid JSON")
+                    ProcessingResult.failure("event-id-exc-001", "PARSE_ERROR", "Invalid JSON")
             );
 
             assertThatThrownBy(() -> listener.onMessage(textMessage))
@@ -179,7 +162,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.failure("MSG-EXC-002", "ERROR", "Failed")
+                    ProcessingResult.failure("event-id-exc-002", "ERROR", "Failed")
             );
 
             assertThatThrownBy(() -> listener.onMessage(textMessage))
@@ -236,7 +219,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-JMS-003", "/path", "123")
+                    ProcessingResult.success("event-id-jms-003", "/path", "123")
             );
             doThrow(new JMSException("Acknowledge failed")).when(textMessage).acknowledge();
 
@@ -293,7 +276,7 @@ class MqMessageListenerTest {
             when(textMessage.getJMSDestination()).thenReturn(destination);
             when(destination.toString()).thenReturn("queue://BRIDGE.INPUT.QUEUE");
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-Q-001", "/path", "123")
+                    ProcessingResult.success("event-id-q-001", "/path", "123")
             );
             doNothing().when(textMessage).acknowledge();
 
@@ -314,7 +297,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenReturn(null);
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-Q-002", "/path", "123")
+                    ProcessingResult.success("event-id-q-002", "/path", "123")
             );
             doNothing().when(textMessage).acknowledge();
 
@@ -335,7 +318,7 @@ class MqMessageListenerTest {
             when(textMessage.getText()).thenReturn("{}");
             when(textMessage.getJMSDestination()).thenThrow(new JMSException("Destination unavailable"));
             when(orchestrator.process(any())).thenReturn(
-                    ProcessingResult.success("MSG-Q-003", "/path", "123")
+                    ProcessingResult.success("event-id-q-003", "/path", "123")
             );
             doNothing().when(textMessage).acknowledge();
 

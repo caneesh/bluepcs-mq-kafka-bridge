@@ -14,16 +14,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.ListenableFuture;
 import org.springframework.util.concurrent.SettableListenableFuture;
 
 import java.time.Instant;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -53,7 +49,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should publish envelope and return offset")
         void shouldPublishEnvelopeAndReturnOffset() throws Exception {
-            KafkaEnvelope envelope = createEnvelope("MSG-001", "TXN-001");
+            KafkaEnvelope envelope = createEnvelope("event-id-001", "MSG-001", "TXN-001");
             long expectedOffset = 12345L;
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(expectedOffset);
 
@@ -65,10 +61,9 @@ class KafkaEnvelopePublisherTest {
         }
 
         @Test
-        @DisplayName("should use correct key for message")
-        void shouldUseCorrectKeyForMessage() throws Exception {
-            KafkaEnvelope envelope = createEnvelope("MSG-002", "TXN-002");
-            String expectedKey = envelope.getKafkaKey();
+        @DisplayName("should use eventId as kafka key")
+        void shouldUseEventIdAsKafkaKey() throws Exception {
+            KafkaEnvelope envelope = createEnvelope("deterministic-event-id", "MSG-002", "TXN-002");
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(100L);
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
@@ -77,13 +72,13 @@ class KafkaEnvelopePublisherTest {
 
             ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
             verify(kafkaTemplate).send(eq(TOPIC), keyCaptor.capture(), anyString());
-            assertThat(keyCaptor.getValue()).isEqualTo(expectedKey);
+            assertThat(keyCaptor.getValue()).isEqualTo("deterministic-event-id");
         }
 
         @Test
         @DisplayName("should serialize envelope to JSON")
         void shouldSerializeEnvelopeToJson() throws Exception {
-            KafkaEnvelope envelope = createEnvelope("MSG-003", "TXN-003");
+            KafkaEnvelope envelope = createEnvelope("event-id-003", "MSG-003", "TXN-003");
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(100L);
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
@@ -94,17 +89,20 @@ class KafkaEnvelopePublisherTest {
             verify(kafkaTemplate).send(eq(TOPIC), anyString(), payloadCaptor.capture());
 
             String payload = payloadCaptor.getValue();
+            assertThat(payload).contains("\"eventId\":\"event-id-003\"");
             assertThat(payload).contains("\"messageId\":\"MSG-003\"");
             assertThat(payload).contains("\"transactionId\":\"TXN-003\"");
             assertThat(payload).contains("\"eventType\":\"ORDER_CREATED\"");
             assertThat(payload).contains("\"hdfsPath\":");
             assertThat(payload).contains("\"checksum\":");
+            assertThat(payload).contains("\"originalMqMessageId\":");
+            assertThat(payload).contains("\"bridgeMessageId\":");
         }
 
         @Test
         @DisplayName("should send to correct topic")
         void shouldSendToCorrectTopic() throws Exception {
-            KafkaEnvelope envelope = createEnvelope("MSG-004", "TXN-004");
+            KafkaEnvelope envelope = createEnvelope("event-id-004", "MSG-004", "TXN-004");
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(100L);
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
@@ -122,7 +120,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should throw KafkaPublishException when interrupted")
         void shouldThrowWhenInterrupted() {
-            KafkaEnvelope envelope = createEnvelope("MSG-INT-001", "TXN-INT-001");
+            KafkaEnvelope envelope = createEnvelope("event-id-int-001", "MSG-INT-001", "TXN-INT-001");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(new InterruptedException("Interrupted"));
 
@@ -136,7 +134,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should include messageId in exception for interrupted")
         void shouldIncludeMessageIdInInterruptedException() {
-            KafkaEnvelope envelope = createEnvelope("MSG-INT-002", "TXN-INT-002");
+            KafkaEnvelope envelope = createEnvelope("event-id-int-002", "MSG-INT-002", "TXN-INT-002");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(new RuntimeException("Simulated error"));
 
@@ -156,7 +154,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should throw KafkaPublishException on execution error")
         void shouldThrowOnExecutionError() {
-            KafkaEnvelope envelope = createEnvelope("MSG-EXE-001", "TXN-EXE-001");
+            KafkaEnvelope envelope = createEnvelope("event-id-exe-001", "MSG-EXE-001", "TXN-EXE-001");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(new RuntimeException("Broker not available"));
 
@@ -170,7 +168,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should wrap cause in KafkaPublishException")
         void shouldWrapCauseInException() {
-            KafkaEnvelope envelope = createEnvelope("MSG-EXE-002", "TXN-EXE-002");
+            KafkaEnvelope envelope = createEnvelope("event-id-exe-002", "MSG-EXE-002", "TXN-EXE-002");
             RuntimeException cause = new RuntimeException("Original cause");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(cause);
@@ -185,7 +183,7 @@ class KafkaEnvelopePublisherTest {
         @Test
         @DisplayName("should include topic in exception")
         void shouldIncludeTopicInException() {
-            KafkaEnvelope envelope = createEnvelope("MSG-EXE-003", "TXN-EXE-003");
+            KafkaEnvelope envelope = createEnvelope("event-id-exe-003", "MSG-EXE-003", "TXN-EXE-003");
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(new RuntimeException("Error"));
 
@@ -203,19 +201,9 @@ class KafkaEnvelopePublisherTest {
     class KeyCorrectness {
 
         @Test
-        @DisplayName("should use entityId:transactionId as key")
-        void shouldUseEntityIdTransactionIdAsKey() throws Exception {
-            KafkaEnvelope envelope = KafkaEnvelope.builder()
-                    .messageId("MSG-KEY-001")
-                    .transactionId("TXN-KEY-001")
-                    .eventType("EVENT")
-                    .entityId("ENTITY-KEY-001")
-                    .hdfsPath("/path/file.json")
-                    .checksum("checksum")
-                    .eventTimestamp(Instant.now())
-                    .processedAt(Instant.now())
-                    .schemaVersion("1.0")
-                    .build();
+        @DisplayName("should use eventId as key for deduplication")
+        void shouldUseEventIdAsKey() throws Exception {
+            KafkaEnvelope envelope = createEnvelope("sha256-deterministic-key", "MSG-KEY-001", "TXN-KEY-001");
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(100L);
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
@@ -224,23 +212,13 @@ class KafkaEnvelopePublisherTest {
 
             ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
             verify(kafkaTemplate).send(eq(TOPIC), keyCaptor.capture(), anyString());
-            assertThat(keyCaptor.getValue()).isEqualTo("ENTITY-KEY-001:TXN-KEY-001");
+            assertThat(keyCaptor.getValue()).isEqualTo("sha256-deterministic-key");
         }
 
         @Test
-        @DisplayName("should handle special characters in key components")
-        void shouldHandleSpecialCharactersInKey() throws Exception {
-            KafkaEnvelope envelope = KafkaEnvelope.builder()
-                    .messageId("MSG-001")
-                    .transactionId("TXN-WITH-DASH_AND_UNDERSCORE")
-                    .eventType("EVENT")
-                    .entityId("ENTITY.WITH.DOTS")
-                    .hdfsPath("/path/file.json")
-                    .checksum("checksum")
-                    .eventTimestamp(Instant.now())
-                    .processedAt(Instant.now())
-                    .schemaVersion("1.0")
-                    .build();
+        @DisplayName("should handle special characters in eventId")
+        void shouldHandleSpecialCharactersInEventId() throws Exception {
+            KafkaEnvelope envelope = createEnvelope("abc123def456789", "MSG-001", "TXN-WITH-DASH");
             SettableListenableFuture<SendResult<String, String>> future = createSuccessFuture(100L);
 
             when(kafkaTemplate.send(eq(TOPIC), anyString(), anyString())).thenReturn(future);
@@ -249,12 +227,15 @@ class KafkaEnvelopePublisherTest {
 
             ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
             verify(kafkaTemplate).send(eq(TOPIC), keyCaptor.capture(), anyString());
-            assertThat(keyCaptor.getValue()).isEqualTo("ENTITY.WITH.DOTS:TXN-WITH-DASH_AND_UNDERSCORE");
+            assertThat(keyCaptor.getValue()).isEqualTo("abc123def456789");
         }
     }
 
-    private KafkaEnvelope createEnvelope(String messageId, String transactionId) {
+    private KafkaEnvelope createEnvelope(String eventId, String messageId, String transactionId) {
         return KafkaEnvelope.builder()
+                .eventId(eventId)
+                .bridgeMessageId("bridge-" + messageId)
+                .originalMqMessageId(messageId)
                 .messageId(messageId)
                 .transactionId(transactionId)
                 .eventType("ORDER_CREATED")

@@ -1,6 +1,11 @@
+# MQ-Kafka Bridge Application Configuration
+# Common settings - profile-specific overrides in application-{profile}.yml
+
 spring:
   application:
     name: mq-kafka-bridge
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -11,18 +16,88 @@ spring:
       retries: 3
 
 bridge:
+  # Kafka Configuration
   kafka:
     topic: ${KAFKA_TOPIC:bridge-events}
+    audit-topic: ${KAFKA_AUDIT_TOPIC:bridge-audit}
+    timeout-seconds: ${KAFKA_TIMEOUT_SECONDS:10}
+    audit-timeout-seconds: ${KAFKA_AUDIT_TIMEOUT_SECONDS:5}
+    delivery-timeout-ms: ${KAFKA_DELIVERY_TIMEOUT_MS:120000}
+    request-timeout-ms: ${KAFKA_REQUEST_TIMEOUT_MS:30000}
+    # Security - must be provided by deployment team for SASL/SSL
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    sasl:
+      mechanism: ${KAFKA_SASL_MECHANISM:}
+      jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+      kerberos:
+        service-name: ${KAFKA_SASL_KERBEROS_SERVICE_NAME:}
+    ssl:
+      truststore-location: ${KAFKA_SSL_TRUSTSTORE_LOCATION:}
+      truststore-password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:}
+      keystore-location: ${KAFKA_SSL_KEYSTORE_LOCATION:}
+      keystore-password: ${KAFKA_SSL_KEYSTORE_PASSWORD:}
+      key-password: ${KAFKA_SSL_KEY_PASSWORD:}
+
+  # HDFS Configuration
   hdfs:
     base-path: ${HDFS_BASE_PATH:/data/bridge/payloads}
     temp-suffix: .tmp
-    replication: 3
-  api:
-    base-url: ${API_BASE_URL:http://localhost:8080}
-    timeout-seconds: 30
+    replication: ${HDFS_REPLICATION:3}
+    namenode: ${HDFS_NAMENODE:hdfs://localhost:9000}
+    local-base-path: ${HDFS_LOCAL_BASE_PATH:./data/hdfs}
+    config-dir: ${HADOOP_CONF_DIR:}
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:false}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:}
+      keytab: ${HDFS_KERBEROS_KEYTAB:}
+
+  # HBase Ledger Configuration
+  hbase:
+    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:localhost}
+    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
+    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
+    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
+
+  # Ledger file storage (legacy/file-ledger profile only)
   ledger:
     storage-path: ${LEDGER_PATH:/data/bridge/ledger}
 
+  # REST API Configuration
+  api:
+    base-url: ${API_BASE_URL:http://localhost:8080}
+    timeout-seconds: ${API_TIMEOUT_SECONDS:30}
+
+  # OAuth2/JWT Security - must be provided by deployment team
+  security:
+    token-url: ${OAUTH_TOKEN_URL:}
+    client-id: ${OAUTH_CLIENT_ID:}
+    client-secret: ${OAUTH_CLIENT_SECRET:}
+    scope: ${OAUTH_SCOPE:}
+
+  # IBM MQ Configuration - must be provided by deployment team
+  mq:
+    host: ${MQ_HOST:localhost}
+    port: ${MQ_PORT:1414}
+    queue-manager: ${MQ_QUEUE_MANAGER:QM1}
+    channel: ${MQ_CHANNEL:DEV.APP.SVRCONN}
+    queue: ${MQ_QUEUE:BRIDGE.INPUT.QUEUE}
+    username: ${MQ_USERNAME:}
+    password: ${MQ_PASSWORD:}
+    concurrency: ${MQ_CONCURRENCY:1}
+    receive-timeout: ${MQ_RECEIVE_TIMEOUT:5000}
+    ssl:
+      cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
+      truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}
+      truststore-password: ${MQ_SSL_TRUSTSTORE_PASSWORD:}
+
+  # Recovery Configuration
+  recovery:
+    enabled: ${RECOVERY_ENABLED:true}
+    max-retries: ${RECOVERY_MAX_RETRIES:3}
+    interval-ms: ${RECOVERY_INTERVAL_MS:60000}
+
+# Actuator Configuration
 management:
   endpoints:
     web:
@@ -32,8 +107,10 @@ management:
     health:
       show-details: always
 
+# Logging Configuration
 logging:
   level:
-    com.enterprise.bridge: DEBUG
+    com.enterprise.bridge: ${LOG_LEVEL:INFO}
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
+    org.apache.hbase: WARN

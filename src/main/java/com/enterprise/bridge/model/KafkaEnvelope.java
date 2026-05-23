@@ -5,6 +5,9 @@ import java.util.Objects;
 
 public final class KafkaEnvelope {
 
+    private final String eventId;
+    private final String bridgeMessageId;
+    private final String originalMqMessageId;
     private final String messageId;
     private final String transactionId;
     private final String eventType;
@@ -18,6 +21,9 @@ public final class KafkaEnvelope {
     private final String schemaVersion;
 
     private KafkaEnvelope(Builder builder) {
+        this.eventId = Objects.requireNonNull(builder.eventId, "eventId must not be null");
+        this.bridgeMessageId = Objects.requireNonNull(builder.bridgeMessageId, "bridgeMessageId must not be null");
+        this.originalMqMessageId = Objects.requireNonNull(builder.originalMqMessageId, "originalMqMessageId must not be null");
         this.messageId = Objects.requireNonNull(builder.messageId, "messageId must not be null");
         this.transactionId = Objects.requireNonNull(builder.transactionId, "transactionId must not be null");
         this.eventType = Objects.requireNonNull(builder.eventType, "eventType must not be null");
@@ -33,6 +39,18 @@ public final class KafkaEnvelope {
 
     public static Builder builder() {
         return new Builder();
+    }
+
+    public String getEventId() {
+        return eventId;
+    }
+
+    public String getBridgeMessageId() {
+        return bridgeMessageId;
+    }
+
+    public String getOriginalMqMessageId() {
+        return originalMqMessageId;
     }
 
     public String getMessageId() {
@@ -80,7 +98,7 @@ public final class KafkaEnvelope {
     }
 
     public String getKafkaKey() {
-        return entityId + ":" + transactionId;
+        return eventId;
     }
 
     @Override
@@ -88,28 +106,31 @@ public final class KafkaEnvelope {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         KafkaEnvelope that = (KafkaEnvelope) o;
-        return Objects.equals(messageId, that.messageId) &&
-                Objects.equals(transactionId, that.transactionId);
+        return Objects.equals(eventId, that.eventId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(messageId, transactionId);
+        return Objects.hash(eventId);
     }
 
     @Override
     public String toString() {
         return "KafkaEnvelope{" +
-                "messageId='" + messageId + '\'' +
+                "eventId='" + eventId + '\'' +
+                ", bridgeMessageId='" + bridgeMessageId + '\'' +
+                ", originalMqMessageId='" + originalMqMessageId + '\'' +
                 ", transactionId='" + transactionId + '\'' +
                 ", eventType='" + eventType + '\'' +
                 ", entityId='" + entityId + '\'' +
                 ", hdfsPath='" + hdfsPath + '\'' +
-                ", checksum='" + checksum + '\'' +
                 '}';
     }
 
     public static final class Builder {
+        private String eventId;
+        private String bridgeMessageId;
+        private String originalMqMessageId;
         private String messageId;
         private String transactionId;
         private String eventType;
@@ -123,6 +144,21 @@ public final class KafkaEnvelope {
         private String schemaVersion = "1.0";
 
         private Builder() {}
+
+        public Builder eventId(String eventId) {
+            this.eventId = eventId;
+            return this;
+        }
+
+        public Builder bridgeMessageId(String bridgeMessageId) {
+            this.bridgeMessageId = bridgeMessageId;
+            return this;
+        }
+
+        public Builder originalMqMessageId(String originalMqMessageId) {
+            this.originalMqMessageId = originalMqMessageId;
+            return this;
+        }
 
         public Builder messageId(String messageId) {
             this.messageId = messageId;

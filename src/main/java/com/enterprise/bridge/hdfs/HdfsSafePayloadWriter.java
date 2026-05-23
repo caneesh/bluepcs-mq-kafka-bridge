@@ -89,7 +89,7 @@ public class HdfsSafePayloadWriter {
     private String buildTargetPath(EnrichedPayload payload) {
         String datePath = LocalDate.now().format(DATE_FORMATTER);
         String eventType = payload.getEventType().toLowerCase();
-        String fileName = payload.getTransactionId() + "_" + payload.getMessageId() + ".json";
+        String fileName = payload.getEventId() + ".json";
         return basePath + "/" + eventType + "/" + datePath + "/" + fileName;
     }
 

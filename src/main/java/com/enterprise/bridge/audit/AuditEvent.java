@@ -7,7 +7,10 @@ import java.util.Objects;
 
 public final class AuditEvent {
 
+    private final String auditEventId;
     private final String eventId;
+    private final String bridgeEventId;
+    private final String originalMqMessageId;
     private final String messageId;
     private final String transactionId;
     private final AuditEventType eventType;
@@ -17,7 +20,10 @@ public final class AuditEvent {
     private final String errorMessage;
 
     private AuditEvent(Builder builder) {
-        this.eventId = Objects.requireNonNull(builder.eventId, "eventId must not be null");
+        this.auditEventId = Objects.requireNonNull(builder.auditEventId, "auditEventId must not be null");
+        this.eventId = builder.eventId;
+        this.bridgeEventId = builder.bridgeEventId;
+        this.originalMqMessageId = builder.originalMqMessageId;
         this.messageId = builder.messageId;
         this.transactionId = builder.transactionId;
         this.eventType = Objects.requireNonNull(builder.eventType, "eventType must not be null");
@@ -31,8 +37,20 @@ public final class AuditEvent {
         return new Builder();
     }
 
+    public String getAuditEventId() {
+        return auditEventId;
+    }
+
     public String getEventId() {
         return eventId;
+    }
+
+    public String getBridgeEventId() {
+        return bridgeEventId;
+    }
+
+    public String getOriginalMqMessageId() {
+        return originalMqMessageId;
     }
 
     public String getMessageId() {
@@ -66,15 +84,19 @@ public final class AuditEvent {
     @Override
     public String toString() {
         return "AuditEvent{" +
-                "eventId='" + eventId + '\'' +
-                ", messageId='" + messageId + '\'' +
+                "auditEventId='" + auditEventId + '\'' +
+                ", eventId='" + eventId + '\'' +
+                ", bridgeEventId='" + bridgeEventId + '\'' +
                 ", eventType=" + eventType +
                 ", timestamp=" + timestamp +
                 '}';
     }
 
     public static final class Builder {
+        private String auditEventId;
         private String eventId;
+        private String bridgeEventId;
+        private String originalMqMessageId;
         private String messageId;
         private String transactionId;
         private AuditEventType eventType;
@@ -85,8 +107,23 @@ public final class AuditEvent {
 
         private Builder() {}
 
+        public Builder auditEventId(String auditEventId) {
+            this.auditEventId = auditEventId;
+            return this;
+        }
+
         public Builder eventId(String eventId) {
             this.eventId = eventId;
+            return this;
+        }
+
+        public Builder bridgeEventId(String bridgeEventId) {
+            this.bridgeEventId = bridgeEventId;
+            return this;
+        }
+
+        public Builder originalMqMessageId(String originalMqMessageId) {
+            this.originalMqMessageId = originalMqMessageId;
             return this;
         }
 

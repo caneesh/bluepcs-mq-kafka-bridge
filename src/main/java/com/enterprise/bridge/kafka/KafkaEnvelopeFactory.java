@@ -14,6 +14,9 @@ public class KafkaEnvelopeFactory {
 
     public KafkaEnvelope createEnvelope(EnrichedPayload payload, HdfsWriteResult hdfsResult) {
         return KafkaEnvelope.builder()
+                .eventId(payload.getEventId())
+                .bridgeMessageId(payload.getBridgeMessageId())
+                .originalMqMessageId(payload.getOriginalMqMessageId())
                 .messageId(payload.getMessageId())
                 .transactionId(payload.getTransactionId())
                 .eventType(payload.getEventType())

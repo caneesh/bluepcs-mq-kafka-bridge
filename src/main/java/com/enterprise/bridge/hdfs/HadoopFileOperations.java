@@ -7,6 +7,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileChecksum;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 @Component
+@Profile("!local")
 public class HadoopFileOperations implements HdfsFileOperations {
 
     private static final Logger logger = LoggerFactory.getLogger(HadoopFileOperations.class);
@@ -65,11 +67,7 @@ public class HadoopFileOperations implements HdfsFileOperations {
 
     @Override
     public String getFileChecksum(String path) throws IOException {
-        FileChecksum checksum = fileSystem.getFileChecksum(new Path(path));
-        if (checksum == null) {
-            return calculateLocalChecksum(path);
-        }
-        return checksum.toString();
+        return calculateLocalChecksum(path);
     }
 
     private String calculateLocalChecksum(String path) throws IOException {
