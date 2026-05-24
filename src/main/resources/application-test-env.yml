@@ -14,7 +14,7 @@ bridge:
     channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
     queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.UAT.BLOB}
     username: ${MQ_USERNAME:bluepcsapp}
-    password: ${MQ_PASSWORD}
+    password: ${MQ_PASSWORD:mqtestpass}
     concurrency: 1
     receive-timeout: 5000
 
@@ -29,7 +29,7 @@ bridge:
     sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
     kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
     truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
-    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD:kafkatestpass}
     request-size: 4194400
     delivery-timeout-ms: 120000
     request-timeout-ms: 30000
@@ -69,7 +69,7 @@ bridge:
   security:
     token-url: ${OAUTH_TOKEN_URL:https://f5-app-gw-wv.test.hscint.net/sts/v6/jwt_token_internal}
     client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
-    client-secret: ${OAUTH_CLIENT_SECRET}
+    client-secret: ${OAUTH_CLIENT_SECRET:oauthtestsecret}
     username: ${API_USERNAME:e4193139}
 
   # ============================================================================
@@ -102,7 +102,7 @@ spring:
       sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
       sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
       ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
-      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:kafkatestpass}
 
 # ============================================================================
 # Logging Configuration
