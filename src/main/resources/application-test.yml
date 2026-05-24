@@ -20,4 +20,4 @@ bridge:
 
 logging:
   level:
-    com.enterprise.bridge: INFO
+    com.hcsc.bridge: INFO

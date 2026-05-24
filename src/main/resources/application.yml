@@ -114,7 +114,7 @@ management:
 # Logging Configuration
 logging:
   level:
-    com.enterprise.bridge: ${LOG_LEVEL:INFO}
+    com.hcsc.bridge: ${LOG_LEVEL:INFO}
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
     org.apache.hbase: WARN

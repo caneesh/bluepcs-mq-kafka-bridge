@@ -109,7 +109,7 @@ spring:
 # ============================================================================
 logging:
   level:
-    com.enterprise.bridge: DEBUG
+    com.hcsc.bridge: DEBUG
     org.apache.kafka: INFO
     org.apache.hadoop: INFO
 

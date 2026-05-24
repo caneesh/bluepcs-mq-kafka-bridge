@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.enterprise</groupId>
+    <groupId>com.hcsc</groupId>
     <artifactId>mq-kafka-bridge</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <packaging>jar</packaging>

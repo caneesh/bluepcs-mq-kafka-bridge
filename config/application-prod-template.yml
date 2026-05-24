@@ -152,7 +152,7 @@ hadoop:
 # =============================================================================
 logging:
   level:
-    com.enterprise.bridge: INFO
+    com.hcsc.bridge: INFO
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
     com.ibm.mq: WARN

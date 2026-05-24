@@ -10,4 +10,4 @@ bridge:
 
 logging:
   level:
-    com.enterprise.bridge: DEBUG
+    com.hcsc.bridge: DEBUG
