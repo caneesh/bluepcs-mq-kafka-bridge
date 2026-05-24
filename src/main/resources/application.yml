@@ -93,9 +93,13 @@ bridge:
 
   # Recovery Configuration
   recovery:
-    enabled: ${RECOVERY_ENABLED:true}
+    enabled: ${RECOVERY_ENABLED:false}
     max-retries: ${RECOVERY_MAX_RETRIES:3}
     interval-ms: ${RECOVERY_INTERVAL_MS:60000}
+
+  # Reconciliation Configuration (requires LedgerRepository)
+  reconciliation:
+    enabled: ${RECONCILIATION_ENABLED:false}
 
 # Actuator Configuration
 management:

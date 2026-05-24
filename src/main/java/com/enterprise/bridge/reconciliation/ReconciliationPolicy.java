@@ -3,12 +3,14 @@ package com.enterprise.bridge.reconciliation;
 import com.enterprise.bridge.ledger.LedgerEntry;
 import com.enterprise.bridge.ledger.LedgerRepository;
 import com.enterprise.bridge.ledger.LedgerState;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Component
+@ConditionalOnProperty(name = "bridge.reconciliation.enabled", havingValue = "true", matchIfMissing = false)
 public class ReconciliationPolicy {
 
     private final LedgerRepository ledgerRepository;
