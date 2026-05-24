@@ -121,9 +121,15 @@ bridge:
   # Recovery Configuration
   # ============================================================================
   recovery:
-    enabled: ${RECOVERY_ENABLED:true}
+    enabled: false
     max-retries: 5
     interval-ms: 120000
+
+  # ============================================================================
+  # Reconciliation Configuration (requires LedgerRepository - disabled for MVP)
+  # ============================================================================
+  reconciliation:
+    enabled: false
 
 # ============================================================================
 # Spring Kafka Configuration
