@@ -249,6 +249,8 @@ public class BridgeProperties {
 
         private String truststorePassword;
 
+        private String truststoreType = "JKS";
+
         private String keystoreLocation;
 
         private String keystorePassword;
@@ -347,6 +349,14 @@ public class BridgeProperties {
 
         public void setTruststorePassword(String truststorePassword) {
             this.truststorePassword = truststorePassword;
+        }
+
+        public String getTruststoreType() {
+            return truststoreType;
+        }
+
+        public void setTruststoreType(String truststoreType) {
+            this.truststoreType = truststoreType;
         }
 
         public String getKeystoreLocation() {

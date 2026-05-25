@@ -35,6 +35,7 @@ bridge:
     ssl:
       truststore-location: ${KAFKA_SSL_TRUSTSTORE_LOCATION:}
       truststore-password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:}
+      truststore-type: ${KAFKA_SSL_TRUSTSTORE_TYPE:JKS}
       keystore-location: ${KAFKA_SSL_KEYSTORE_LOCATION:}
       keystore-password: ${KAFKA_SSL_KEYSTORE_PASSWORD:}
       key-password: ${KAFKA_SSL_KEY_PASSWORD:}

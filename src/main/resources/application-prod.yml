@@ -46,6 +46,7 @@ bridge:
     # SSL/TLS settings
     truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
     truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
     keystore-location: ${KAFKA_KEYSTORE_LOCATION:}
     keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
     key-password: ${KAFKA_KEY_PASSWORD:}
@@ -152,6 +153,7 @@ spring:
       sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:ep-kafka}
       ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
       ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
       ssl.keystore.location: ${KAFKA_KEYSTORE_LOCATION:}
       ssl.keystore.password: ${KAFKA_KEYSTORE_PASSWORD:}
       ssl.key.password: ${KAFKA_KEY_PASSWORD:}

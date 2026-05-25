@@ -30,6 +30,7 @@ bridge:
     kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
     truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
     truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD:kafkatestpass}
+    truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
     request-size: 4194400
     delivery-timeout-ms: 120000
     request-timeout-ms: 30000
@@ -103,6 +104,7 @@ spring:
       sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
       ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
       ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:kafkatestpass}
+      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
 
 # ============================================================================
 # Logging Configuration

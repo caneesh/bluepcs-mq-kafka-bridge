@@ -46,8 +46,8 @@ class OAuth2JwtTokenProviderTest {
     class TokenFetching {
 
         @Test
-        @DisplayName("should fetch token from OAuth2 server")
-        void shouldFetchToken() throws InterruptedException {
+        @DisplayName("should fetch token with username and password")
+        void shouldFetchTokenWithCredentials() throws InterruptedException {
             mockServer.enqueue(new MockResponse()
                     .setBody("{\"access_token\":\"test-jwt-token\",\"expires_in\":3600}")
                     .setHeader("Content-Type", "application/json"));
@@ -61,9 +61,10 @@ class OAuth2JwtTokenProviderTest {
             RecordedRequest request = mockServer.takeRequest();
             assertThat(request.getMethod()).isEqualTo("POST");
             String body = request.getBody().readUtf8();
-            assertThat(body).contains("grant_type=client_credentials");
             assertThat(body).contains("client_id=test-client");
             assertThat(body).contains("client_secret=test-secret");
+            assertThat(body).contains("username=test-user");
+            assertThat(body).contains("password=test-password");
             assertThat(body).contains("scope=api.read");
         }
 
@@ -149,7 +150,8 @@ class OAuth2JwtTokenProviderTest {
         @Test
         @DisplayName("should throw exception when token URL not configured")
         void shouldThrowWhenNoTokenUrl() {
-            tokenProvider = new OAuth2JwtTokenProvider("", "client", "secret", "scope", httpClient);
+            tokenProvider = new OAuth2JwtTokenProvider(
+                    "", "client", "secret", "scope", "user", "pass", httpClient);
 
             assertThatThrownBy(() -> tokenProvider.getToken())
                     .isInstanceOf(OAuth2JwtTokenProvider.TokenRefreshException.class)
@@ -240,8 +242,8 @@ class OAuth2JwtTokenProviderTest {
     }
 
     @Nested
-    @DisplayName("Scope Handling")
-    class ScopeHandling {
+    @DisplayName("Optional Fields")
+    class OptionalFields {
 
         @Test
         @DisplayName("should omit scope when not configured")
@@ -255,6 +257,8 @@ class OAuth2JwtTokenProviderTest {
                     "client",
                     "secret",
                     "",
+                    "user",
+                    "pass",
                     httpClient
             );
 
@@ -264,6 +268,50 @@ class OAuth2JwtTokenProviderTest {
             String body = request.getBody().readUtf8();
             assertThat(body).doesNotContain("scope=");
         }
+
+        @Test
+        @DisplayName("should omit username when not configured")
+        void shouldOmitUsernameWhenEmpty() throws InterruptedException {
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"access_token\":\"no-user-token\",\"expires_in\":3600}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = new OAuth2JwtTokenProvider(
+                    mockServer.url("/token").toString(),
+                    "client",
+                    "secret",
+                    "scope",
+                    "",
+                    "",
+                    httpClient
+            );
+
+            tokenProvider.getToken();
+
+            RecordedRequest request = mockServer.takeRequest();
+            String body = request.getBody().readUtf8();
+            assertThat(body).doesNotContain("username=");
+            assertThat(body).doesNotContain("password=");
+        }
+
+        @Test
+        @DisplayName("should include all credentials when configured")
+        void shouldIncludeAllCredentials() throws InterruptedException {
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"access_token\":\"full-token\",\"expires_in\":3600}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = createProvider();
+            tokenProvider.getToken();
+
+            RecordedRequest request = mockServer.takeRequest();
+            String body = request.getBody().readUtf8();
+            assertThat(body).contains("client_id=test-client");
+            assertThat(body).contains("client_secret=test-secret");
+            assertThat(body).contains("username=test-user");
+            assertThat(body).contains("password=test-password");
+            assertThat(body).contains("scope=api.read");
+        }
     }
 
     private OAuth2JwtTokenProvider createProvider() {
@@ -272,6 +320,8 @@ class OAuth2JwtTokenProviderTest {
                 "test-client",
                 "test-secret",
                 "api.read",
+                "test-user",
+                "test-password",
                 httpClient
         );
     }

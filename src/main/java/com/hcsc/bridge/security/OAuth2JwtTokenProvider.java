@@ -31,6 +31,8 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
     private final String clientId;
     private final String clientSecret;
     private final String scope;
+    private final String username;
+    private final String password;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
@@ -43,11 +45,15 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
             @Value("${bridge.security.token-url:}") String tokenUrl,
             @Value("${bridge.security.client-id:}") String clientId,
             @Value("${bridge.security.client-secret:}") String clientSecret,
-            @Value("${bridge.security.scope:}") String scope) {
+            @Value("${bridge.security.scope:}") String scope,
+            @Value("${bridge.security.username:}") String username,
+            @Value("${bridge.security.password:}") String password) {
         this.tokenUrl = tokenUrl;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.scope = scope;
+        this.username = username;
+        this.password = password;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
@@ -61,20 +67,31 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
             String clientId,
             String clientSecret,
             String scope,
+            String username,
+            String password,
             OkHttpClient httpClient) {
         this.tokenUrl = tokenUrl;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.scope = scope;
+        this.username = username;
+        this.password = password;
         this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper();
     }
 
     @PostConstruct
     public void init() {
-        if (tokenUrl != null && !tokenUrl.isEmpty()) {
-            logger.info("OAuth2 JWT provider configured with token URL (credentials not logged)");
-        } else {
+        logger.info("=== OAuth2 JWT Provider Configuration ===");
+        logger.info("  token-url: {}", hasValue(tokenUrl) ? tokenUrl : "(not set)");
+        logger.info("  client-id: {}", hasValue(clientId) ? clientId : "(not set)");
+        logger.info("  client-secret: {}", hasValue(clientSecret) ? "********" : "(not set)");
+        logger.info("  username: {}", hasValue(username) ? username : "(not set)");
+        logger.info("  password: {}", hasValue(password) ? "********" : "(not set)");
+        logger.info("  scope: {}", hasValue(scope) ? scope : "(not set)");
+        logger.info("==========================================");
+
+        if (!hasValue(tokenUrl)) {
             logger.warn("OAuth2 JWT provider token URL not configured");
         }
     }
@@ -129,18 +146,31 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
     }
 
     private void refreshTokenInternal() {
-        if (tokenUrl == null || tokenUrl.isEmpty()) {
+        if (!hasValue(tokenUrl)) {
             throw new TokenRefreshException("Token URL not configured");
         }
 
         logger.debug("Refreshing OAuth2 JWT token");
 
-        FormBody.Builder formBuilder = new FormBody.Builder()
-                .add("grant_type", "client_credentials")
-                .add("client_id", clientId)
-                .add("client_secret", clientSecret);
+        FormBody.Builder formBuilder = new FormBody.Builder();
 
-        if (scope != null && !scope.isEmpty()) {
+        if (hasValue(clientId)) {
+            formBuilder.add("client_id", clientId);
+        }
+
+        if (hasValue(clientSecret)) {
+            formBuilder.add("client_secret", clientSecret);
+        }
+
+        if (hasValue(username)) {
+            formBuilder.add("username", username);
+        }
+
+        if (hasValue(password)) {
+            formBuilder.add("password", password);
+        }
+
+        if (hasValue(scope)) {
             formBuilder.add("scope", scope);
         }
 
@@ -154,6 +184,8 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
 
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
+                String errorBody = response.body() != null ? response.body().string() : "";
+                logger.error("Token refresh failed with status {}: {}", response.code(), errorBody);
                 throw new TokenRefreshException("Token refresh failed with status: " + response.code());
             }
 
@@ -168,11 +200,15 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
             long expiresIn = json.has("expires_in") ? json.get("expires_in").asLong() : 3600;
             tokenExpiry = Instant.now().plusSeconds(expiresIn);
 
-            logger.debug("OAuth2 JWT token refreshed, expires at: {}", tokenExpiry);
+            logger.info("OAuth2 JWT token refreshed successfully, expires at: {}", tokenExpiry);
 
         } catch (IOException e) {
-            throw new TokenRefreshException("Failed to refresh token", e);
+            throw new TokenRefreshException("Failed to refresh token: " + e.getMessage(), e);
         }
+    }
+
+    private boolean hasValue(String value) {
+        return value != null && !value.isEmpty();
     }
 
     public static class TokenRefreshException extends RuntimeException {
