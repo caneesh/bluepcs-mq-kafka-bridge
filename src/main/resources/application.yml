@@ -75,6 +75,8 @@ bridge:
     client-id: ${OAUTH_CLIENT_ID:}
     client-secret: ${OAUTH_CLIENT_SECRET:}
     scope: ${OAUTH_SCOPE:}
+    username: ${API_USERNAME:}
+    password: ${API_PASSWORD:}
 
   # IBM MQ Configuration - must be provided by deployment team
   mq:

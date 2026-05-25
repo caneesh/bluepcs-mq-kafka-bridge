@@ -72,6 +72,7 @@ bridge:
     client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
     client-secret: ${OAUTH_CLIENT_SECRET:oauthtestsecret}
     username: ${API_USERNAME:e4193139}
+    password: ${API_PASSWORD:}
 
   # ============================================================================
   # Audit Configuration
