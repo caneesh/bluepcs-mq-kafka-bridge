@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +21,7 @@ public class KafkaHealthIndicator implements HealthIndicator {
 
     private final AdminClient adminClient;
 
-    public KafkaHealthIndicator(AdminClient adminClient) {
+    public KafkaHealthIndicator(@Lazy AdminClient adminClient) {
         this.adminClient = adminClient;
     }
 
@@ -36,7 +37,7 @@ public class KafkaHealthIndicator implements HealthIndicator {
                     .withDetail("nodeCount", nodeCount)
                     .build();
         } catch (Exception e) {
-            logger.warn("Kafka health check failed", e);
+            logger.warn("Kafka health check failed: {}", e.getMessage());
             return Health.down()
                     .withDetail("error", e.getMessage())
                     .build();

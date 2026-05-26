@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -84,6 +85,7 @@ public class KafkaConfiguration {
         props.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, kafkaProps.getRequestSize());
 
         logger.info("Creating Kafka producer factory");
+        logSecurityProps(props, "Producer");
         return new DefaultKafkaProducerFactory<>(props);
     }
 
@@ -95,6 +97,7 @@ public class KafkaConfiguration {
     }
 
     @Bean
+    @Lazy
     public AdminClient kafkaAdminClient() {
         Map<String, Object> props = buildCommonConfig();
 
@@ -102,6 +105,7 @@ public class KafkaConfiguration {
         props.put(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, (int) kafkaProps.getDeliveryTimeoutMs());
 
         logger.info("Creating Kafka AdminClient for readiness checks");
+        logSecurityProps(props, "AdminClient");
         this.adminClient = AdminClient.create(props);
         return adminClient;
     }
@@ -168,6 +172,7 @@ public class KafkaConfiguration {
         String keystoreLocation = kafkaProps.getKeystoreLocation();
         if (hasValue(keystoreLocation)) {
             props.put("ssl.keystore.location", keystoreLocation);
+            props.put("ssl.keystore.type", kafkaProps.getTruststoreType());
 
             String keystorePassword = kafkaProps.getKeystorePassword();
             if (hasValue(keystorePassword)) {
@@ -179,6 +184,22 @@ public class KafkaConfiguration {
                 props.put("ssl.key.password", keyPassword);
             }
         }
+
+        // Disable hostname verification if needed (common in internal environments)
+        props.put("ssl.endpoint.identification.algorithm", "");
+    }
+
+    private void logSecurityProps(Map<String, Object> props, String clientType) {
+        logger.info("=== {} SSL/SASL Properties Applied ===", clientType);
+        for (Map.Entry<String, Object> entry : props.entrySet()) {
+            String key = entry.getKey();
+            if (key.contains("password") || key.contains("secret")) {
+                logger.info("  {}: ********", key);
+            } else if (key.startsWith("ssl.") || key.startsWith("sasl.") || key.equals("security.protocol")) {
+                logger.info("  {}: {}", key, entry.getValue());
+            }
+        }
+        logger.info("==========================================");
     }
 
     private boolean hasValue(String value) {
