@@ -5,6 +5,7 @@ import com.hcsc.bridge.orchestrator.BridgeOrchestrator;
 import com.hcsc.bridge.orchestrator.ProcessingResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,9 @@ public class MqMessageListener {
     private static final Logger logger = LoggerFactory.getLogger(MqMessageListener.class);
 
     private final BridgeOrchestrator orchestrator;
+
+    @Value("${bridge.mq.log-payload:false}")
+    private boolean logPayload;
 
     public MqMessageListener(BridgeOrchestrator orchestrator) {
         this.orchestrator = orchestrator;
@@ -42,7 +46,16 @@ public class MqMessageListener {
             String correlationId = textMessage.getJMSCorrelationID();
             String payload = textMessage.getText();
 
-            logger.debug("Received MQ message: {}", messageId);
+            logger.info("=== INCOMING MQ MESSAGE ===");
+            logger.info("  JMSMessageID: {}", messageId);
+            logger.info("  JMSCorrelationID: {}", correlationId);
+            logger.info("  Queue: {}", extractQueueName(message));
+            logger.info("  Payload size: {} bytes", payload != null ? payload.length() : 0);
+
+            if (logPayload && payload != null) {
+                logger.info("  Payload:\n{}", payload);
+            }
+            logger.info("===========================");
 
             MqMessage mqMessage = new MqMessage(
                     messageId,

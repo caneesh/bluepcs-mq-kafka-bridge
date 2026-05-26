@@ -89,6 +89,7 @@ bridge:
     password: ${MQ_PASSWORD:}
     concurrency: ${MQ_CONCURRENCY:1}
     receive-timeout: ${MQ_RECEIVE_TIMEOUT:5000}
+    log-payload: ${MQ_LOG_PAYLOAD:false}
     ssl:
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
       truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}

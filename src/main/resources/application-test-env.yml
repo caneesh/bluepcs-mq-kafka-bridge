@@ -17,6 +17,7 @@ bridge:
     password: ${MQ_PASSWORD:mqtestpass}
     concurrency: 1
     receive-timeout: 5000
+    log-payload: ${MQ_LOG_PAYLOAD:true}
 
   # ============================================================================
   # Kafka Configuration (Test Environment)
