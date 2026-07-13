@@ -1,5 +1,94 @@
 # MQ-Kafka Bridge Deployment Checklist
 
+## Transferring Code to the Office Network
+
+The office environment is reached via: push to git → download → OneDrive →
+copy to the office machine. Two cautions before uploading:
+
+- [ ] Do not zip the raw working directory — a local `.env` with real
+      credentials would ride along. Transfer via `git archive`, a fresh
+      clone, or delete `.env` from the copy first.
+- [ ] Be aware the `.git` history travels with a clone and contains
+      everything ever committed.
+
+### Dependency Strategy (decide BEFORE transferring)
+
+Building requires Maven to resolve Spring Boot, Hadoop, HBase and Kafka
+artifacts. Pick one:
+
+1. **Internal mirror**: the office network has a Nexus/Artifactory mirror —
+   configure it in `~/.m2/settings.xml` on the office machine.
+2. **Offline repository**: at home run `mvn dependency:go-offline`, zip
+   `~/.m2/repository`, carry it alongside the code, and build with
+   `mvn -o clean package` (offline mode).
+3. **Carry the jar**: build at home (`mvn clean package`) and transfer
+   `target/mq-kafka-bridge-*.jar` itself. The Spring Boot fat jar is
+   self-contained; the office machine then only needs a JDK, no Maven.
+
+## Building and First Run on the Office Machine
+
+### Step 1: Verify tooling
+
+```bash
+java -version    # JDK 11 required
+mvn -version     # unless carrying a pre-built jar
+```
+
+### Step 2: Build
+
+```bash
+mvn clean package               # runs unit tests (no external infra needed)
+mvn clean package -DskipTests   # faster, jar only
+```
+
+Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
+`package` never touches real infrastructure.
+
+### Step 3: Configure secrets
+
+```bash
+cp .env.template .env
+# fill in MQ_PASSWORD, KAFKA_TRUSTSTORE_PASSWORD, OAUTH_CLIENT_SECRET
+```
+
+`.env` is gitignored and sourced automatically by the scripts under
+`scripts/`. The test-env and prod profiles fail fast at startup if these
+secrets are missing.
+
+### Step 4: Verify supporting files
+
+- [ ] Kafka truststore exists at the configured `KAFKA_TRUSTSTORE_LOCATION`
+- [ ] Kerberos keytab exists; verify with `klist -kt <keytab>`
+- [ ] Log directory exists and is writable
+
+### Step 5: Validate connectivity (no messages consumed)
+
+```bash
+./scripts/validate-only.sh test-env    # exit 0 = ready
+```
+
+This checks MQ/Kafka/HDFS reachability and acquires a real OAuth token.
+An SSL handshake error mentioning certificate/hostname means a broker
+certificate does not match its hostname — fix the certificate; do not
+disable hostname verification.
+
+### Step 6: Start safely, then enable consumption
+
+```bash
+./scripts/run-test-env.sh                      # listener OFF by default
+curl localhost:8080/actuator/health            # confirm healthy
+./scripts/run-test-env.sh --listener-enabled   # start consuming
+```
+
+### Step 7: Verify the first message end-to-end
+
+- [ ] Log shows the `=== INCOMING MQ MESSAGE ===` block
+- [ ] JSON file appears in HDFS under the configured base path
+- [ ] Event arrives on the Kafka topic
+- [ ] MQ queue depth decreases
+
+---
+
 ## Pre-Deployment Validation
 
 ### 1. Environment Variables
