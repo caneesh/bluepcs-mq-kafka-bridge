@@ -21,6 +21,17 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PROFILE="${1:-prod}"
 JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
 
+# Load .env if present. Note: .env values override anything already exported
+# in the shell, including blank assignments — remove a line from .env to use
+# an exported value instead.
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    echo "Loading environment from ${PROJECT_DIR}/.env"
+    set -a
+    # shellcheck disable=SC1091
+    source "${PROJECT_DIR}/.env"
+    set +a
+fi
+
 echo "============================================"
 echo "MQ-Kafka Bridge - Validate Only Mode"
 echo "============================================"
