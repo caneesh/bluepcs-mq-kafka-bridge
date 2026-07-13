@@ -760,7 +760,8 @@ public class BridgeProperties {
     // ============================================================================
     public static class RecoveryProperties {
 
-        private boolean enabled = true;
+        // Recovery must be an explicit opt-in per environment
+        private boolean enabled = false;
 
         
         private int maxRetries = 5;

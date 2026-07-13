@@ -35,7 +35,9 @@ bridge:
     password: ${MQ_PASSWORD}
     # IMPORTANT: Set to true to start consuming messages
     listener-enabled: ${MQ_LISTENER_ENABLED:false}
-    concurrency: ${MQ_CONCURRENCY:2}
+    # Must stay at 1: the HDFS exists-check/write/rename sequence is not atomic, so
+    # concurrent listeners can race on the same message and produce duplicate Kafka events
+    concurrency: ${MQ_CONCURRENCY:1}
     receive-timeout: 10000
     ssl:
       enabled: ${MQ_SSL_ENABLED:false}

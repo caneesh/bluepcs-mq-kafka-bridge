@@ -183,13 +183,14 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
                 .build();
 
         try (Response response = httpClient.newCall(request).execute()) {
+            // OkHttp response bodies can only be consumed once — read exactly once, then branch
+            String responseBody = response.body() != null ? response.body().string() : "";
+
             if (!response.isSuccessful()) {
-                String errorBody = response.body() != null ? response.body().string() : "";
-                logger.error("Token refresh failed with status {}: {}", response.code(), errorBody);
+                logger.error("Token refresh failed with status {}: {}", response.code(), responseBody);
                 throw new TokenRefreshException("Token refresh failed with status: " + response.code());
             }
 
-            String responseBody = response.body() != null ? response.body().string() : "";
             JsonNode json = objectMapper.readTree(responseBody);
 
             if (!json.has("access_token")) {

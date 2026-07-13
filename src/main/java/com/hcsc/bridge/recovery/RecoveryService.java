@@ -8,7 +8,7 @@ import com.hcsc.bridge.ledger.LedgerRepository;
 import com.hcsc.bridge.ledger.LedgerState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Service
-@Profile("local")
+@ConditionalOnProperty(name = "bridge.recovery.enabled", havingValue = "true")
 public class RecoveryService {
 
     private static final Logger logger = LoggerFactory.getLogger(RecoveryService.class);

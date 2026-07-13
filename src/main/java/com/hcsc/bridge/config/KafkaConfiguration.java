@@ -15,7 +15,6 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,8 +27,6 @@ public class KafkaConfiguration {
 
     private final BridgeProperties.KafkaProperties kafkaProps;
     private final String bootstrapServers;
-
-    private AdminClient adminClient;
 
     public KafkaConfiguration(BridgeProperties bridgeProperties) {
         this.kafkaProps = bridgeProperties.getKafka();
@@ -106,8 +103,7 @@ public class KafkaConfiguration {
 
         logger.info("Creating Kafka AdminClient for readiness checks");
         logSecurityProps(props, "AdminClient");
-        this.adminClient = AdminClient.create(props);
-        return adminClient;
+        return AdminClient.create(props);
     }
 
     private Map<String, Object> buildCommonConfig() {
@@ -184,16 +180,14 @@ public class KafkaConfiguration {
                 props.put("ssl.key.password", keyPassword);
             }
         }
-
-        // Disable hostname verification if needed (common in internal environments)
-        props.put("ssl.endpoint.identification.algorithm", "");
     }
 
     private void logSecurityProps(Map<String, Object> props, String clientType) {
         logger.info("=== {} SSL/SASL Properties Applied ===", clientType);
         for (Map.Entry<String, Object> entry : props.entrySet()) {
             String key = entry.getKey();
-            if (key.contains("password") || key.contains("secret")) {
+            // sasl.jaas.config may embed credentials inline (PLAIN/SCRAM modules)
+            if (key.contains("password") || key.contains("secret") || key.equals("sasl.jaas.config")) {
                 logger.info("  {}: ********", key);
             } else if (key.startsWith("ssl.") || key.startsWith("sasl.") || key.equals("security.protocol")) {
                 logger.info("  {}: {}", key, entry.getValue());
@@ -204,18 +198,6 @@ public class KafkaConfiguration {
 
     private boolean hasValue(String value) {
         return value != null && !value.isEmpty();
-    }
-
-    @PreDestroy
-    public void cleanup() {
-        if (adminClient != null) {
-            try {
-                adminClient.close();
-                logger.info("Kafka AdminClient closed");
-            } catch (Exception e) {
-                logger.warn("Error closing Kafka AdminClient", e);
-            }
-        }
     }
 
     public String getTopic() {

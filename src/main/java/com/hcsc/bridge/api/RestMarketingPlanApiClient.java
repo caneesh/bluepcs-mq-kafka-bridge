@@ -89,10 +89,16 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
 
     private EnrichmentResult attemptEnrich(ParsedPayload payload, String entityId, int attempt)
             throws EnrichmentException {
-        HttpUrl url = HttpUrl.parse(baseUrl + "/api/v1/marketing-plans/" + entityId);
-        if (url == null) {
+        HttpUrl base = HttpUrl.parse(baseUrl);
+        if (base == null) {
             throw new EnrichmentException("Invalid URL for enrichment", entityId);
         }
+        // addPathSegment percent-encodes entityId, which comes from the MQ payload and must not
+        // be able to alter the request path (e.g. via '/', '?' or '../')
+        HttpUrl url = base.newBuilder()
+                .addPathSegments("api/v1/marketing-plans")
+                .addPathSegment(entityId)
+                .build();
 
         logger.debug("Enriching payload for entityId: {} (attempt {})", entityId, attempt);
 

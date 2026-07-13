@@ -212,8 +212,8 @@ class MqMessageListenerTest {
         }
 
         @Test
-        @DisplayName("should throw MqProcessingException on acknowledge failure")
-        void shouldThrowOnAcknowledgeFailure() throws JMSException {
+        @DisplayName("should not throw when acknowledge fails after successful processing")
+        void shouldNotThrowOnAcknowledgeFailureAfterSuccess() throws JMSException {
             when(textMessage.getJMSMessageID()).thenReturn("MSG-JMS-003");
             when(textMessage.getJMSCorrelationID()).thenReturn(null);
             when(textMessage.getText()).thenReturn("{}");
@@ -223,9 +223,11 @@ class MqMessageListenerTest {
             );
             doThrow(new JMSException("Acknowledge failed")).when(textMessage).acknowledge();
 
-            assertThatThrownBy(() -> listener.onMessage(textMessage))
-                    .isInstanceOf(MqProcessingException.class)
-                    .hasMessageContaining("JMS error");
+            // Processing already succeeded; an ack failure means the broker will redeliver,
+            // so the listener must not surface it as a processing failure.
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
         }
 
         @Test

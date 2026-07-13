@@ -1,5 +1,6 @@
 package com.hcsc.bridge.mq;
 
+import com.hcsc.bridge.core.SecretMaskingUtil;
 import com.hcsc.bridge.model.MqMessage;
 import com.hcsc.bridge.orchestrator.BridgeOrchestrator;
 import com.hcsc.bridge.orchestrator.ProcessingResult;
@@ -20,6 +21,7 @@ import java.time.Instant;
 public class MqMessageListener {
 
     private static final Logger logger = LoggerFactory.getLogger(MqMessageListener.class);
+    private static final int MAX_LOGGED_PAYLOAD_CHARS = 500;
 
     private final BridgeOrchestrator orchestrator;
 
@@ -53,7 +55,12 @@ public class MqMessageListener {
             logger.info("  Payload size: {} bytes", payload != null ? payload.length() : 0);
 
             if (logPayload && payload != null) {
-                logger.info("  Payload:\n{}", payload);
+                String masked = SecretMaskingUtil.maskSecrets(payload);
+                if (masked.length() > MAX_LOGGED_PAYLOAD_CHARS) {
+                    masked = masked.substring(0, MAX_LOGGED_PAYLOAD_CHARS)
+                            + "... (truncated, " + payload.length() + " chars total)";
+                }
+                logger.info("  Payload:\n{}", masked);
             }
             logger.info("===========================");
 
@@ -68,8 +75,7 @@ public class MqMessageListener {
             ProcessingResult result = orchestrator.process(mqMessage);
 
             if (result.isSuccessful()) {
-                message.acknowledge();
-                logger.info("Successfully processed and acknowledged message: eventId={}", result.getEventId());
+                acknowledgeProcessedMessage(message, messageId, result.getEventId());
             } else {
                 logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
                 throw new MqProcessingException("Processing failed: " + result.getErrorCode(),
@@ -83,6 +89,24 @@ public class MqMessageListener {
             logger.error("Unexpected error processing message {}, will not acknowledge for redelivery",
                     messageId, e);
             throw e;
+        }
+    }
+
+    /**
+     * Acknowledges a message whose processing (HDFS write + Kafka publish) already succeeded.
+     * An acknowledge failure must not be treated as a processing failure: the work is done, and
+     * the broker will redeliver the unacknowledged message regardless of what we throw here.
+     * The redelivery will re-publish to Kafka with the same eventId — downstream consumers must
+     * tolerate duplicates (at-least-once delivery).
+     */
+    private void acknowledgeProcessedMessage(Message message, String messageId, String eventId) {
+        try {
+            message.acknowledge();
+            logger.info("Successfully processed and acknowledged message: eventId={}", eventId);
+        } catch (JMSException e) {
+            logger.error("Message processed successfully but acknowledge failed: messageId={}, eventId={}. "
+                    + "The broker will redeliver this message; downstream consumers may see a duplicate "
+                    + "Kafka event with eventId={}", messageId, eventId, eventId, e);
         }
     }
 

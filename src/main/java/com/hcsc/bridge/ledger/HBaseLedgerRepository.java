@@ -225,7 +225,11 @@ public class HBaseLedgerRepository implements LedgerRepository {
         if (value != null && value.length > 0) {
             return Instant.ofEpochMilli(Bytes.toLong(value));
         }
-        return Instant.now();
+        // A missing timestamp means a partially-written or migrated row. Substituting the
+        // current time here would silently corrupt staleness comparisons in reconciliation.
+        logger.warn("Ledger row {} is missing timestamp column {}",
+                Bytes.toString(result.getRow()), Bytes.toString(column));
+        return null;
     }
 
     public static class LedgerPersistenceException extends RuntimeException {

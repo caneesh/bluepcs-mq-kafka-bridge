@@ -100,27 +100,33 @@ public class ReadinessCheckService {
             return CheckResult.skip(name, "Kafka bootstrap servers not configured");
         }
 
-        try {
-            String[] servers = kafkaBootstrapServers.split(",");
-            for (String server : servers) {
-                String[] parts = server.trim().split(":");
-                String host = parts[0];
-                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 9092;
+        // Bootstrap semantics: the client only needs one reachable broker to discover the
+        // cluster, so a single reachable broker passes. Unreachable brokers are logged so a
+        // partial outage is still visible.
+        String[] servers = kafkaBootstrapServers.split(",");
+        List<String> failures = new ArrayList<>();
+        for (String server : servers) {
+            String[] parts = server.trim().split(":");
+            String host = parts[0];
+            int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 9092;
 
-                java.net.Socket socket = new java.net.Socket();
+            try (java.net.Socket socket = new java.net.Socket()) {
                 socket.connect(new java.net.InetSocketAddress(host, port), 5000);
-                socket.close();
 
+                if (!failures.isEmpty()) {
+                    logger.warn("{}: some Kafka brokers unreachable: {}", name, failures);
+                }
                 String message = String.format("Kafka reachable at %s:%d", host, port);
                 logger.info("[PASS] {}: {}", name, message);
                 return CheckResult.pass(name, message);
+            } catch (Exception e) {
+                failures.add(String.format("%s:%d (%s)", host, port, e.getMessage()));
             }
-            return CheckResult.fail(name, "No Kafka brokers reachable");
-        } catch (Exception e) {
-            String message = String.format("Cannot reach Kafka - %s", e.getMessage());
-            logger.error("[FAIL] {}: {}", name, message);
-            return CheckResult.fail(name, message);
         }
+
+        String message = "No Kafka brokers reachable: " + failures;
+        logger.error("[FAIL] {}: {}", name, message);
+        return CheckResult.fail(name, message);
     }
 
     private CheckResult checkHdfsConnection() {

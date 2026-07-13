@@ -21,7 +21,9 @@ bridge:
     queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.PROD.BLOB}
     username: ${MQ_USERNAME:bluepcsapp}
     password: ${MQ_PASSWORD}
-    concurrency: 2
+    # Must stay at 1: the HDFS exists-check/write/rename sequence is not atomic, so
+    # concurrent listeners can race on the same message and produce duplicate Kafka events
+    concurrency: 1
     receive-timeout: 10000
     # SSL configuration (if enabled)
     ssl:
