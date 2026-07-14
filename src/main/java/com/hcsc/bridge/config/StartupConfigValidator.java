@@ -149,7 +149,8 @@ public class StartupConfigValidator {
         }
 
         if (isBlank(mqPassword) && !isBlank(mqUsername)) {
-            errors.add("[MQ] bridge.mq.password is required when username is set (env: MQ_PASSWORD)");
+            // Some queue managers authenticate by user id / channel auth only
+            warnings.add("[MQ] bridge.mq.username set without a password - connecting without MQCSP password authentication");
         } else if (!isBlank(mqPassword)) {
             logger.info("[MQ] Password: ********");
         }

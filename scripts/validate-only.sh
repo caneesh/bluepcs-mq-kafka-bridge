@@ -67,7 +67,7 @@ check_var() {
 }
 
 check_var "MQ_HOST"
-check_var "MQ_PASSWORD"
+# MQ_PASSWORD is optional: the test queue manager authenticates without one
 check_var "KAFKA_BOOTSTRAP_SERVERS"
 check_var "KAFKA_TRUSTSTORE_PASSWORD"
 check_var "HDFS_NAMENODE"

@@ -77,8 +77,12 @@ public class MqConfiguration {
 
         if (username != null && !username.isEmpty()) {
             factory.setStringProperty(WMQConstants.USERID, username);
-            factory.setStringProperty(WMQConstants.PASSWORD, password);
-            factory.setBooleanProperty(WMQConstants.USER_AUTHENTICATION_MQCSP, true);
+            // MQCSP authentication requires a password; a passwordless connection
+            // sends only the user id (queue manager authenticates via channel auth)
+            if (password != null && !password.isEmpty()) {
+                factory.setStringProperty(WMQConstants.PASSWORD, password);
+                factory.setBooleanProperty(WMQConstants.USER_AUTHENTICATION_MQCSP, true);
+            }
         }
 
         if (sslCipherSuite != null && !sslCipherSuite.isEmpty()) {

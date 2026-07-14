@@ -41,10 +41,11 @@ Or use the script:
 
 ### Test Environment
 
-The `test-env` profile requires `MQ_PASSWORD`, `KAFKA_TRUSTSTORE_PASSWORD`
-and `OAUTH_CLIENT_SECRET` — the application fails at startup if they are
-missing. Put them in a `.env` file in the project root (gitignored, sourced
-automatically by the scripts):
+The `test-env` profile requires `KAFKA_TRUSTSTORE_PASSWORD` and
+`OAUTH_CLIENT_SECRET` — the application fails at startup if they are
+missing. (`MQ_PASSWORD` is not needed: the test queue manager authenticates
+by user id / channel auth without a password.) Put the secrets in a `.env`
+file in the project root (gitignored, sourced automatically by the scripts):
 
 ```bash
 cp .env.template .env
@@ -55,7 +56,6 @@ cp .env.template .env
 Or export them and run the jar directly:
 
 ```bash
-export MQ_PASSWORD=<secret>
 export KAFKA_TRUSTSTORE_PASSWORD=<secret>
 export OAUTH_CLIENT_SECRET=<secret>
 java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=test-env
@@ -118,9 +118,9 @@ The MQ listener is **disabled by default** for safety. Enable explicitly:
 
 | Variable | Description |
 |----------|-------------|
-| `MQ_PASSWORD` | IBM MQ password |
 | `KAFKA_TRUSTSTORE_PASSWORD` | Kafka SSL truststore password |
 | `OAUTH_CLIENT_SECRET` | OAuth2 client secret |
+| `MQ_PASSWORD` | IBM MQ password — prod only; the test queue manager authenticates without one |
 
 ### Key Properties
 

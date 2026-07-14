@@ -14,8 +14,9 @@ bridge:
     channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
     queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.UAT.BLOB}
     username: ${MQ_USERNAME:bluepcsapp}
-    # No default: fail fast if MQ_PASSWORD is not set rather than silently using a committed value
-    password: ${MQ_PASSWORD}
+    # Test MQ authenticates without a password (user id / channel auth only);
+    # set MQ_PASSWORD only if the queue manager starts requiring MQCSP auth
+    password: ${MQ_PASSWORD:}
     concurrency: 1
     receive-timeout: 5000
     # Payloads may contain PHI/PII; enable only deliberately and never in production
