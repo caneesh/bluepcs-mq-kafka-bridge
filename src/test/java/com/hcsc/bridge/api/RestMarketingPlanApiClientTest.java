@@ -25,6 +25,9 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class RestMarketingPlanApiClientTest {
 
+    private static final String TEST_CLIENT_ID = "test-client-id";
+    private static final String TEST_CLIENT_SECRET = "test-client-secret";
+
     private MockWebServer mockServer;
     private RestMarketingPlanApiClient client;
     private OkHttpClient httpClient;
@@ -70,8 +73,10 @@ class RestMarketingPlanApiClientTest {
 
             RecordedRequest request = mockServer.takeRequest();
             assertThat(request.getMethod()).isEqualTo("GET");
-            assertThat(request.getPath()).isEqualTo("/api/v1/marketing-plans/ENT-001");
+            assertThat(request.getPath()).isEqualTo("/ENT-001/2026-01-01");
             assertThat(request.getHeader("Authorization")).isEqualTo("Bearer test-jwt-token");
+            assertThat(request.getHeader("ClientID")).isEqualTo(TEST_CLIENT_ID);
+            assertThat(request.getHeader("ClientSecret")).isEqualTo(TEST_CLIENT_SECRET);
         }
 
         @Test
@@ -243,6 +248,8 @@ class RestMarketingPlanApiClientTest {
             client = new RestMarketingPlanApiClient(
                     jwtTokenProvider,
                     baseUrl,
+                    TEST_CLIENT_ID,
+                    TEST_CLIENT_SECRET,
                     shortTimeoutClient
             );
 
@@ -298,6 +305,8 @@ class RestMarketingPlanApiClientTest {
         return new RestMarketingPlanApiClient(
                 jwtTokenProvider,
                 baseUrl,
+                TEST_CLIENT_ID,
+                TEST_CLIENT_SECRET,
                 httpClient
         );
     }
@@ -308,6 +317,7 @@ class RestMarketingPlanApiClientTest {
                 "TXN-001",
                 "order_created",
                 entityId,
+                "2026-01-01",
                 java.util.Map.of("key", "value"),
                 java.time.Instant.now(),
                 "{}"

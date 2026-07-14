@@ -30,6 +30,8 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final String baseUrl;
+    private final String clientId;
+    private final String clientSecret;
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final int retryAttempts;
@@ -39,11 +41,15 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
     public RestMarketingPlanApiClient(
             JwtTokenProvider jwtTokenProvider,
             @Value("${bridge.api.base-url:http://localhost:8080}") String baseUrl,
+            @Value("${bridge.security.client-id:}") String clientId,
+            @Value("${bridge.security.client-secret:}") String clientSecret,
             @Value("${bridge.api.timeout-seconds:30}") int timeoutSeconds,
             @Value("${bridge.api.retry-attempts:3}") int retryAttempts,
             @Value("${bridge.api.retry-delay-ms:1000}") long retryDelayMs) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.baseUrl = baseUrl;
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
@@ -57,9 +63,13 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
     public RestMarketingPlanApiClient(
             JwtTokenProvider jwtTokenProvider,
             String baseUrl,
+            String clientId,
+            String clientSecret,
             OkHttpClient httpClient) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.baseUrl = baseUrl;
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
         this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper();
         this.retryAttempts = 3;
@@ -93,21 +103,29 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         if (base == null) {
             throw new EnrichmentException("Invalid URL for enrichment", entityId);
         }
-        // addPathSegment percent-encodes entityId, which comes from the MQ payload and must not
-        // be able to alter the request path (e.g. via '/', '?' or '../')
+        // The base URL points at the plans resource (.../plans). addPathSegment percent-encodes
+        // entityId and effectiveDate, which come from the MQ payload and must not be able to
+        // alter the request path (e.g. via '/', '?' or '../')
         HttpUrl url = base.newBuilder()
-                .addPathSegments("api/v1/marketing-plans")
-                .addPathSegment(entityId)
+                .addPathSegment(payload.getEntityId())
+                .addPathSegment(payload.getEffectiveDate())
                 .build();
 
         logger.debug("Enriching payload for entityId: {} (attempt {})", entityId, attempt);
 
-        Request request = new Request.Builder()
+        Request.Builder requestBuilder = new Request.Builder()
                 .url(url)
                 .get()
                 .header("Authorization", "Bearer " + jwtTokenProvider.getToken())
-                .header("Accept", "application/json")
-                .build();
+                .header("Accept", "application/json");
+        // ClientID / ClientSecret are credentials required by the API gateway; never log them
+        if (clientId != null && !clientId.isEmpty()) {
+            requestBuilder.header("ClientID", clientId);
+        }
+        if (clientSecret != null && !clientSecret.isEmpty()) {
+            requestBuilder.header("ClientSecret", clientSecret);
+        }
+        Request request = requestBuilder.build();
 
         try (Response response = httpClient.newCall(request).execute()) {
             int statusCode = response.code();

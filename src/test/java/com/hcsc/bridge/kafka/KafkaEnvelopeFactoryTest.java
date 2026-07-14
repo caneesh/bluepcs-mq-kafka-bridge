@@ -105,7 +105,7 @@ class KafkaEnvelopeFactoryTest {
         void shouldPreserveEventTimestamp() {
             Instant eventTime = Instant.parse("2024-01-15T10:30:00Z");
             ParsedPayload parsed = new ParsedPayload(
-                    "MSG-006", "TXN-006", "ORDER_CREATED", "ENT-001",
+                    "MSG-006", "TXN-006", "ORDER_CREATED", "ENT-001", "2026-01-01",
                     Map.of(), eventTime, "{}"
             );
             ProcessingContext ctx = new ProcessingContext("event-id-006", "MSG-006", Instant.now());
@@ -139,7 +139,7 @@ class KafkaEnvelopeFactoryTest {
         @DisplayName("should include originalMqMessageId and bridgeMessageId")
         void shouldIncludeOriginalMqMessageIdAndBridgeMessageId() {
             ParsedPayload parsed = new ParsedPayload(
-                    "MSG-002", "TRANSACTION-ABC", "EVENT", "ENTITY-XYZ",
+                    "MSG-002", "TRANSACTION-ABC", "EVENT", "ENTITY-XYZ", "2026-01-01",
                     Map.of(), Instant.now(), "{}"
             );
             ProcessingContext ctx = new ProcessingContext("deterministic-event-id", "MSG-002", Instant.now());
@@ -184,7 +184,7 @@ class KafkaEnvelopeFactoryTest {
         @DisplayName("should handle null marketing plan id")
         void shouldHandleNullMarketingPlanId() {
             ParsedPayload parsed = new ParsedPayload(
-                    "MSG-001", "TXN-001", "EVENT", "ENT-001",
+                    "MSG-001", "TXN-001", "EVENT", "ENT-001", "2026-01-01",
                     Map.of(), Instant.now(), "{}"
             );
             ProcessingContext ctx = new ProcessingContext("event-id-001", "MSG-001", Instant.now());
@@ -203,7 +203,7 @@ class KafkaEnvelopeFactoryTest {
         @DisplayName("should handle null campaign id")
         void shouldHandleNullCampaignId() {
             ParsedPayload parsed = new ParsedPayload(
-                    "MSG-001", "TXN-001", "EVENT", "ENT-001",
+                    "MSG-001", "TXN-001", "EVENT", "ENT-001", "2026-01-01",
                     Map.of(), Instant.now(), "{}"
             );
             ProcessingContext ctx = new ProcessingContext("event-id-001", "MSG-001", Instant.now());
@@ -225,6 +225,7 @@ class KafkaEnvelopeFactoryTest {
                 transactionId,
                 "ORDER_CREATED",
                 "ENT-001",
+                "2026-01-01",
                 Map.of("key", "value"),
                 Instant.now(),
                 "{\"test\":\"payload\"}"

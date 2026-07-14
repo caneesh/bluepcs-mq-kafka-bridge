@@ -64,19 +64,32 @@ public class FakeMqMessageGenerator {
     }
 
     private String generatePayload(String messageId, long seq) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("messageId", messageId);
-        payload.put("transactionId", "TXN-" + seq);
-        payload.put("eventType", defaultEventType);
-        payload.put("entityId", defaultEntityPrefix + "-" + seq);
-        payload.put("timestamp", Instant.now().toString());
+        String marketingPlanIdentifier = defaultEntityPrefix + "-" + seq;
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("orderId", "ORD-" + seq);
-        data.put("customerId", "CUST-" + (seq % 100));
-        data.put("amount", 100.0 + (seq % 1000));
-        data.put("currency", "USD");
-        payload.put("data", data);
+        Map<String, Object> effectivityDates = new HashMap<>();
+        effectivityDates.put("effectiveStartDate", "2026-01-01T06:00:00.000Z");
+        effectivityDates.put("retiredDate", "9999-12-31T00:00:00.000Z");
+        effectivityDates.put("closedDate", "9999-12-31T00:00:00.000Z");
+
+        Map<String, Object> planVersion = new HashMap<>();
+        planVersion.put("planVersionIdentifier", String.valueOf(seq));
+        planVersion.put("planEffectivityDates", effectivityDates);
+        planVersion.put("planStatus", "Open");
+
+        Map<String, Object> changeEvent = new HashMap<>();
+        changeEvent.put("typeName", "Update");
+        changeEvent.put("eventName", defaultEventType);
+        changeEvent.put("timestamp", Instant.now().toString());
+
+        Map<String, Object> planNotification = new HashMap<>();
+        planNotification.put("marketingPlanIdentifier", marketingPlanIdentifier);
+        planNotification.put("lineOfBusiness", "Retail");
+        planNotification.put("planVersion", planVersion);
+        planNotification.put("changeEvent", changeEvent);
+        planNotification.put("mockIndicator", "N");
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("planNotification", planNotification);
 
         try {
             return OBJECT_MAPPER.writeValueAsString(payload);

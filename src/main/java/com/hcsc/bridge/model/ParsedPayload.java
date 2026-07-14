@@ -11,17 +11,19 @@ public final class ParsedPayload {
     private final String transactionId;
     private final String eventType;
     private final String entityId;
+    private final String effectiveDate;
     private final Map<String, Object> data;
     private final Instant eventTimestamp;
     private final String rawPayload;
 
     public ParsedPayload(String messageId, String transactionId, String eventType,
-                         String entityId, Map<String, Object> data, Instant eventTimestamp,
-                         String rawPayload) {
+                         String entityId, String effectiveDate, Map<String, Object> data,
+                         Instant eventTimestamp, String rawPayload) {
         this.messageId = Objects.requireNonNull(messageId, "messageId must not be null");
         this.transactionId = Objects.requireNonNull(transactionId, "transactionId must not be null");
         this.eventType = Objects.requireNonNull(eventType, "eventType must not be null");
         this.entityId = Objects.requireNonNull(entityId, "entityId must not be null");
+        this.effectiveDate = Objects.requireNonNull(effectiveDate, "effectiveDate must not be null");
         this.data = data != null ? Collections.unmodifiableMap(data) : Collections.emptyMap();
         this.eventTimestamp = Objects.requireNonNull(eventTimestamp, "eventTimestamp must not be null");
         this.rawPayload = Objects.requireNonNull(rawPayload, "rawPayload must not be null");
@@ -41,6 +43,10 @@ public final class ParsedPayload {
 
     public String getEntityId() {
         return entityId;
+    }
+
+    public String getEffectiveDate() {
+        return effectiveDate;
     }
 
     public Map<String, Object> getData() {
@@ -76,6 +82,7 @@ public final class ParsedPayload {
                 ", transactionId='" + transactionId + '\'' +
                 ", eventType='" + eventType + '\'' +
                 ", entityId='" + entityId + '\'' +
+                ", effectiveDate='" + effectiveDate + '\'' +
                 ", eventTimestamp=" + eventTimestamp +
                 '}';
     }

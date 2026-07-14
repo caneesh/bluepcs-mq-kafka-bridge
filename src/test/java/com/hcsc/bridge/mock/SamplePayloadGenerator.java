@@ -36,26 +36,19 @@ public class SamplePayloadGenerator {
     }
 
     private ParsedPayload generateParsedPayload(String messageId, long seq) {
-        String transactionId = "TXN-" + seq;
-        String eventType = "order_created";
-        String entityId = "ENTITY-" + seq;
+        String entityId = "PLAN-" + seq;
+        String versionId = String.valueOf(seq);
+        String transactionId = entityId + "-v" + versionId;
+        String eventType = "ReadyToSell";
+        String effectiveDate = "2026-01-01";
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("orderId", "ORD-" + seq);
-        data.put("customerId", "CUST-" + (seq % 100));
-        data.put("amount", 100.0 + (seq % 1000));
-        data.put("currency", "USD");
-        data.put("items", 1 + (int)(seq % 10));
+        Map<String, Object> planNotification =
+                buildPlanNotification(entityId, versionId, effectiveDate, eventType);
 
         String rawPayload;
         try {
             Map<String, Object> raw = new HashMap<>();
-            raw.put("messageId", messageId);
-            raw.put("transactionId", transactionId);
-            raw.put("eventType", eventType);
-            raw.put("entityId", entityId);
-            raw.put("data", data);
-            raw.put("eventTimestamp", Instant.now().toString());
+            raw.put("planNotification", planNotification);
             rawPayload = OBJECT_MAPPER.writeValueAsString(raw);
         } catch (JsonProcessingException e) {
             rawPayload = "{}";
@@ -66,10 +59,37 @@ public class SamplePayloadGenerator {
                 transactionId,
                 eventType,
                 entityId,
-                data,
+                effectiveDate,
+                planNotification,
                 Instant.now(),
                 rawPayload
         );
+    }
+
+    private Map<String, Object> buildPlanNotification(String entityId, String versionId,
+                                                      String effectiveDate, String eventType) {
+        Map<String, Object> effectivityDates = new HashMap<>();
+        effectivityDates.put("effectiveStartDate", effectiveDate + "T06:00:00.000Z");
+        effectivityDates.put("retiredDate", "9999-12-31T00:00:00.000Z");
+        effectivityDates.put("closedDate", "9999-12-31T00:00:00.000Z");
+
+        Map<String, Object> planVersion = new HashMap<>();
+        planVersion.put("planVersionIdentifier", versionId);
+        planVersion.put("planEffectivityDates", effectivityDates);
+        planVersion.put("planStatus", "Open");
+
+        Map<String, Object> changeEvent = new HashMap<>();
+        changeEvent.put("typeName", "Update");
+        changeEvent.put("eventName", eventType);
+        changeEvent.put("timestamp", Instant.now().toString());
+
+        Map<String, Object> planNotification = new HashMap<>();
+        planNotification.put("marketingPlanIdentifier", entityId);
+        planNotification.put("lineOfBusiness", "Retail");
+        planNotification.put("planVersion", planVersion);
+        planNotification.put("changeEvent", changeEvent);
+        planNotification.put("mockIndicator", "N");
+        return planNotification;
     }
 
     public EnrichedPayload generateEnrichedPayload() {

@@ -25,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RestApiClientIT {
 
+    private static final String TEST_CLIENT_ID = "test-client-id";
+    private static final String TEST_CLIENT_SECRET = "test-client-secret";
+
     private MockWebServer mockWebServer;
     private RestMarketingPlanApiClient apiClient;
     private MockJwtTokenProvider jwtTokenProvider;
@@ -43,7 +46,8 @@ class RestApiClientIT {
         String baseUrl = mockWebServer.url("/").toString();
         baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
 
-        apiClient = new RestMarketingPlanApiClient(jwtTokenProvider, baseUrl, httpClient);
+        apiClient = new RestMarketingPlanApiClient(
+                jwtTokenProvider, baseUrl, TEST_CLIENT_ID, TEST_CLIENT_SECRET, httpClient);
     }
 
     @AfterEach
@@ -102,7 +106,7 @@ class RestApiClientIT {
 
             RecordedRequest request = mockWebServer.takeRequest(5, TimeUnit.SECONDS);
             assertThat(request).isNotNull();
-            assertThat(request.getPath()).isEqualTo("/api/v1/marketing-plans/ENTITY-003");
+            assertThat(request.getPath()).isEqualTo("/ENTITY-003/2026-01-01");
             assertThat(request.getMethod()).isEqualTo("GET");
         }
     }
@@ -188,7 +192,7 @@ class RestApiClientIT {
                 String baseUrl = slowServer.url("/").toString();
                 baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
                 RestMarketingPlanApiClient timeoutClient = new RestMarketingPlanApiClient(
-                        jwtTokenProvider, baseUrl, shortTimeoutClient);
+                        jwtTokenProvider, baseUrl, TEST_CLIENT_ID, TEST_CLIENT_SECRET, shortTimeoutClient);
 
                 ParsedPayload payload = createTestPayload("MSG-TIMEOUT-001", "ENTITY-TIMEOUT-001");
 
@@ -301,6 +305,7 @@ class RestApiClientIT {
                 "TXN-" + messageId,
                 "order_created",
                 entityId,
+                "2026-01-01",
                 Map.of("orderId", "ORD-001", "amount", 100.0),
                 Instant.now(),
                 "{\"test\":\"payload\"}"

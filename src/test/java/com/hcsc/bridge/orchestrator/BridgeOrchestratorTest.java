@@ -359,6 +359,7 @@ class BridgeOrchestratorTest {
                 transactionId,
                 "ORDER_CREATED",
                 "ENT-001",
+                "2026-01-01",
                 Map.of("key", "value"),
                 Instant.now(),
                 "{\"test\":\"payload\"}"

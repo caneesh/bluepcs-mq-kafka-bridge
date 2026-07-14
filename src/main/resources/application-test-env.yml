@@ -65,7 +65,7 @@ bridge:
   # Marketing Plan API Configuration (Test Environment)
   # ============================================================================
   api:
-    base-url: ${API_BASE_URL:https://api-gateway-v2-wv.test.hscint.net/xps_product_catalog/v3/plans}
+    base-url: ${API_BASE_URL:https://api-gateway-ssl-svc.test.hcscint.net/eps_product_catalog/v2/plans}
     timeout-seconds: 30
 
   # ============================================================================
