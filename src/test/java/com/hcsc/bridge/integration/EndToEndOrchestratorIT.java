@@ -1,8 +1,8 @@
 package com.hcsc.bridge.integration;
 
+import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.core.EventIdGenerator;
-import com.hcsc.bridge.kafka.KafkaEnvelopeFactory;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
 import com.hcsc.bridge.mock.FakeMqMessageGenerator;
 import com.hcsc.bridge.mock.InMemoryAuditPublisher;
@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import com.hcsc.bridge.model.KafkaEnvelope;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -28,6 +27,7 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,17 +52,17 @@ class EndToEndOrchestratorIT {
         kafkaPublisher = Mockito.mock(KafkaEnvelopePublisher.class);
         eventIdGenerator = new EventIdGenerator();
 
-        when(kafkaPublisher.publish(any(KafkaEnvelope.class))).thenReturn("12345");
+        when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("12345");
 
         JsonMessageParser parser = new JsonMessageParser();
         HdfsSafePayloadWriter hdfsWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", ".tmp");
-        KafkaEnvelopeFactory envelopeFactory = new KafkaEnvelopeFactory();
+        EnrichmentWrapperFactory wrapperFactory = new EnrichmentWrapperFactory();
 
         orchestrator = new BridgeOrchestrator(
                 parser,
                 apiClient,
                 hdfsWriter,
-                envelopeFactory,
+                wrapperFactory,
                 kafkaPublisher,
                 eventIdGenerator,
                 auditPublisher
@@ -127,28 +127,29 @@ class EndToEndOrchestratorIT {
             assertThat(result.getHdfsPath()).isNotNull();
             assertThat(hdfsOperations.exists(result.getHdfsPath())).isTrue();
 
+            // HDFS content is now the published wrapper (built from the API PlanResponse),
+            // not the MQ payload. Assert on the wrapper structure instead.
             String content = hdfsOperations.readFile(result.getHdfsPath());
-            assertThat(content).contains("MSG-HDFS-001");
+            assertThat(content).contains("RestAPIResponse");
+            assertThat(content).contains("PlanResponse");
+            assertThat(content).contains("changeEventTimeStamp");
         }
 
         @Test
-        @DisplayName("should publish Kafka envelope with correct data including eventId")
-        void shouldPublishKafkaEnvelopeWithCorrectData() {
+        @DisplayName("should publish Kafka wrapper with eventId key and wrapper value")
+        void shouldPublishKafkaWrapperWithCorrectData() {
             MqMessage message = messageGenerator.generateMessageWithId("MSG-KAFKA-001");
+            String expectedEventId = eventIdGenerator.generateEventId("MSG-KAFKA-001");
 
             orchestrator.process(message);
 
-            ArgumentCaptor<KafkaEnvelope> captor = ArgumentCaptor.forClass(KafkaEnvelope.class);
-            verify(kafkaPublisher).publish(captor.capture());
+            ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher).publish(keyCaptor.capture(), valueCaptor.capture());
 
-            KafkaEnvelope envelope = captor.getValue();
-            assertThat(envelope.getEventId()).isNotNull();
-            assertThat(envelope.getOriginalMqMessageId()).isEqualTo("MSG-KAFKA-001");
-            assertThat(envelope.getBridgeMessageId()).isNotNull();
-            assertThat(envelope.getTransactionId()).isNotNull();
-            assertThat(envelope.getHdfsPath()).isNotNull();
-            assertThat(envelope.getChecksum()).isNotNull();
-            assertThat(envelope.getMarketingPlanId()).isNotNull();
+            assertThat(keyCaptor.getValue()).isEqualTo(expectedEventId);
+            assertThat(valueCaptor.getValue()).contains("RestAPIResponse");
+            assertThat(valueCaptor.getValue()).contains("changeEventTypeName");
         }
     }
 
@@ -170,7 +171,7 @@ class EndToEndOrchestratorIT {
                     new JsonMessageParser(),
                     apiClient,
                     hdfsWriter,
-                    new KafkaEnvelopeFactory(),
+                    new EnrichmentWrapperFactory(),
                     kafkaPublisher,
                     eventIdGenerator,
                     auditPublisher
@@ -286,7 +287,7 @@ class EndToEndOrchestratorIT {
         @Test
         @DisplayName("should handle Kafka publish failure")
         void shouldHandleKafkaFailure() {
-            when(kafkaPublisher.publish(any())).thenThrow(
+            when(kafkaPublisher.publish(anyString(), anyString())).thenThrow(
                     new com.hcsc.bridge.kafka.KafkaPublishException("Kafka unavailable", "MSG-001", "topic", null));
 
             MqMessage message = messageGenerator.generateMessage();
@@ -300,7 +301,7 @@ class EndToEndOrchestratorIT {
         @Test
         @DisplayName("should preserve HDFS file when Kafka fails")
         void shouldPreserveHdfsFileWhenKafkaFails() throws IOException {
-            when(kafkaPublisher.publish(any())).thenThrow(
+            when(kafkaPublisher.publish(anyString(), anyString())).thenThrow(
                     new com.hcsc.bridge.kafka.KafkaPublishException("Kafka unavailable", "MSG-001", "topic", null));
 
             MqMessage message = messageGenerator.generateMessageWithId("MSG-KAFKA-FAIL-001");

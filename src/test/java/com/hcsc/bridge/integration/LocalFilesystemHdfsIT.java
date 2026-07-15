@@ -25,6 +25,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LocalFilesystemHdfsIT {
 
+    private static final String WRAPPER_CONTENT =
+            "{\"changeEventTimeStamp\":\"20260710T162108.143 CDT\","
+            + "\"RestAPIResponse\":{\"PlanResponse\":{\"planIdentification\":{\"marketingPlanIdentifier\":\"MP-1\"}}},"
+            + "\"changeEventTypeName\":\"Update\"}";
+
     private LocalFileSystemHdfsOperations hdfsOperations;
     private HdfsSafePayloadWriter payloadWriter;
     private SamplePayloadGenerator payloadGenerator;
@@ -52,7 +57,7 @@ class LocalFilesystemHdfsIT {
         void shouldNotLeaveTempFiles() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.isNewWrite()).isTrue();
             assertThat(hdfsOperations.exists(result.getHdfsPath())).isTrue();
@@ -66,7 +71,7 @@ class LocalFilesystemHdfsIT {
             hdfsOperations.setShouldFailOnRename(true);
             hdfsOperations.setFailureMessage("Rename failed");
 
-            assertThatThrownBy(() -> payloadWriter.write(payload))
+            assertThatThrownBy(() -> payloadWriter.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class);
 
             long tmpFileCount = Files.walk(tempDir)
@@ -80,12 +85,12 @@ class LocalFilesystemHdfsIT {
         void shouldCleanupTempFileOnWriteFailure() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            payloadWriter.write(payload);
+            payloadWriter.write(payload, WRAPPER_CONTENT);
 
             hdfsOperations.setShouldFailOnCreate(true);
             EnrichedPayload payload2 = payloadGenerator.generateEnrichedPayload();
 
-            assertThatThrownBy(() -> payloadWriter.write(payload2))
+            assertThatThrownBy(() -> payloadWriter.write(payload2, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class);
 
             long tmpFileCount = Files.walk(tempDir)
@@ -104,7 +109,7 @@ class LocalFilesystemHdfsIT {
         void shouldWriteToTempThenRename() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).doesNotContain(".tmp");
             assertThat(result.isNewWrite()).isTrue();
@@ -115,7 +120,7 @@ class LocalFilesystemHdfsIT {
         void shouldVerifyChecksumAfterRename() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getChecksum()).isNotNull();
             assertThat(result.getChecksum()).hasSize(64);
@@ -126,7 +131,7 @@ class LocalFilesystemHdfsIT {
         void shouldCreateParentDirectories() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             Path finalPath = tempDir.resolve(result.getHdfsPath().substring(1));
             assertThat(Files.exists(finalPath.getParent())).isTrue();
@@ -142,8 +147,8 @@ class LocalFilesystemHdfsIT {
         void shouldReturnAlreadyExistsForDuplicates() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result1 = payloadWriter.write(payload);
-            HdfsWriteResult result2 = payloadWriter.write(payload);
+            HdfsWriteResult result1 = payloadWriter.write(payload, WRAPPER_CONTENT);
+            HdfsWriteResult result2 = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result1.isNewWrite()).isTrue();
             assertThat(result2.isAlreadyExists()).isTrue();
@@ -155,8 +160,8 @@ class LocalFilesystemHdfsIT {
         void shouldReturnExistingChecksumForDuplicate() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result1 = payloadWriter.write(payload);
-            HdfsWriteResult result2 = payloadWriter.write(payload);
+            HdfsWriteResult result1 = payloadWriter.write(payload, WRAPPER_CONTENT);
+            HdfsWriteResult result2 = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result2.getChecksum()).isNotNull();
         }
@@ -166,10 +171,10 @@ class LocalFilesystemHdfsIT {
         void shouldNotOverwriteExistingFile() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result1 = payloadWriter.write(payload);
+            HdfsWriteResult result1 = payloadWriter.write(payload, WRAPPER_CONTENT);
             String originalContent = hdfsOperations.readFile(result1.getHdfsPath());
 
-            HdfsWriteResult result2 = payloadWriter.write(payload);
+            HdfsWriteResult result2 = payloadWriter.write(payload, WRAPPER_CONTENT);
             String contentAfterSecondWrite = hdfsOperations.readFile(result2.getHdfsPath());
 
             assertThat(contentAfterSecondWrite).isEqualTo(originalContent);
@@ -192,7 +197,7 @@ class LocalFilesystemHdfsIT {
                 executor.submit(() -> {
                     try {
                         EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
-                        HdfsWriteResult result = payloadWriter.write(payload);
+                        HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
                         if (result.isNewWrite()) {
                             successCount.incrementAndGet();
                         }
@@ -225,7 +230,7 @@ class LocalFilesystemHdfsIT {
                 executor.submit(() -> {
                     try {
                         startLatch.await();
-                        HdfsWriteResult result = payloadWriter.write(sharedPayload);
+                        HdfsWriteResult result = payloadWriter.write(sharedPayload, WRAPPER_CONTENT);
                         if (result.isNewWrite()) {
                             newWriteCount.incrementAndGet();
                         } else {
@@ -254,28 +259,28 @@ class LocalFilesystemHdfsIT {
     class FileContentVerificationTests {
 
         @Test
-        @DisplayName("should write valid JSON content")
+        @DisplayName("should write the wrapper content verbatim")
         void shouldWriteValidJsonContent() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             String content = hdfsOperations.readFile(result.getHdfsPath());
-            assertThat(content).contains("messageId");
-            assertThat(content).contains("transactionId");
-            assertThat(content).contains("enrichmentData");
+            assertThat(content).isEqualTo(WRAPPER_CONTENT);
+            assertThat(content).contains("changeEventTimeStamp");
+            assertThat(content).contains("RestAPIResponse");
         }
 
         @Test
-        @DisplayName("should preserve enrichment data in written file")
+        @DisplayName("should preserve the wrapped API response in written file")
         void shouldPreserveEnrichmentData() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             String content = hdfsOperations.readFile(result.getHdfsPath());
-            assertThat(content).contains("marketingPlanId");
-            assertThat(content).contains("campaignId");
+            assertThat(content).contains("PlanResponse");
+            assertThat(content).contains("marketingPlanIdentifier");
         }
 
         @Test
@@ -283,7 +288,7 @@ class LocalFilesystemHdfsIT {
         void shouldReportCorrectBytesWritten() throws IOException {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             Path filePath = tempDir.resolve(result.getHdfsPath().substring(1));
             long actualSize = Files.size(filePath);
@@ -300,7 +305,7 @@ class LocalFilesystemHdfsIT {
         void shouldGeneratePathWithEventType() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).contains(payload.getEventType().toLowerCase());
         }
@@ -310,19 +315,20 @@ class LocalFilesystemHdfsIT {
         void shouldGeneratePathWithDateHierarchy() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).matches(".*\\d{4}/\\d{2}/\\d{2}.*");
         }
 
         @Test
-        @DisplayName("should include transaction and message ID in filename")
+        @DisplayName("should include eventId in filename")
         void shouldIncludeIdsInFilename() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
-            HdfsWriteResult result = payloadWriter.write(payload);
+            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
-            assertThat(result.getHdfsPath()).contains(payload.getTransactionId());
+            // The filename is derived from the eventId (see HdfsSafePayloadWriter#buildTargetPath).
+            assertThat(result.getHdfsPath()).contains(payload.getEventId());
             assertThat(result.getHdfsPath()).contains(payload.getMessageId());
         }
     }

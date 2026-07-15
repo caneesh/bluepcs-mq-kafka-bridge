@@ -1,5 +1,7 @@
 package com.hcsc.bridge.mock;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hcsc.bridge.api.EnrichmentException;
 import com.hcsc.bridge.api.MarketingPlanApiClient;
 import com.hcsc.bridge.model.ParsedPayload;
@@ -9,6 +11,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MockMarketingPlanApiClient implements MarketingPlanApiClient {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private boolean shouldFail = false;
     private boolean shouldTimeout = false;
@@ -34,16 +38,32 @@ public class MockMarketingPlanApiClient implements MarketingPlanApiClient {
             throw new EnrichmentException(failureMessage, payload.getEntityId());
         }
 
-        Map<String, Object> additionalData = new HashMap<>();
-        additionalData.put("enrichedAt", System.currentTimeMillis());
-        additionalData.put("source", "mock-api");
-        additionalData.put("entityId", payload.getEntityId());
-        additionalData.put("version", "1.0");
+        JsonNode rawResponse = buildRawResponse(payload);
+        String marketingPlanId = rawResponse
+                .path("PlanResponse").path("planIdentification").path("marketingPlanIdentifier")
+                .asText(null);
 
-        String marketingPlanId = "MP-" + payload.getTransactionId();
-        String campaignId = "CAMP-" + payload.getEntityId();
+        return new EnrichmentResult(marketingPlanId, null, new HashMap<>(), rawResponse);
+    }
 
-        return new EnrichmentResult(marketingPlanId, campaignId, additionalData);
+    private JsonNode buildRawResponse(ParsedPayload payload) {
+        Map<String, Object> planIdentification = new HashMap<>();
+        planIdentification.put("marketingPlanIdentifier", "MP-" + payload.getTransactionId());
+        planIdentification.put("planName", "Mock Plan for " + payload.getEntityId());
+
+        Map<String, Object> changeEvent = new HashMap<>();
+        changeEvent.put("eventName", "ReadyToSell");
+        changeEvent.put("typeName", "Update");
+        changeEvent.put("timestamp", "20260710T162108.143 CDT");
+
+        Map<String, Object> planResponse = new HashMap<>();
+        planResponse.put("planIdentification", planIdentification);
+        planResponse.put("changeEvent", changeEvent);
+
+        Map<String, Object> root = new HashMap<>();
+        root.put("PlanResponse", planResponse);
+
+        return OBJECT_MAPPER.valueToTree(root);
     }
 
     public void setShouldFail(boolean shouldFail) {

@@ -1,10 +1,9 @@
 package com.hcsc.bridge.integration;
 
+import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
-import com.hcsc.bridge.model.KafkaEnvelope;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -25,7 +24,6 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 
-import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -36,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KafkaPublisherIT {
 
     private static final String TOPIC = "test-bridge-events";
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
-            .registerModule(new JavaTimeModule());
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final EnrichmentWrapperFactory WRAPPER_FACTORY = new EnrichmentWrapperFactory();
 
     private static EmbeddedKafkaBroker embeddedKafka;
 
@@ -92,36 +90,32 @@ class KafkaPublisherIT {
     class SuccessfulPublish {
 
         @Test
-        @DisplayName("should publish envelope and return offset")
-        void shouldPublishEnvelopeAndReturnOffset() {
-            KafkaEnvelope envelope = createTestEnvelope("MSG-001", "TXN-001", "ENTITY-001");
-
-            String offset = publisher.publish(envelope);
+        @DisplayName("should publish wrapper and return offset")
+        void shouldPublishWrapperAndReturnOffset() {
+            String offset = publisher.publish("event-id-001", buildWrapper("MP-001"));
 
             assertThat(offset).isNotNull();
             assertThat(Long.parseLong(offset)).isGreaterThanOrEqualTo(0);
         }
 
         @Test
-        @DisplayName("should publish message with correct payload")
+        @DisplayName("should publish message with correct wrapper payload")
         void shouldPublishWithCorrectPayload() throws Exception {
-            String messageId = "MSG-" + UUID.randomUUID().toString().substring(0, 8);
-            KafkaEnvelope envelope = createTestEnvelope(messageId, "TXN-002", "ENTITY-002");
-
-            publisher.publish(envelope);
+            String key = "event-" + UUID.randomUUID().toString().substring(0, 8);
+            publisher.publish(key, buildWrapper("MP-CORRECT"));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
 
             boolean found = false;
             for (ConsumerRecord<String, String> record : records) {
-                JsonNode node = OBJECT_MAPPER.readTree(record.value());
-                if (messageId.equals(node.get("messageId").asText())) {
-                    assertThat(node.get("transactionId").asText()).isEqualTo("TXN-002");
-                    assertThat(node.get("entityId").asText()).isEqualTo("ENTITY-002");
-                    assertThat(node.get("eventType").asText()).isEqualTo("order_created");
-                    assertThat(node.get("hdfsPath").asText()).startsWith("/data/bridge/");
-                    assertThat(node.get("checksum").asText()).isNotEmpty();
+                if (key.equals(record.key())) {
+                    JsonNode node = OBJECT_MAPPER.readTree(record.value());
+                    assertThat(node.has("changeEventTimeStamp")).isTrue();
+                    assertThat(node.has("changeEventTypeName")).isTrue();
+                    assertThat(node.path("RestAPIResponse").path("PlanResponse")
+                            .path("planIdentification").path("marketingPlanIdentifier").asText())
+                            .isEqualTo("MP-CORRECT");
                     found = true;
                     break;
                 }
@@ -135,21 +129,17 @@ class KafkaPublisherIT {
     class KafkaKeyTests {
 
         @Test
-        @DisplayName("should use correct kafka key format")
-        void shouldUseCorrectKafkaKeyFormat() {
-            String entityId = "ENTITY-KEY-001";
-            String transactionId = "TXN-KEY-001";
-            KafkaEnvelope envelope = createTestEnvelope("MSG-KEY-001", transactionId, entityId);
-
-            publisher.publish(envelope);
+        @DisplayName("should use supplied key")
+        void shouldUseSuppliedKey() {
+            String key = "ENTITY-KEY-001:TXN-KEY-001";
+            publisher.publish(key, buildWrapper("MP-KEY"));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
 
             boolean foundCorrectKey = false;
-            String expectedKey = entityId + ":" + transactionId;
             for (ConsumerRecord<String, String> record : records) {
-                if (expectedKey.equals(record.key())) {
+                if (key.equals(record.key())) {
                     foundCorrectKey = true;
                     break;
                 }
@@ -160,19 +150,15 @@ class KafkaPublisherIT {
         @Test
         @DisplayName("should handle special characters in key")
         void shouldHandleSpecialCharactersInKey() {
-            String entityId = "ENTITY.WITH.DOTS";
-            String transactionId = "TXN-WITH-DASH_AND_UNDERSCORE";
-            KafkaEnvelope envelope = createTestEnvelope("MSG-SPECIAL-001", transactionId, entityId);
-
-            publisher.publish(envelope);
+            String key = "ENTITY.WITH.DOTS:TXN-WITH-DASH_AND_UNDERSCORE";
+            publisher.publish(key, buildWrapper("MP-SPECIAL"));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
 
-            String expectedKey = entityId + ":" + transactionId;
             boolean found = false;
             for (ConsumerRecord<String, String> record : records) {
-                if (expectedKey.equals(record.key())) {
+                if (key.equals(record.key())) {
                     found = true;
                     break;
                 }
@@ -188,10 +174,10 @@ class KafkaPublisherIT {
         @Test
         @DisplayName("should allow publishing same message twice with different offsets")
         void shouldAllowPublishingSameMessageTwice() {
-            KafkaEnvelope envelope = createTestEnvelope("MSG-IDEM-001", "TXN-IDEM-001", "ENTITY-IDEM-001");
+            String wrapper = buildWrapper("MP-IDEM");
 
-            String offset1 = publisher.publish(envelope);
-            String offset2 = publisher.publish(envelope);
+            String offset1 = publisher.publish("event-idem-001", wrapper);
+            String offset2 = publisher.publish("event-idem-001", wrapper);
 
             assertThat(offset1).isNotNull();
             assertThat(offset2).isNotNull();
@@ -200,17 +186,16 @@ class KafkaPublisherIT {
         @Test
         @DisplayName("duplicate messages should have same content")
         void duplicateMessagesShouldHaveSameContent() throws Exception {
-            String messageId = "MSG-IDEM-002";
-            KafkaEnvelope envelope = createTestEnvelope(messageId, "TXN-IDEM-002", "ENTITY-IDEM-002");
+            String key = "event-idem-002";
+            String wrapper = buildWrapper("MP-IDEM-CONTENT");
 
-            publisher.publish(envelope);
-            publisher.publish(envelope);
+            publisher.publish(key, wrapper);
+            publisher.publish(key, wrapper);
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             int matchCount = 0;
             for (ConsumerRecord<String, String> record : records) {
-                JsonNode node = OBJECT_MAPPER.readTree(record.value());
-                if (messageId.equals(node.get("messageId").asText())) {
+                if (key.equals(record.key())) {
                     matchCount++;
                 }
             }
@@ -218,19 +203,15 @@ class KafkaPublisherIT {
         }
     }
 
-    private KafkaEnvelope createTestEnvelope(String messageId, String transactionId, String entityId) {
-        return KafkaEnvelope.builder()
-                .messageId(messageId)
-                .transactionId(transactionId)
-                .eventType("order_created")
-                .entityId(entityId)
-                .hdfsPath("/data/bridge/payloads/order_created/2026/05/16/" + transactionId + "_" + messageId + ".json")
-                .checksum("abc123def456")
-                .marketingPlanId("MP-" + transactionId)
-                .campaignId("CAMP-" + entityId)
-                .eventTimestamp(Instant.now())
-                .processedAt(Instant.now())
-                .schemaVersion("1.0")
-                .build();
+    private String buildWrapper(String marketingPlanId) {
+        String raw = "{\"PlanResponse\":{"
+                + "\"planIdentification\":{\"marketingPlanIdentifier\":\"" + marketingPlanId + "\"},"
+                + "\"changeEvent\":{\"typeName\":\"Update\",\"timestamp\":\"20260710T162108.143 CDT\"}"
+                + "}}";
+        try {
+            return WRAPPER_FACTORY.buildWrapper(OBJECT_MAPPER.readTree(raw));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }

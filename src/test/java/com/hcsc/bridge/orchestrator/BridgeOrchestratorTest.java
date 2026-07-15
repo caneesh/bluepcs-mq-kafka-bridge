@@ -1,21 +1,21 @@
 package com.hcsc.bridge.orchestrator;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hcsc.bridge.api.EnrichmentException;
+import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.api.MarketingPlanApiClient;
 import com.hcsc.bridge.api.MarketingPlanApiClient.EnrichmentResult;
 import com.hcsc.bridge.audit.AuditEvent;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
-import com.hcsc.bridge.core.ProcessingContext;
 import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
 import com.hcsc.bridge.hdfs.HdfsWriteException;
-import com.hcsc.bridge.kafka.KafkaEnvelopeFactory;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
 import com.hcsc.bridge.kafka.KafkaPublishException;
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
-import com.hcsc.bridge.model.KafkaEnvelope;
 import com.hcsc.bridge.model.MqMessage;
 import com.hcsc.bridge.model.ParsedPayload;
 import com.hcsc.bridge.parser.MessageParseException;
@@ -35,6 +35,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -45,14 +46,14 @@ import static org.mockito.Mockito.when;
 @DisplayName("BridgeOrchestrator")
 class BridgeOrchestratorTest {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     @Mock
     private MessageParser messageParser;
     @Mock
     private MarketingPlanApiClient apiClient;
     @Mock
     private HdfsSafePayloadWriter hdfsWriter;
-    @Mock
-    private KafkaEnvelopeFactory envelopeFactory;
     @Mock
     private KafkaEnvelopePublisher kafkaPublisher;
     @Mock
@@ -71,11 +72,26 @@ class BridgeOrchestratorTest {
                 messageParser,
                 apiClient,
                 hdfsWriter,
-                envelopeFactory,
+                new EnrichmentWrapperFactory(),
                 kafkaPublisher,
                 eventIdGenerator,
                 auditPublisher
         );
+    }
+
+    private static EnrichmentResult enrichmentResult() {
+        return new EnrichmentResult("MP-001", null, Map.of(), rawResponse());
+    }
+
+    private static JsonNode rawResponse() {
+        try {
+            return MAPPER.readTree("{\"PlanResponse\":{"
+                    + "\"planIdentification\":{\"marketingPlanIdentifier\":\"MP-001\"},"
+                    + "\"changeEvent\":{\"typeName\":\"Update\",\"timestamp\":\"20260710T162108.143 CDT\"}"
+                    + "}}");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Nested
@@ -87,16 +103,13 @@ class BridgeOrchestratorTest {
         void shouldProcessMessageSuccessfully() {
             MqMessage mqMessage = createMqMessage("MSG-001");
             ParsedPayload parsedPayload = createParsedPayload("MSG-001", "TXN-001");
-            EnrichmentResult enrichmentResult = new EnrichmentResult("MP-001", "CAMP-001", Map.of());
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 1024);
-            KafkaEnvelope envelope = createEnvelope("event-id-001", "MSG-001", "TXN-001");
 
             when(eventIdGenerator.generateEventId("MSG-001")).thenReturn("event-id-001");
             when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
-            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult);
-            when(hdfsWriter.write(any(EnrichedPayload.class))).thenReturn(hdfsResult);
-            when(envelopeFactory.createEnvelope(any(), any())).thenReturn(envelope);
-            when(kafkaPublisher.publish(envelope)).thenReturn("12345");
+            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult());
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString())).thenReturn(hdfsResult);
+            when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("12345");
             doNothing().when(auditPublisher).publishAsync(any());
 
             ProcessingResult result = orchestrator.process(mqMessage);
@@ -105,6 +118,28 @@ class BridgeOrchestratorTest {
             assertThat(result.getEventId()).isEqualTo("event-id-001");
             assertThat(result.getHdfsPath()).isEqualTo("/path/file.json");
             assertThat(result.getKafkaOffset()).isEqualTo("12345");
+        }
+
+        @Test
+        @DisplayName("should publish wrapper to HDFS and Kafka with eventId key")
+        void shouldPublishWrapperToHdfsAndKafka() {
+            MqMessage mqMessage = createMqMessage("MSG-WRAP-001");
+            setupSuccessfulFlow("MSG-WRAP-001", "TXN-001", "event-id-wrap-001");
+
+            orchestrator.process(mqMessage);
+
+            ArgumentCaptor<String> hdfsContent = ArgumentCaptor.forClass(String.class);
+            verify(hdfsWriter).write(any(EnrichedPayload.class), hdfsContent.capture());
+
+            ArgumentCaptor<String> kafkaKey = ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> kafkaValue = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher).publish(kafkaKey.capture(), kafkaValue.capture());
+
+            assertThat(kafkaKey.getValue()).isEqualTo("event-id-wrap-001");
+            // Same wrapper is written to both sinks.
+            assertThat(hdfsContent.getValue()).isEqualTo(kafkaValue.getValue());
+            assertThat(kafkaValue.getValue()).contains("RestAPIResponse");
+            assertThat(kafkaValue.getValue()).contains("changeEventTimeStamp");
         }
 
         @Test
@@ -164,8 +199,8 @@ class BridgeOrchestratorTest {
             orchestrator.process(mqMessage);
 
             verify(apiClient, never()).enrich(any());
-            verify(hdfsWriter, never()).write(any());
-            verify(kafkaPublisher, never()).publish(any());
+            verify(hdfsWriter, never()).write(any(), anyString());
+            verify(kafkaPublisher, never()).publish(anyString(), anyString());
         }
     }
 
@@ -201,12 +236,11 @@ class BridgeOrchestratorTest {
         void shouldReturnFailureOnHdfsError() {
             MqMessage mqMessage = createMqMessage("MSG-HDFS-001");
             ParsedPayload parsedPayload = createParsedPayload("MSG-HDFS-001", "TXN-HDFS-001");
-            EnrichmentResult enrichmentResult = new EnrichmentResult("MP-001", "CAMP-001", Map.of());
 
             when(eventIdGenerator.generateEventId("MSG-HDFS-001")).thenReturn("event-id-hdfs-001");
             when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
-            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult);
-            when(hdfsWriter.write(any(EnrichedPayload.class)))
+            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult());
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString()))
                     .thenThrow(new HdfsWriteException("Write failed", "/path/file.json", "MSG-HDFS-001"));
             doNothing().when(auditPublisher).publishAsync(any());
 
@@ -221,18 +255,17 @@ class BridgeOrchestratorTest {
         void shouldNotCallKafkaOnHdfsFailure() {
             MqMessage mqMessage = createMqMessage("MSG-HDFS-003");
             ParsedPayload parsedPayload = createParsedPayload("MSG-HDFS-003", "TXN-HDFS-003");
-            EnrichmentResult enrichmentResult = new EnrichmentResult("MP-001", "CAMP-001", Map.of());
 
             when(eventIdGenerator.generateEventId("MSG-HDFS-003")).thenReturn("event-id-hdfs-003");
             when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
-            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult);
-            when(hdfsWriter.write(any(EnrichedPayload.class)))
+            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult());
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString()))
                     .thenThrow(new HdfsWriteException("Write failed", "/path", "MSG-HDFS-003"));
             doNothing().when(auditPublisher).publishAsync(any());
 
             orchestrator.process(mqMessage);
 
-            verify(kafkaPublisher, never()).publish(any());
+            verify(kafkaPublisher, never()).publish(anyString(), anyString());
         }
     }
 
@@ -245,16 +278,13 @@ class BridgeOrchestratorTest {
         void shouldReturnFailureOnKafkaError() {
             MqMessage mqMessage = createMqMessage("MSG-KFK-001");
             ParsedPayload parsedPayload = createParsedPayload("MSG-KFK-001", "TXN-KFK-001");
-            EnrichmentResult enrichmentResult = new EnrichmentResult("MP-001", "CAMP-001", Map.of());
             HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 1024);
-            KafkaEnvelope envelope = createEnvelope("event-id-kfk-001", "MSG-KFK-001", "TXN-KFK-001");
 
             when(eventIdGenerator.generateEventId("MSG-KFK-001")).thenReturn("event-id-kfk-001");
             when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
-            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult);
-            when(hdfsWriter.write(any(EnrichedPayload.class))).thenReturn(hdfsResult);
-            when(envelopeFactory.createEnvelope(any(), any())).thenReturn(envelope);
-            when(kafkaPublisher.publish(envelope))
+            when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult());
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString())).thenReturn(hdfsResult);
+            when(kafkaPublisher.publish(anyString(), anyString()))
                     .thenThrow(new KafkaPublishException("Publish failed", "MSG-KFK-001", "topic"));
             doNothing().when(auditPublisher).publishAsync(any());
 
@@ -330,16 +360,13 @@ class BridgeOrchestratorTest {
 
     private void setupSuccessfulFlow(String messageId, String transactionId, String eventId) {
         ParsedPayload parsedPayload = createParsedPayload(messageId, transactionId);
-        EnrichmentResult enrichmentResult = new EnrichmentResult("MP-001", "CAMP-001", Map.of());
         HdfsWriteResult hdfsResult = HdfsWriteResult.success("/path/file.json", "checksum", 1024);
-        KafkaEnvelope envelope = createEnvelope(eventId, messageId, transactionId);
 
         when(eventIdGenerator.generateEventId(messageId)).thenReturn(eventId);
         when(messageParser.parse(any())).thenReturn(parsedPayload);
-        when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult);
-        when(hdfsWriter.write(any(EnrichedPayload.class))).thenReturn(hdfsResult);
-        when(envelopeFactory.createEnvelope(any(), any())).thenReturn(envelope);
-        when(kafkaPublisher.publish(envelope)).thenReturn("12345");
+        when(apiClient.enrich(parsedPayload)).thenReturn(enrichmentResult());
+        when(hdfsWriter.write(any(EnrichedPayload.class), anyString())).thenReturn(hdfsResult);
+        when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("12345");
         doNothing().when(auditPublisher).publishAsync(any());
     }
 
@@ -364,22 +391,5 @@ class BridgeOrchestratorTest {
                 Instant.now(),
                 "{\"test\":\"payload\"}"
         );
-    }
-
-    private KafkaEnvelope createEnvelope(String eventId, String messageId, String transactionId) {
-        return KafkaEnvelope.builder()
-                .eventId(eventId)
-                .bridgeMessageId("bridge-" + messageId)
-                .originalMqMessageId(messageId)
-                .messageId(messageId)
-                .transactionId(transactionId)
-                .eventType("ORDER_CREATED")
-                .entityId("ENT-001")
-                .hdfsPath("/path/file.json")
-                .checksum("checksum")
-                .eventTimestamp(Instant.now())
-                .processedAt(Instant.now())
-                .schemaVersion("1.0")
-                .build();
     }
 }

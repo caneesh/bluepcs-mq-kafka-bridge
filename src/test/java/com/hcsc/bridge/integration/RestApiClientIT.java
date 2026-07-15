@@ -62,9 +62,8 @@ class RestApiClientIT {
         @Test
         @DisplayName("should return enrichment result on successful response")
         void shouldReturnEnrichmentResult() throws Exception {
-            String responseBody = "{\"marketingPlanId\":\"MP-12345\",\"campaignId\":\"CAMP-67890\",\"segment\":\"premium\",\"tier\":\"gold\"}";
             mockWebServer.enqueue(new MockResponse()
-                    .setBody(responseBody)
+                    .setBody(planResponseBody("MP-12345"))
                     .setHeader("Content-Type", "application/json"));
 
             ParsedPayload payload = createTestPayload("MSG-001", "ENTITY-001");
@@ -73,9 +72,10 @@ class RestApiClientIT {
 
             assertThat(result).isNotNull();
             assertThat(result.getMarketingPlanId()).isEqualTo("MP-12345");
-            assertThat(result.getCampaignId()).isEqualTo("CAMP-67890");
-            assertThat(result.getAdditionalData()).containsEntry("segment", "premium");
-            assertThat(result.getAdditionalData()).containsEntry("tier", "gold");
+            assertThat(result.getCampaignId()).isNull();
+            assertThat(result.getRawResponse().path("PlanResponse")
+                    .path("planIdentification").path("marketingPlanIdentifier").asText())
+                    .isEqualTo("MP-12345");
         }
 
         @Test
@@ -83,7 +83,7 @@ class RestApiClientIT {
         void shouldSendCorrectAuthHeader() throws Exception {
             jwtTokenProvider.setToken("test-jwt-token-123");
             mockWebServer.enqueue(new MockResponse()
-                    .setBody("{\"marketingPlanId\":\"MP-1\",\"campaignId\":\"CAMP-1\"}")
+                    .setBody(planResponseBody("MP-1"))
                     .setHeader("Content-Type", "application/json"));
 
             ParsedPayload payload = createTestPayload("MSG-002", "ENTITY-002");
@@ -98,7 +98,7 @@ class RestApiClientIT {
         @DisplayName("should call correct endpoint URL")
         void shouldCallCorrectEndpoint() throws Exception {
             mockWebServer.enqueue(new MockResponse()
-                    .setBody("{\"marketingPlanId\":\"MP-1\",\"campaignId\":\"CAMP-1\"}")
+                    .setBody(planResponseBody("MP-1"))
                     .setHeader("Content-Type", "application/json"));
 
             ParsedPayload payload = createTestPayload("MSG-003", "ENTITY-003");
@@ -239,7 +239,7 @@ class RestApiClientIT {
         @DisplayName("should handle null fields in response")
         void shouldHandleNullFields() throws Exception {
             mockWebServer.enqueue(new MockResponse()
-                    .setBody("{\"marketingPlanId\":null,\"campaignId\":null}")
+                    .setBody("{\"PlanResponse\":{\"planIdentification\":{\"marketingPlanIdentifier\":null}}}")
                     .setHeader("Content-Type", "application/json"));
 
             ParsedPayload payload = createTestPayload("MSG-NULL-001", "ENTITY-NULL-001");
@@ -247,8 +247,8 @@ class RestApiClientIT {
             MarketingPlanApiClient.EnrichmentResult result = apiClient.enrich(payload);
 
             assertThat(result).isNotNull();
-            assertThat(result.getMarketingPlanId()).isEqualTo("null");
-            assertThat(result.getCampaignId()).isEqualTo("null");
+            assertThat(result.getMarketingPlanId()).isNull();
+            assertThat(result.getCampaignId()).isNull();
         }
     }
 
@@ -297,6 +297,14 @@ class RestApiClientIT {
                     .isInstanceOf(EnrichmentException.class)
                     .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isFalse());
         }
+    }
+
+    private String planResponseBody(String marketingPlanId) {
+        return "{\"PlanResponse\":{"
+                + "\"planIdentification\":{\"marketingPlanIdentifier\":\"" + marketingPlanId + "\"},"
+                + "\"changeEvent\":{\"eventName\":\"ReadyToSell\",\"typeName\":\"Update\","
+                + "\"timestamp\":\"20260710T162108.143 CDT\"}"
+                + "}}";
     }
 
     private ParsedPayload createTestPayload(String messageId, String entityId) {

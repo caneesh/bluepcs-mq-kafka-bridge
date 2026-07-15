@@ -2,8 +2,6 @@ package com.hcsc.bridge.hdfs;
 
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,7 +22,6 @@ public class HdfsSafePayloadWriter {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd");
 
     private final HdfsFileOperations hdfsFileOperations;
-    private final ObjectMapper objectMapper;
     private final String basePath;
     private final String tempSuffix;
 
@@ -35,11 +32,14 @@ public class HdfsSafePayloadWriter {
         this.hdfsFileOperations = hdfsFileOperations;
         this.basePath = basePath;
         this.tempSuffix = tempSuffix;
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule());
     }
 
-    public HdfsWriteResult write(EnrichedPayload payload) {
+    /**
+     * Writes the given wrapper {@code content} to HDFS. The {@code payload} is used only
+     * for path building (eventType/eventId) and for the messageId used in logging/errors;
+     * the bytes written are the UTF-8 encoding of {@code content}.
+     */
+    public HdfsWriteResult write(EnrichedPayload payload, String content) {
         String targetPath = buildTargetPath(payload);
         String tempPath = targetPath + tempSuffix;
         String messageId = payload.getMessageId();
@@ -55,10 +55,10 @@ public class HdfsSafePayloadWriter {
 
             ensureParentDirectoryExists(targetPath);
 
-            byte[] content = serializePayload(payload);
-            String checksum = calculateChecksum(content);
+            byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+            String checksum = calculateChecksum(contentBytes);
 
-            writeToTempFile(tempPath, content, messageId);
+            writeToTempFile(tempPath, contentBytes, messageId);
 
             boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
             if (!renamed) {
@@ -73,9 +73,9 @@ public class HdfsSafePayloadWriter {
             }
 
             logger.info("Successfully wrote payload {} to HDFS: {} ({} bytes)",
-                    messageId, targetPath, content.length);
+                    messageId, targetPath, contentBytes.length);
 
-            return HdfsWriteResult.success(targetPath, checksum, content.length);
+            return HdfsWriteResult.success(targetPath, checksum, contentBytes.length);
 
         } catch (HdfsWriteException e) {
             cleanupTempFile(tempPath);
@@ -98,14 +98,6 @@ public class HdfsSafePayloadWriter {
         if (lastSlash > 0) {
             String parentPath = filePath.substring(0, lastSlash);
             hdfsFileOperations.mkdirs(parentPath);
-        }
-    }
-
-    private byte[] serializePayload(EnrichedPayload payload) {
-        try {
-            return objectMapper.writeValueAsBytes(payload);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize payload", e);
         }
     }
 

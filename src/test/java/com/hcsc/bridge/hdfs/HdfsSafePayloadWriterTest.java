@@ -40,6 +40,7 @@ class HdfsSafePayloadWriterTest {
 
     private static final String BASE_PATH = "/data/bridge/payloads";
     private static final String TEMP_SUFFIX = ".tmp";
+    private static final String WRAPPER_CONTENT = "{\"changeEventTimeStamp\":\"\",\"RestAPIResponse\":{},\"changeEventTypeName\":\"Unknown\"}";
 
     @Mock
     private HdfsFileOperations hdfsFileOperations;
@@ -70,7 +71,7 @@ class HdfsSafePayloadWriterTest {
             });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            HdfsWriteResult result = writer.write(payload);
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.isNewWrite()).isTrue();
             assertThat(result.isAlreadyExists()).isFalse();
@@ -95,7 +96,7 @@ class HdfsSafePayloadWriterTest {
             });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            HdfsWriteResult result = writer.write(payload);
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).contains("deterministic-event-id.json");
         }
@@ -114,7 +115,7 @@ class HdfsSafePayloadWriterTest {
             });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            writer.write(payload);
+            writer.write(payload, WRAPPER_CONTENT);
 
             ArgumentCaptor<String> pathCaptor = ArgumentCaptor.forClass(String.class);
             verify(hdfsFileOperations).mkdirs(pathCaptor.capture());
@@ -135,7 +136,7 @@ class HdfsSafePayloadWriterTest {
             });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            writer.write(payload);
+            writer.write(payload, WRAPPER_CONTENT);
 
             ArgumentCaptor<String> sourceCaptor = ArgumentCaptor.forClass(String.class);
             ArgumentCaptor<String> targetCaptor = ArgumentCaptor.forClass(String.class);
@@ -160,7 +161,7 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
             when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn(existingChecksum);
 
-            HdfsWriteResult result = writer.write(payload);
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.isAlreadyExists()).isTrue();
             assertThat(result.isNewWrite()).isFalse();
@@ -179,7 +180,7 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
             when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("checksum");
 
-            HdfsWriteResult result = writer.write(payload);
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).contains(BASE_PATH);
             assertThat(result.getHdfsPath()).contains("event-id-dup-002");
@@ -207,7 +208,7 @@ class HdfsSafePayloadWriterTest {
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class);
 
             verify(hdfsFileOperations).delete(endsWith(TEMP_SUFFIX));
@@ -226,7 +227,7 @@ class HdfsSafePayloadWriterTest {
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Failed to rename temp file");
 
@@ -246,7 +247,7 @@ class HdfsSafePayloadWriterTest {
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doThrow(new IOException("Delete failed")).when(hdfsFileOperations).delete(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Failed to rename temp file");
         }
@@ -268,7 +269,7 @@ class HdfsSafePayloadWriterTest {
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Failed to rename");
         }
@@ -285,7 +286,7 @@ class HdfsSafePayloadWriterTest {
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .extracting("targetPath")
                     .asString()
@@ -312,7 +313,7 @@ class HdfsSafePayloadWriterTest {
             });
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            HdfsWriteResult result = writer.write(payload);
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getChecksum()).isNotEmpty();
             verify(hdfsFileOperations).getFileChecksum(anyString());
@@ -330,7 +331,7 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("different-checksum");
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
 
-            assertThatThrownBy(() -> writer.write(payload))
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Checksum mismatch");
         }

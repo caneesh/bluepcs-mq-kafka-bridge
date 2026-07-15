@@ -1,8 +1,5 @@
 package com.hcsc.bridge.kafka;
 
-import com.hcsc.bridge.model.KafkaEnvelope;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +18,6 @@ public class KafkaEnvelopePublisher {
     private static final Logger logger = LoggerFactory.getLogger(KafkaEnvelopePublisher.class);
 
     private final KafkaTemplate<String, String> kafkaTemplate;
-    private final ObjectMapper objectMapper;
     private final String topic;
     private final long timeoutSeconds;
 
@@ -32,40 +28,39 @@ public class KafkaEnvelopePublisher {
         this.kafkaTemplate = kafkaTemplate;
         this.topic = topic;
         this.timeoutSeconds = timeoutSeconds;
-        this.objectMapper = new ObjectMapper();
-        this.objectMapper.registerModule(new JavaTimeModule());
     }
 
-    public String publish(KafkaEnvelope envelope) {
-        String messageId = envelope.getMessageId();
-        String key = envelope.getKafkaKey();
-
-        logger.debug("Publishing envelope to Kafka: messageId={}, key={}, topic={}",
-                messageId, key, topic);
+    /**
+     * Publishes the wrapper JSON to Kafka synchronously.
+     *
+     * @param key   the Kafka message key (the eventId, supplied by the orchestrator)
+     * @param value the wrapper JSON string (message value)
+     * @return the offset the record was written to, as a string
+     */
+    public String publish(String key, String value) {
+        logger.debug("Publishing to Kafka: key={}, topic={}", key, topic);
 
         try {
-            String payload = objectMapper.writeValueAsString(envelope);
-
-            ListenableFuture<SendResult<String, String>> future = kafkaTemplate.send(topic, key, payload);
+            ListenableFuture<SendResult<String, String>> future = kafkaTemplate.send(topic, key, value);
             SendResult<String, String> result = future.get(timeoutSeconds, TimeUnit.SECONDS);
 
             String offset = String.valueOf(result.getRecordMetadata().offset());
             int partition = result.getRecordMetadata().partition();
 
-            logger.info("Published envelope to Kafka: messageId={}, topic={}, partition={}, offset={}",
-                    messageId, topic, partition, offset);
+            logger.info("Published to Kafka: key={}, topic={}, partition={}, offset={}",
+                    key, topic, partition, offset);
 
             return offset;
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new KafkaPublishException("Interrupted while publishing to Kafka", messageId, topic, e);
+            throw new KafkaPublishException("Interrupted while publishing to Kafka", key, topic, e);
         } catch (ExecutionException e) {
-            throw new KafkaPublishException("Failed to publish to Kafka", messageId, topic, e.getCause());
+            throw new KafkaPublishException("Failed to publish to Kafka", key, topic, e.getCause());
         } catch (TimeoutException e) {
-            throw new KafkaPublishException("Timeout publishing to Kafka", messageId, topic, e);
+            throw new KafkaPublishException("Timeout publishing to Kafka", key, topic, e);
         } catch (Exception e) {
-            throw new KafkaPublishException("Unexpected error publishing to Kafka", messageId, topic, e);
+            throw new KafkaPublishException("Unexpected error publishing to Kafka", key, topic, e);
         }
     }
 }

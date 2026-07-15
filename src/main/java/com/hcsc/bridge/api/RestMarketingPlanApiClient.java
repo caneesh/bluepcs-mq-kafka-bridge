@@ -18,8 +18,6 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -179,33 +177,24 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 throw new EnrichmentException("Empty response body", entityId, 200, false);
             }
 
-            JsonNode json = objectMapper.readTree(body);
+            // Parse the response body once into its unmodified root. This node (whose single
+            // child is PlanResponse) is carried through as rawResponse and later attached
+            // verbatim to the published wrapper.
+            JsonNode root = objectMapper.readTree(body);
 
-            String marketingPlanId = json.has("marketingPlanId") ?
-                    json.get("marketingPlanId").asText() : null;
-            String campaignId = json.has("campaignId") ?
-                    json.get("campaignId").asText() : null;
-
-            Map<String, Object> additionalData = new HashMap<>();
-            Iterator<String> fieldNames = json.fieldNames();
-            while (fieldNames.hasNext()) {
-                String fieldName = fieldNames.next();
-                if (!"marketingPlanId".equals(fieldName) && !"campaignId".equals(fieldName)) {
-                    JsonNode value = json.get(fieldName);
-                    if (value.isTextual()) {
-                        additionalData.put(fieldName, value.asText());
-                    } else if (value.isNumber()) {
-                        additionalData.put(fieldName, value.numberValue());
-                    } else if (value.isBoolean()) {
-                        additionalData.put(fieldName, value.asBoolean());
-                    } else {
-                        additionalData.put(fieldName, value.toString());
-                    }
-                }
-            }
+            // marketingPlanId is extracted null-safely from the real response structure.
+            // campaignId has no source in the real response; additionalData's only consumer
+            // (the previous HDFS serialization) is being replaced, so it is now empty.
+            JsonNode marketingPlanIdentifier = root
+                    .path("PlanResponse")
+                    .path("planIdentification")
+                    .path("marketingPlanIdentifier");
+            String marketingPlanId = marketingPlanIdentifier.isTextual()
+                    ? marketingPlanIdentifier.asText()
+                    : null;
 
             logger.debug("Enrichment successful for entityId: {}", entityId);
-            return new EnrichmentResult(marketingPlanId, campaignId, additionalData);
+            return new EnrichmentResult(marketingPlanId, null, new HashMap<>(), root);
 
         } catch (IOException e) {
             throw new EnrichmentException("Failed to parse response", entityId, e, false);

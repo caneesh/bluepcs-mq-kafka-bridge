@@ -59,7 +59,7 @@ class RestMarketingPlanApiClientTest {
         @DisplayName("should enrich payload successfully")
         void shouldEnrichPayload() throws InterruptedException {
             mockServer.enqueue(new MockResponse()
-                    .setBody("{\"marketingPlanId\":\"MP-123\",\"campaignId\":\"CAMP-456\",\"extra\":\"data\"}")
+                    .setBody(planResponseBody("MP-123"))
                     .setHeader("Content-Type", "application/json"));
 
             client = createClient();
@@ -68,8 +68,11 @@ class RestMarketingPlanApiClientTest {
             MarketingPlanApiClient.EnrichmentResult result = client.enrich(payload);
 
             assertThat(result.getMarketingPlanId()).isEqualTo("MP-123");
-            assertThat(result.getCampaignId()).isEqualTo("CAMP-456");
-            assertThat(result.getAdditionalData()).containsEntry("extra", "data");
+            assertThat(result.getCampaignId()).isNull();
+            // rawResponse is the unmodified response root whose single child is PlanResponse.
+            assertThat(result.getRawResponse().path("PlanResponse")
+                    .path("planIdentification").path("marketingPlanIdentifier").asText())
+                    .isEqualTo("MP-123");
 
             RecordedRequest request = mockServer.takeRequest();
             assertThat(request.getMethod()).isEqualTo("GET");
@@ -80,25 +83,28 @@ class RestMarketingPlanApiClientTest {
         }
 
         @Test
-        @DisplayName("should handle numeric fields in response")
-        void shouldHandleNumericFields() {
+        @DisplayName("should carry through the entire response as rawResponse")
+        void shouldCarryThroughRawResponse() {
+            String body = planResponseBody("MP-123");
             mockServer.enqueue(new MockResponse()
-                    .setBody("{\"marketingPlanId\":\"MP-123\",\"count\":42,\"active\":true}")
+                    .setBody(body)
                     .setHeader("Content-Type", "application/json"));
 
             client = createClient();
 
             MarketingPlanApiClient.EnrichmentResult result = client.enrich(createPayload("ENT-002"));
 
-            assertThat(result.getAdditionalData()).containsEntry("count", 42);
-            assertThat(result.getAdditionalData()).containsEntry("active", true);
+            assertThat(result.getRawResponse().path("PlanResponse").path("changeEvent")
+                    .path("timestamp").asText()).isEqualTo("20260710T162108.143 CDT");
+            assertThat(result.getRawResponse().path("PlanResponse").path("changeEvent")
+                    .path("typeName").asText()).isEqualTo("Update");
         }
 
         @Test
-        @DisplayName("should handle missing optional fields")
+        @DisplayName("should handle missing marketingPlanIdentifier")
         void shouldHandleMissingFields() {
             mockServer.enqueue(new MockResponse()
-                    .setBody("{\"campaignId\":\"CAMP-789\"}")
+                    .setBody("{\"PlanResponse\":{\"planIdentification\":{}}}")
                     .setHeader("Content-Type", "application/json"));
 
             client = createClient();
@@ -106,7 +112,7 @@ class RestMarketingPlanApiClientTest {
             MarketingPlanApiClient.EnrichmentResult result = client.enrich(createPayload("ENT-003"));
 
             assertThat(result.getMarketingPlanId()).isNull();
-            assertThat(result.getCampaignId()).isEqualTo("CAMP-789");
+            assertThat(result.getCampaignId()).isNull();
         }
     }
 
@@ -309,6 +315,14 @@ class RestMarketingPlanApiClientTest {
                 TEST_CLIENT_SECRET,
                 httpClient
         );
+    }
+
+    private String planResponseBody(String marketingPlanId) {
+        return "{\"PlanResponse\":{"
+                + "\"planIdentification\":{\"marketingPlanIdentifier\":\"" + marketingPlanId + "\"},"
+                + "\"changeEvent\":{\"eventName\":\"ReadyToSell\",\"typeName\":\"Update\","
+                + "\"timestamp\":\"20260710T162108.143 CDT\"}"
+                + "}}";
     }
 
     private ParsedPayload createPayload(String entityId) {

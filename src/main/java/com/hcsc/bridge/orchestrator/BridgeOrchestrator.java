@@ -1,6 +1,7 @@
 package com.hcsc.bridge.orchestrator;
 
 import com.hcsc.bridge.api.EnrichmentException;
+import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.api.MarketingPlanApiClient;
 import com.hcsc.bridge.api.MarketingPlanApiClient.EnrichmentResult;
 import com.hcsc.bridge.audit.AuditEvent;
@@ -10,12 +11,10 @@ import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.core.ProcessingContext;
 import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
 import com.hcsc.bridge.hdfs.HdfsWriteException;
-import com.hcsc.bridge.kafka.KafkaEnvelopeFactory;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
 import com.hcsc.bridge.kafka.KafkaPublishException;
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
-import com.hcsc.bridge.model.KafkaEnvelope;
 import com.hcsc.bridge.model.MqMessage;
 import com.hcsc.bridge.model.ParsedPayload;
 import com.hcsc.bridge.parser.MessageParseException;
@@ -36,7 +35,7 @@ public class BridgeOrchestrator {
     private final MessageParser messageParser;
     private final MarketingPlanApiClient apiClient;
     private final HdfsSafePayloadWriter hdfsWriter;
-    private final KafkaEnvelopeFactory envelopeFactory;
+    private final EnrichmentWrapperFactory wrapperFactory;
     private final KafkaEnvelopePublisher kafkaPublisher;
     private final EventIdGenerator eventIdGenerator;
     private final AuditPublisher auditPublisher;
@@ -45,14 +44,14 @@ public class BridgeOrchestrator {
             MessageParser messageParser,
             MarketingPlanApiClient apiClient,
             HdfsSafePayloadWriter hdfsWriter,
-            KafkaEnvelopeFactory envelopeFactory,
+            EnrichmentWrapperFactory wrapperFactory,
             KafkaEnvelopePublisher kafkaPublisher,
             EventIdGenerator eventIdGenerator,
             AuditPublisher auditPublisher) {
         this.messageParser = messageParser;
         this.apiClient = apiClient;
         this.hdfsWriter = hdfsWriter;
-        this.envelopeFactory = envelopeFactory;
+        this.wrapperFactory = wrapperFactory;
         this.kafkaPublisher = kafkaPublisher;
         this.eventIdGenerator = eventIdGenerator;
         this.auditPublisher = auditPublisher;
@@ -73,18 +72,23 @@ public class BridgeOrchestrator {
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.MESSAGE_PARSED, "Message parsed successfully", null);
 
-            EnrichedPayload enrichedPayload = enrichPayload(parsedPayload, ctx);
+            EnrichmentResult enrichmentResult = apiClient.enrich(parsedPayload);
+            EnrichedPayload enrichedPayload = buildEnrichedPayload(parsedPayload, ctx, enrichmentResult);
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
-            HdfsWriteResult hdfsResult = hdfsWriter.write(enrichedPayload);
+            // The wrapper is the single artifact published to BOTH HDFS (file content)
+            // and Kafka (message value). It is built from the unmodified API response.
+            String wrapper = wrapperFactory.buildWrapper(enrichmentResult.getRawResponse());
+
+            HdfsWriteResult hdfsResult = hdfsWriter.write(enrichedPayload, wrapper);
             AuditEventType hdfsEventType = hdfsResult.isAlreadyExists()
                     ? AuditEventType.HDFS_WRITE_SKIPPED
                     : AuditEventType.HDFS_WRITE_COMPLETED;
             publishAudit(ctx, enrichedPayload.getTransactionId(), hdfsEventType,
                     "HDFS write completed: " + hdfsResult.getHdfsPath(), null);
 
-            String kafkaOffset = publishToKafka(enrichedPayload, hdfsResult);
+            String kafkaOffset = kafkaPublisher.publish(enrichedPayload.getEventId(), wrapper);
             publishAudit(ctx, enrichedPayload.getTransactionId(),
                     AuditEventType.KAFKA_PUBLISH_COMPLETED, "Published to Kafka, offset: " + kafkaOffset, null);
 
@@ -107,8 +111,8 @@ public class BridgeOrchestrator {
         }
     }
 
-    private EnrichedPayload enrichPayload(ParsedPayload parsedPayload, ProcessingContext ctx) {
-        EnrichmentResult result = apiClient.enrich(parsedPayload);
+    private EnrichedPayload buildEnrichedPayload(ParsedPayload parsedPayload, ProcessingContext ctx,
+                                                 EnrichmentResult result) {
         return new EnrichedPayload(
                 parsedPayload,
                 ctx,
@@ -117,11 +121,6 @@ public class BridgeOrchestrator {
                 result.getCampaignId(),
                 Instant.now()
         );
-    }
-
-    private String publishToKafka(EnrichedPayload payload, HdfsWriteResult hdfsResult) {
-        KafkaEnvelope envelope = envelopeFactory.createEnvelope(payload, hdfsResult);
-        return kafkaPublisher.publish(envelope);
     }
 
     private ProcessingResult handleParseFailure(ProcessingContext ctx, MessageParseException e) {
