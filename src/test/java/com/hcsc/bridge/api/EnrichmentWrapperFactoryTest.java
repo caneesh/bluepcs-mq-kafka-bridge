@@ -158,4 +158,36 @@ class EnrichmentWrapperFactoryTest {
         assertThat(wrapper.get("changeEventTypeName").asText()).isEqualTo("Unknown");
         assertThat(wrapper.get("RestAPIResponse").isObject()).isTrue();
     }
+
+    @Test
+    @DisplayName("MQ typeName fallback is used when API response has no typeName")
+    void mqFallbackUsedWhenApiTypeNameMissing() {
+        String raw = "{\"PlanResponse\":{\"changeEvent\":"
+                + "{\"eventName\":\"ReadyToSell\",\"timestamp\":\"20260710T162108.143 CDT\"}}}";
+
+        JsonNode wrapper = read(factory.buildWrapper(read(raw), "Update"));
+
+        assertThat(wrapper.get("changeEventTypeName").asText()).isEqualTo("Update");
+        assertThat(wrapper.get("changeEventTimeStamp").asText()).isEqualTo("20260710T162108.143 CDT");
+    }
+
+    @Test
+    @DisplayName("API typeName wins over the MQ fallback when both are present")
+    void apiTypeNameWinsOverFallback() {
+        JsonNode wrapper = read(factory.buildWrapper(read(FULL_EXAMPLE), "New"));
+
+        assertThat(wrapper.get("changeEventTypeName").asText()).isEqualTo("Update");
+    }
+
+    @Test
+    @DisplayName("default Unknown is used when API typeName and MQ fallback are both absent")
+    void defaultUsedWhenApiAndFallbackAbsent() {
+        String raw = "{\"PlanResponse\":{\"changeEvent\":"
+                + "{\"eventName\":\"ReadyToSell\",\"timestamp\":\"20260710T162108.143 CDT\"}}}";
+
+        assertThat(read(factory.buildWrapper(read(raw), null)).get("changeEventTypeName").asText())
+                .isEqualTo("Unknown");
+        assertThat(read(factory.buildWrapper(read(raw), "")).get("changeEventTypeName").asText())
+                .isEqualTo("Unknown");
+    }
 }

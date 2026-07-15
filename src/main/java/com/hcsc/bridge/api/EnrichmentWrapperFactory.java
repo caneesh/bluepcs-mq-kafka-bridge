@@ -39,8 +39,9 @@ public class EnrichmentWrapperFactory {
     public static final String DEFAULT_CHANGE_EVENT_TIMESTAMP = "";
 
     /**
-     * Default for {@code changeEventTypeName} when
-     * {@code PlanResponse.changeEvent.typeName} is missing or empty.
+     * Default for {@code changeEventTypeName} when neither the API response's
+     * {@code PlanResponse.changeEvent.typeName} nor the fallback (the MQ
+     * notification's {@code changeEvent.typeName}) is present.
      * There is no established business rule for deriving this from {@code eventName}.
      */
     public static final String DEFAULT_CHANGE_EVENT_TYPE_NAME = "Unknown";
@@ -61,6 +62,16 @@ public class EnrichmentWrapperFactory {
      * @return the wrapper serialized as a JSON string
      */
     public String buildWrapper(JsonNode rawApiResponse) {
+        return buildWrapper(rawApiResponse, null);
+    }
+
+    /**
+     * Builds the wrapper JSON string, using {@code fallbackTypeName} (typically the MQ
+     * notification's {@code changeEvent.typeName}) when the API response does not carry
+     * a {@code typeName}. Precedence: API {@code changeEvent.typeName}, then
+     * {@code fallbackTypeName}, then {@link #DEFAULT_CHANGE_EVENT_TYPE_NAME}.
+     */
+    public String buildWrapper(JsonNode rawApiResponse, String fallbackTypeName) {
         JsonNode root = (rawApiResponse != null && !rawApiResponse.isMissingNode())
                 ? rawApiResponse
                 : objectMapper.createObjectNode();
@@ -75,9 +86,14 @@ public class EnrichmentWrapperFactory {
         String typeName = changeEvent.path("typeName").isTextual()
                 ? changeEvent.path("typeName").asText()
                 : "";
-        String changeEventTypeName = !typeName.isEmpty()
-                ? typeName
-                : DEFAULT_CHANGE_EVENT_TYPE_NAME;
+        String changeEventTypeName;
+        if (!typeName.isEmpty()) {
+            changeEventTypeName = typeName;
+        } else if (fallbackTypeName != null && !fallbackTypeName.isEmpty()) {
+            changeEventTypeName = fallbackTypeName;
+        } else {
+            changeEventTypeName = DEFAULT_CHANGE_EVENT_TYPE_NAME;
+        }
 
         ObjectNode wrapper = objectMapper.createObjectNode();
         wrapper.put("changeEventTimeStamp", changeEventTimeStamp);

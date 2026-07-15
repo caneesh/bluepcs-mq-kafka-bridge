@@ -25,6 +25,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 @Component
@@ -78,8 +79,12 @@ public class BridgeOrchestrator {
                     AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
             // The wrapper is the single artifact published to BOTH HDFS (file content)
-            // and Kafka (message value). It is built from the unmodified API response.
-            String wrapper = wrapperFactory.buildWrapper(enrichmentResult.getRawResponse());
+            // and Kafka (message value). It is built from the unmodified API response;
+            // the MQ notification's changeEvent.typeName serves as the fallback for
+            // changeEventTypeName when the API response carries none.
+            String wrapper = wrapperFactory.buildWrapper(
+                    enrichmentResult.getRawResponse(),
+                    extractMqChangeEventTypeName(parsedPayload));
 
             HdfsWriteResult hdfsResult = hdfsWriter.write(enrichedPayload, wrapper);
             AuditEventType hdfsEventType = hdfsResult.isAlreadyExists()
@@ -109,6 +114,21 @@ public class BridgeOrchestrator {
         } catch (KafkaPublishException e) {
             return handleKafkaFailure(ctx, e);
         }
+    }
+
+    /**
+     * Reads changeEvent.typeName from the parsed MQ notification data (e.g. "New" or
+     * "Update"). Returns null when absent, letting the wrapper factory apply its default.
+     */
+    private String extractMqChangeEventTypeName(ParsedPayload parsedPayload) {
+        Object changeEvent = parsedPayload.getData().get("changeEvent");
+        if (changeEvent instanceof Map) {
+            Object typeName = ((Map<?, ?>) changeEvent).get("typeName");
+            if (typeName instanceof String && !((String) typeName).isEmpty()) {
+                return (String) typeName;
+            }
+        }
+        return null;
     }
 
     private EnrichedPayload buildEnrichedPayload(ParsedPayload parsedPayload, ProcessingContext ctx,
