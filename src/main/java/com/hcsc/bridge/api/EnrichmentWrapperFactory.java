@@ -65,13 +65,19 @@ public class EnrichmentWrapperFactory {
         return buildWrapper(rawApiResponse, null);
     }
 
+    public String buildWrapper(JsonNode rawApiResponse, String fallbackTypeName) {
+        return build(rawApiResponse, fallbackTypeName).getWrapperJson();
+    }
+
     /**
-     * Builds the wrapper JSON string, using {@code fallbackTypeName} (typically the MQ
+     * Builds the wrapper, using {@code fallbackTypeName} (typically the MQ
      * notification's {@code changeEvent.typeName}) when the API response does not carry
      * a {@code typeName}. Precedence: API {@code changeEvent.typeName}, then
      * {@code fallbackTypeName}, then {@link #DEFAULT_CHANGE_EVENT_TYPE_NAME}.
+     * The derived fields are exposed alongside the JSON so the Kafka notification
+     * message can reuse them without re-deriving.
      */
-    public String buildWrapper(JsonNode rawApiResponse, String fallbackTypeName) {
+    public WrapperResult build(JsonNode rawApiResponse, String fallbackTypeName) {
         JsonNode root = (rawApiResponse != null && !rawApiResponse.isMissingNode())
                 ? rawApiResponse
                 : objectMapper.createObjectNode();
@@ -101,10 +107,36 @@ public class EnrichmentWrapperFactory {
         wrapper.put("changeEventTypeName", changeEventTypeName);
 
         try {
-            return objectMapper.writeValueAsString(wrapper);
+            return new WrapperResult(objectMapper.writeValueAsString(wrapper),
+                    changeEventTimeStamp, changeEventTypeName);
         } catch (JsonProcessingException e) {
             // ObjectNode serialization does not fail in practice; surface defensively.
             throw new IllegalStateException("Failed to serialize enrichment wrapper", e);
+        }
+    }
+
+    /** The wrapper JSON plus the two derived fields it embeds. */
+    public static final class WrapperResult {
+        private final String wrapperJson;
+        private final String changeEventTimeStamp;
+        private final String changeEventTypeName;
+
+        private WrapperResult(String wrapperJson, String changeEventTimeStamp, String changeEventTypeName) {
+            this.wrapperJson = wrapperJson;
+            this.changeEventTimeStamp = changeEventTimeStamp;
+            this.changeEventTypeName = changeEventTypeName;
+        }
+
+        public String getWrapperJson() {
+            return wrapperJson;
+        }
+
+        public String getChangeEventTimeStamp() {
+            return changeEventTimeStamp;
+        }
+
+        public String getChangeEventTypeName() {
+            return changeEventTypeName;
         }
     }
 }

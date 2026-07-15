@@ -4,6 +4,7 @@ import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
+import com.hcsc.bridge.kafka.KafkaNotificationFactory;
 import com.hcsc.bridge.mock.FakeMqMessageGenerator;
 import com.hcsc.bridge.mock.InMemoryAuditPublisher;
 import com.hcsc.bridge.mock.LocalFileSystemHdfsOperations;
@@ -63,6 +64,7 @@ class EndToEndOrchestratorIT {
                 apiClient,
                 hdfsWriter,
                 wrapperFactory,
+                new KafkaNotificationFactory(),
                 kafkaPublisher,
                 eventIdGenerator,
                 auditPublisher
@@ -136,8 +138,8 @@ class EndToEndOrchestratorIT {
         }
 
         @Test
-        @DisplayName("should publish Kafka wrapper with eventId key and wrapper value")
-        void shouldPublishKafkaWrapperWithCorrectData() {
+        @DisplayName("should publish claim-check notification with eventId key and hdfsPath")
+        void shouldPublishKafkaNotificationWithCorrectData() {
             MqMessage message = messageGenerator.generateMessageWithId("MSG-KAFKA-001");
             String expectedEventId = eventIdGenerator.generateEventId("MSG-KAFKA-001");
 
@@ -148,7 +150,10 @@ class EndToEndOrchestratorIT {
             verify(kafkaPublisher).publish(keyCaptor.capture(), valueCaptor.capture());
 
             assertThat(keyCaptor.getValue()).isEqualTo(expectedEventId);
-            assertThat(valueCaptor.getValue()).contains("RestAPIResponse");
+            // Kafka carries only the small notification; the full wrapper lives in HDFS.
+            assertThat(valueCaptor.getValue()).doesNotContain("RestAPIResponse");
+            assertThat(valueCaptor.getValue()).contains("\"hdfsPath\":");
+            assertThat(valueCaptor.getValue()).contains("\"eventId\":\"" + expectedEventId + "\"");
             assertThat(valueCaptor.getValue()).contains("changeEventTypeName");
         }
     }
@@ -172,6 +177,7 @@ class EndToEndOrchestratorIT {
                     apiClient,
                     hdfsWriter,
                     new EnrichmentWrapperFactory(),
+                    new KafkaNotificationFactory(),
                     kafkaPublisher,
                     eventIdGenerator,
                     auditPublisher

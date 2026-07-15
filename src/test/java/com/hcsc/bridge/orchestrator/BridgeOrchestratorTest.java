@@ -13,6 +13,7 @@ import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
 import com.hcsc.bridge.hdfs.HdfsWriteException;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
+import com.hcsc.bridge.kafka.KafkaNotificationFactory;
 import com.hcsc.bridge.kafka.KafkaPublishException;
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
@@ -73,6 +74,7 @@ class BridgeOrchestratorTest {
                 apiClient,
                 hdfsWriter,
                 new EnrichmentWrapperFactory(),
+                new KafkaNotificationFactory(),
                 kafkaPublisher,
                 eventIdGenerator,
                 auditPublisher
@@ -121,8 +123,8 @@ class BridgeOrchestratorTest {
         }
 
         @Test
-        @DisplayName("should publish wrapper to HDFS and Kafka with eventId key")
-        void shouldPublishWrapperToHdfsAndKafka() {
+        @DisplayName("should write wrapper to HDFS and publish claim-check notification to Kafka")
+        void shouldPublishWrapperToHdfsAndNotificationToKafka() {
             MqMessage mqMessage = createMqMessage("MSG-WRAP-001");
             setupSuccessfulFlow("MSG-WRAP-001", "TXN-001", "event-id-wrap-001");
 
@@ -136,10 +138,13 @@ class BridgeOrchestratorTest {
             verify(kafkaPublisher).publish(kafkaKey.capture(), kafkaValue.capture());
 
             assertThat(kafkaKey.getValue()).isEqualTo("event-id-wrap-001");
-            // Same wrapper is written to both sinks.
-            assertThat(hdfsContent.getValue()).isEqualTo(kafkaValue.getValue());
-            assertThat(kafkaValue.getValue()).contains("RestAPIResponse");
-            assertThat(kafkaValue.getValue()).contains("changeEventTimeStamp");
+            // HDFS gets the full wrapper; Kafka gets only the small claim-check notification.
+            assertThat(hdfsContent.getValue()).contains("RestAPIResponse");
+            assertThat(kafkaValue.getValue()).doesNotContain("RestAPIResponse");
+            assertThat(kafkaValue.getValue()).contains("\"hdfsPath\":\"/path/file.json\"");
+            assertThat(kafkaValue.getValue()).contains("\"eventId\":\"event-id-wrap-001\"");
+            assertThat(kafkaValue.getValue()).contains("\"changeEventTypeName\":\"Update\"");
+            assertThat(kafkaValue.getValue()).contains("\"changeEventTimeStamp\":\"20260710T162108.143 CDT\"");
         }
 
         @Test

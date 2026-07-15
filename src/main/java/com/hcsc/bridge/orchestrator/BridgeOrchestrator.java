@@ -12,6 +12,7 @@ import com.hcsc.bridge.core.ProcessingContext;
 import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
 import com.hcsc.bridge.hdfs.HdfsWriteException;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
+import com.hcsc.bridge.kafka.KafkaNotificationFactory;
 import com.hcsc.bridge.kafka.KafkaPublishException;
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
@@ -37,6 +38,7 @@ public class BridgeOrchestrator {
     private final MarketingPlanApiClient apiClient;
     private final HdfsSafePayloadWriter hdfsWriter;
     private final EnrichmentWrapperFactory wrapperFactory;
+    private final KafkaNotificationFactory notificationFactory;
     private final KafkaEnvelopePublisher kafkaPublisher;
     private final EventIdGenerator eventIdGenerator;
     private final AuditPublisher auditPublisher;
@@ -46,6 +48,7 @@ public class BridgeOrchestrator {
             MarketingPlanApiClient apiClient,
             HdfsSafePayloadWriter hdfsWriter,
             EnrichmentWrapperFactory wrapperFactory,
+            KafkaNotificationFactory notificationFactory,
             KafkaEnvelopePublisher kafkaPublisher,
             EventIdGenerator eventIdGenerator,
             AuditPublisher auditPublisher) {
@@ -53,6 +56,7 @@ public class BridgeOrchestrator {
         this.apiClient = apiClient;
         this.hdfsWriter = hdfsWriter;
         this.wrapperFactory = wrapperFactory;
+        this.notificationFactory = notificationFactory;
         this.kafkaPublisher = kafkaPublisher;
         this.eventIdGenerator = eventIdGenerator;
         this.auditPublisher = auditPublisher;
@@ -78,22 +82,29 @@ public class BridgeOrchestrator {
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
-            // The wrapper is the single artifact published to BOTH HDFS (file content)
-            // and Kafka (message value). It is built from the unmodified API response;
-            // the MQ notification's changeEvent.typeName serves as the fallback for
+            // The full wrapper document goes to HDFS (it can exceed the broker's ~1 MB
+            // message limit); Kafka carries only a small claim-check notification with
+            // the HDFS path. The wrapper is built from the unmodified API response; the
+            // MQ notification's changeEvent.typeName serves as the fallback for
             // changeEventTypeName when the API response carries none.
-            String wrapper = wrapperFactory.buildWrapper(
+            EnrichmentWrapperFactory.WrapperResult wrapper = wrapperFactory.build(
                     enrichmentResult.getRawResponse(),
                     extractMqChangeEventTypeName(parsedPayload));
 
-            HdfsWriteResult hdfsResult = hdfsWriter.write(enrichedPayload, wrapper);
+            HdfsWriteResult hdfsResult = hdfsWriter.write(enrichedPayload, wrapper.getWrapperJson());
             AuditEventType hdfsEventType = hdfsResult.isAlreadyExists()
                     ? AuditEventType.HDFS_WRITE_SKIPPED
                     : AuditEventType.HDFS_WRITE_COMPLETED;
             publishAudit(ctx, enrichedPayload.getTransactionId(), hdfsEventType,
                     "HDFS write completed: " + hdfsResult.getHdfsPath(), null);
 
-            String kafkaOffset = kafkaPublisher.publish(enrichedPayload.getEventId(), wrapper);
+            String notification = notificationFactory.buildNotification(
+                    wrapper,
+                    parsedPayload.getEntityId(),
+                    hdfsResult.getHdfsPath(),
+                    hdfsResult.getChecksum(),
+                    enrichedPayload.getEventId());
+            String kafkaOffset = kafkaPublisher.publish(enrichedPayload.getEventId(), notification);
             publishAudit(ctx, enrichedPayload.getTransactionId(),
                     AuditEventType.KAFKA_PUBLISH_COMPLETED, "Published to Kafka, offset: " + kafkaOffset, null);
 
