@@ -61,7 +61,37 @@ secrets are missing.
 - [ ] Kerberos keytab exists; verify with `klist -kt <keytab>`
 - [ ] Log directory exists and is writable
 
-### Step 5: Validate connectivity (no messages consumed)
+### Step 5: Verify the HDFS layout matches what downstream expects
+
+The bridge writes to `{base-path}/{eventType lowercased}/{yyyy/MM/dd}/{eventId}.json`.
+This subpath scheme was chosen by this application — it is NOT confirmed
+against the old Talend job's output layout (the `.prm` files and Talend job
+definition were never committed). If the existing Hive table expects flat
+files directly under the base path, files written in the nested layout will
+be invisible to it.
+
+Settle it with either of these before enabling the listener:
+
+```bash
+# What the old Talend job actually produced:
+hdfs dfs -ls -R /test/oort/product/bluepcs/hive/csv | head -30
+```
+
+```sql
+-- What the consumers are bound to (LOCATION + PARTITIONED BY):
+SHOW CREATE TABLE <table over this data>;
+```
+
+- [ ] Old job's directory/file layout inspected
+- [ ] Bridge layout matches (or `HdfsSafePayloadWriter.buildTargetPath()`
+      adjusted to match — it is a one-line change)
+- [ ] Prod base path verified against the prod `.prm`:
+      `application-prod.yml` currently defaults `HDFS_BASE_PATH` to
+      `/test/oort/product/bluepcs/hive/csv` — a *test*-looking path in the
+      prod profile. Confirm the real prod value and override via
+      `HDFS_BASE_PATH` if it differs.
+
+### Step 6: Validate connectivity (no messages consumed)
 
 ```bash
 ./scripts/validate-only.sh test-env    # exit 0 = ready
@@ -72,7 +102,7 @@ An SSL handshake error mentioning certificate/hostname means a broker
 certificate does not match its hostname — fix the certificate; do not
 disable hostname verification.
 
-### Step 6: Start safely, then enable consumption
+### Step 7: Start safely, then enable consumption
 
 ```bash
 ./scripts/run-test-env.sh                      # listener OFF by default
@@ -80,11 +110,14 @@ curl localhost:8080/actuator/health            # confirm healthy
 ./scripts/run-test-env.sh --listener-enabled   # start consuming
 ```
 
-### Step 7: Verify the first message end-to-end
+### Step 8: Verify the first message end-to-end
 
 - [ ] Log shows the `=== INCOMING MQ MESSAGE ===` block
-- [ ] JSON file appears in HDFS under the configured base path
-- [ ] Event arrives on the Kafka topic
+- [ ] Wrapper JSON file appears in HDFS under the configured base path
+- [ ] Claim-check notification arrives on the Kafka topic (small JSON with
+      `hdfsPath`, `checksum`, `eventId`, `changeEventTypeName`)
+- [ ] The `hdfsPath` in the notification points at the written file and the
+      file's SHA-256 matches `checksum`
 - [ ] MQ queue depth decreases
 
 ---
