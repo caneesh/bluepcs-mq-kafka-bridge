@@ -104,6 +104,13 @@ Exit codes:
 - `1` - One or more checks failed
 - `2` - Validation exception
 
+### Component-Test Mode
+
+Exercises exactly ONE part of the bridge (mq, api, kafka, or hdfs) against real
+infrastructure and exits `0`=PASS / `1`=FAIL / `2`=bad mode/args. Intended for
+office bring-up: `./scripts/component-test.sh <mq|api|kafka|hdfs> [args] [profile]`.
+See DEPLOYMENT_CHECKLIST.md ("Component-by-Component Testing") for the recommended order.
+
 ### Listener Control
 
 The MQ listener is **disabled by default** for safety. Enable explicitly:

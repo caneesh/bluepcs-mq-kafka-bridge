@@ -102,6 +102,24 @@ An SSL handshake error mentioning certificate/hostname means a broker
 certificate does not match its hostname — fix the certificate; do not
 disable hostname verification.
 
+### Component-by-Component Testing (optional)
+
+Before starting the full app, each part of the bridge can be exercised in
+isolation against real infrastructure. Each command exits `0` on PASS, `1` on
+FAIL, `2` on bad mode/args. Run in this order — cheapest/safest first:
+
+```bash
+./scripts/component-test.sh hdfs                          # write + checksum-verify + cleanup a scratch file
+./scripts/component-test.sh api SPSH44PPOIMTO,2026-01-01  # one real enrichment call for a known plan
+./scripts/component-test.sh kafka my-scratch-topic        # publish ONE marked message (pass a scratch topic!)
+./scripts/component-test.sh mq                            # non-destructively browse the input queue
+```
+
+- `hdfs` PASS proves the app can create/rename/checksum/delete under the base path (write path works, and it cleans up after itself).
+- `api` PASS proves OAuth + the REST enrichment call succeed and the wrapper's derived fields parse.
+- `kafka` PASS proves the producer can connect and get an ack (writes a real, clearly-marked message — prefer a scratch topic).
+- `mq` PASS proves the MQ connection + queue browse work; browsing consumes nothing (0 messages is still a PASS).
+
 ### Step 7: Start safely, then enable consumption
 
 ```bash
