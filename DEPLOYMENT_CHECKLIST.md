@@ -44,16 +44,32 @@ mvn clean package -DskipTests   # faster, jar only
 Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
 `package` never touches real infrastructure.
 
-### Step 3: Configure secrets
+### Step 3: Configure secrets and properties
+
+Follow [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) — it walks through
+every component's properties step by step. The short version:
 
 ```bash
 cp .env.template .env
-# fill in MQ_PASSWORD, KAFKA_TRUSTSTORE_PASSWORD, OAUTH_CLIENT_SECRET
+# test-env requires exactly two values (guide §2):
+#   KAFKA_TRUSTSTORE_PASSWORD  — from the Kafka team / Talend cv_kfk_* context
+#   OAUTH_CLIENT_SECRET        — from the security team / Talend cv_clientSecret
+# MQ_PASSWORD is NOT needed for test-env (prod only).
 ```
 
+Everything else has working test-env defaults carried over from the Talend
+`.prm`; override a variable in `.env` only when a component test (below)
+fails and the guide's per-component section says which value to fix:
+
+- [ ] Guide §2 — the two required secrets set in `.env`
+- [ ] Guide §3 — MQ values reviewed (defaults usually correct)
+- [ ] Guide §4 — API base URL + OAuth values reviewed
+- [ ] Guide §5 — Kafka truststore location exists; JAAS/keytab decided
+- [ ] Guide §6 — HDFS namenode/principal/keytab reviewed
+
 `.env` is gitignored and sourced automatically by the scripts under
-`scripts/`. The test-env and prod profiles fail fast at startup if these
-secrets are missing.
+`scripts/`. The test-env and prod profiles fail fast at startup if the
+required secrets are missing.
 
 ### Step 4: Verify supporting files
 
@@ -119,6 +135,11 @@ FAIL, `2` on bad mode/args. Run in this order — cheapest/safest first:
 - `api` PASS proves OAuth + the REST enrichment call succeed and the wrapper's derived fields parse.
 - `kafka` PASS proves the producer can connect and get an ack (writes a real, clearly-marked message — prefer a scratch topic).
 - `mq` PASS proves the MQ connection + queue browse work; browsing consumes nothing (0 messages is still a PASS).
+
+On any FAIL, look up the error in [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md):
+each component section (§3 MQ, §4 API, §5 Kafka, §6 HDFS) explains what the
+common failures mean and which property to fix; §10 is a quick index keyed by
+error text.
 
 ### Step 7: Start safely, then enable consumption
 
