@@ -43,7 +43,10 @@ bridge:
   # HDFS Configuration (Test Environment)
   # ============================================================================
   hdfs:
-    namenode: ${HDFS_NAMENODE:hdfs://teenuslika04.app.test.hscint.net:8020}
+    # TSTODPHA is the HA nameservice (test load balancer) — the logical name is
+    # resolved via the cluster's hdfs-site.xml, so HADOOP_CONF_DIR must point at
+    # a directory containing core-site.xml/hdfs-site.xml with the HA settings
+    namenode: ${HDFS_NAMENODE:hdfs://TSTODPHA}
     base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
     archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}
     replication: 2

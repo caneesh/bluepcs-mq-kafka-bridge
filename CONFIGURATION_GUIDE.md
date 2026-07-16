@@ -193,13 +193,22 @@ via Kerberos keytab.
 
 | Variable | test-env default | Meaning / where it comes from |
 |---|---|---|
-| `HDFS_NAMENODE` | `hdfs://teenuslika04.app.test.hscint.net:8020` | namenode URI (Talend `cv_hfsx_*`) |
+| `HDFS_NAMENODE` | `hdfs://TSTODPHA` | HA nameservice logical name (prod: `hdfs://PRDODPHA`) — NOT a hostname; resolved via `hdfs-site.xml` |
+| `HADOOP_CONF_DIR` | *(unset)* | **required with the HA nameservice** — must point at a directory with the cluster's `core-site.xml` and `hdfs-site.xml` (typically `/etc/hadoop/conf` on a cluster edge node) |
 | `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | output root — verify layout against the old Talend job (see checklist Step 5) |
 | `HDFS_KERBEROS_ENABLED` | `true` | leave on for the office cluster |
 | `HDFS_KERBEROS_PRINCIPAL` | `e4193139@HSCTEST.NET` | the service account principal |
 | `HDFS_KERBEROS_KEYTAB` | `/etc/security/keytabs/e4193139.keytab` | must EXIST and be readable; check `klist -kt <keytab>` |
 | `HDFS_NAMENODE_PRINCIPAL` | `nn/_HOST@HSCTEST.NET` | cluster-side principal pattern |
-| `HADOOP_CONF_DIR` | *(unset)* | point at the cluster's conf dir (`core-site.xml`, `hdfs-site.xml`) if defaults fail |
+
+**About the HA nameservice:** `TSTODPHA`/`PRDODPHA` are logical names, not DNS
+hostnames. The Hadoop client looks them up in `hdfs-site.xml`
+(`dfs.nameservices`, `dfs.ha.namenodes.TSTODPHA`, ...) and fails over between
+namenodes automatically. The app validates this at startup: if the nameservice
+is not defined in the loaded config, it stops with a message telling you to set
+`HADOOP_CONF_DIR`. To point at a specific single namenode instead (not
+recommended), set `HDFS_NAMENODE=hdfs://<host>:8020` — with an explicit port,
+no `hdfs-site.xml` is needed.
 
 **Verify** (writes, checksums, and deletes a scratch file — leaves nothing):
 
@@ -207,11 +216,13 @@ via Kerberos keytab.
 ./scripts/component-test.sh hdfs
 ```
 
-**If it fails:** `GSSException` / `Login failure` → keytab path, keytab
-contents (`klist -kt`), or principal spelling. `Permission denied` → the
-service account can't write under `HDFS_BASE_PATH`. `UnknownHostException` /
-connection refused → wrong namenode, or the cluster needs its real
-`HADOOP_CONF_DIR` (HA namenodes are not reachable via a single hostname).
+**If it fails:** `is an HA nameservice logical name, but ... not defined in
+dfs.nameservices` → set `HADOOP_CONF_DIR` to the cluster conf directory.
+`GSSException` / `Login failure` → keytab path, keytab contents
+(`klist -kt`), or principal spelling. `Permission denied` → the service
+account can't write under `HDFS_BASE_PATH`. `UnknownHostException` → the
+nameservice settings in `hdfs-site.xml` don't match, or a hostname-style
+namenode is wrong.
 
 ---
 
@@ -234,6 +245,9 @@ connection refused → wrong namenode, or the cluster needs its real
 KAFKA_TRUSTSTORE_PASSWORD=<from Kafka team / Talend context>
 OAUTH_CLIENT_SECRET=<from security team / Talend context>
 
+# --- Required for the HDFS HA nameservice (hdfs://TSTODPHA) ---
+HADOOP_CONF_DIR=/etc/hadoop/conf
+
 # --- Only if the defaults don't match your environment ---
 # MQ_HOST=teenuslika02.app.test.hscint.net
 # MQ_QUEUE=QDP.BPCS.MALESODA.UAT.BLOB
@@ -241,7 +255,7 @@ OAUTH_CLIENT_SECRET=<from security team / Talend context>
 # KAFKA_TRUSTSTORE_LOCATION=/prod/gold/integration/conf/product/common/kafka_truststore_test.jks
 # KAFKA_JAAS_CONFIG_PATH=/home/<you>/kafka-jaas.conf
 # HDFS_KERBEROS_KEYTAB=/etc/security/keytabs/e4193139.keytab
-# HADOOP_CONF_DIR=/etc/hadoop/conf
+# HDFS_NAMENODE=hdfs://TSTODPHA
 
 # --- Debug switches (leave off normally) ---
 # MQ_LOG_PAYLOAD=true
