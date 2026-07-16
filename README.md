@@ -194,7 +194,9 @@ src/main/java/com/hcsc/bridge/
 
 ## Deployment Checklist
 
-See [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for detailed deployment steps.
+See [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) for a step-by-step walkthrough
+of every property (what it means, where to get the value, how to verify each
+component), and [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for detailed deployment steps.
 
 **Quick checklist:**
 1. Set all required environment variables
