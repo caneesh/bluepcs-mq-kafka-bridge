@@ -90,8 +90,6 @@ public class HdfsConfiguration {
         configuration.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
         configuration.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
 
-        validateNameserviceResolvable(configuration);
-
         if (kerberosEnabled) {
             configuration.set("hadoop.security.authentication", "kerberos");
             configuration.set("hadoop.security.authorization", "true");
@@ -110,33 +108,6 @@ public class HdfsConfiguration {
 
         logger.info("Initialized Hadoop configuration for namenode: {}", namenode);
         return configuration;
-    }
-
-    /**
-     * A namenode URI without a port (e.g. hdfs://TSTODPHA, hdfs://PRDODPHA) is an HA
-     * nameservice logical name, not a hostname: the Hadoop client resolves it through
-     * the dfs.nameservices / dfs.ha.namenodes.* settings in hdfs-site.xml. Fail fast
-     * with a clear message when those settings are absent, instead of the obscure
-     * UnknownHostException the client would otherwise throw on first use.
-     */
-    private void validateNameserviceResolvable(Configuration configuration) {
-        java.net.URI uri = java.net.URI.create(namenode);
-        boolean looksLikeNameservice = uri.getPort() == -1;
-        if (!looksLikeNameservice) {
-            return;
-        }
-
-        String nameservices = configuration.get("dfs.nameservices", "");
-        String host = uri.getHost() != null ? uri.getHost() : uri.getAuthority();
-        if (!nameservices.contains(host)) {
-            throw new IllegalStateException(String.format(
-                    "Namenode '%s' is an HA nameservice logical name, but '%s' is not defined in "
-                            + "dfs.nameservices (found: '%s'). Set HADOOP_CONF_DIR (or "
-                            + "bridge.hdfs.config-dir) to a directory containing the cluster's "
-                            + "core-site.xml and hdfs-site.xml with the HA settings.",
-                    namenode, host, nameservices.isEmpty() ? "<none>" : nameservices));
-        }
-        logger.info("HA nameservice '{}' resolved via hdfs-site.xml (dfs.nameservices={})", host, nameservices);
     }
 
     public String getBasePath() {

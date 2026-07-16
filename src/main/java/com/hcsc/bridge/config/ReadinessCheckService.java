@@ -148,17 +148,9 @@ public class ReadinessCheckService {
             }
             String[] parts = namenodeUrl.split(":");
             String host = parts[0];
-
-            // No port = an HA nameservice logical name (e.g. TSTODPHA/PRDODPHA). It is
-            // resolved via hdfs-site.xml, not DNS, so a raw TCP check is not possible here;
-            // the hadoopConfiguration bean validates the nameservice settings at startup.
-            if (parts.length < 2) {
-                String message = String.format(
-                        "HA nameservice '%s' — resolved via hdfs-site.xml, TCP check not applicable", host);
-                logger.info("[SKIP] {}: {}", name, message);
-                return CheckResult.skip(name, message);
-            }
-            int port = Integer.parseInt(parts[1]);
+            // The load balancer names (TSTODPHA/PRDODPHA) carry no port; 8020 is the
+            // NameNode default the Hadoop client also assumes for port-less URIs
+            int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 8020;
 
             java.net.Socket socket = new java.net.Socket();
             socket.connect(new java.net.InetSocketAddress(host, port), 5000);

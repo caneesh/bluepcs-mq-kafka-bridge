@@ -64,9 +64,7 @@ bridge:
   # Source: cv_hfsx_* properties from Talend
   # ============================================================================
   hdfs:
-    # PRDODPHA is the HA nameservice (prod load balancer) — the logical name is
-    # resolved via the cluster's hdfs-site.xml, so HADOOP_CONF_DIR must point at
-    # a directory containing core-site.xml/hdfs-site.xml with the HA settings
+    # PRDODPHA is the prod HDFS load balancer (DNS name, NameNode default port 8020)
     namenode: ${HDFS_NAMENODE:hdfs://PRDODPHA}
     base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
     archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}
