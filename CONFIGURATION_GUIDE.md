@@ -208,14 +208,15 @@ firewall or wrong `KAFKA_BOOTSTRAP_SERVERS`.
 
 ## 6. Component: HDFS (write)
 
-**What it does:** writes the full wrapper JSON to
-`{HDFS_BASE_PATH}/{eventType}/{yyyy/MM/dd}/{eventId}.json`, authenticated
-via Kerberos keytab.
+**What it does:** writes the full wrapper JSON flat into one landing
+directory — `{HDFS_BASE_PATH}/{eventId}.json` — authenticated via Kerberos
+keytab. The consumer moves processed files to its own archive/error
+locations; the bridge never moves or deletes landed files.
 
 | Variable | test-env default | Meaning / where it comes from |
 |---|---|---|
 | `HDFS_NAMENODE` | `hdfs://TSTODPHA` | the test HDFS load balancer (prod: `hdfs://PRDODPHA`); a plain DNS name, NameNode default port 8020 |
-| `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | output root — verify layout against the old Talend job (see checklist Step 6) |
+| `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | the flat landing directory — every wrapper lands as `{eventId}.json` directly under it (see checklist Step 6) |
 | `HDFS_KERBEROS_ENABLED` | `true` | leave on for the office cluster |
 | `HDFS_KERBEROS_PRINCIPAL` | `e4193139@HSCTEST.NET` | the service account principal |
 | `HDFS_KERBEROS_KEYTAB` | `/etc/security/keytabs/e4193139.keytab` | must EXIST and be readable; check `klist -kt <keytab>` |

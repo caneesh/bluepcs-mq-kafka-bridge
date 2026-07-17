@@ -113,28 +113,17 @@ required secrets are missing.
 
 ### Step 6: Verify the HDFS layout matches what downstream expects
 
-The bridge writes to `{base-path}/{eventType lowercased}/{yyyy/MM/dd}/{eventId}.json`.
-This subpath scheme was chosen by this application — it is NOT confirmed
-against the old Talend job's output layout (the `.prm` files and Talend job
-definition were never committed). If the existing Hive table expects flat
-files directly under the base path, files written in the nested layout will
-be invisible to it.
+The bridge writes every wrapper flat into one landing directory:
+`{base-path}/{eventId}.json` — no eventType/date subdirectories. The
+consumer owns the file lifecycle: after processing it moves each file to
+its own archive or error location (the bridge never moves or deletes
+landed files).
 
-Settle it with either of these before enabling the listener:
-
-```bash
-# What the old Talend job actually produced:
-hdfs dfs -ls -R /test/oort/product/bluepcs/hive/csv | head -30
-```
-
-```sql
--- What the consumers are bound to (LOCATION + PARTITIONED BY):
-SHOW CREATE TABLE <table over this data>;
-```
-
-- [ ] Old job's directory/file layout inspected
-- [ ] Bridge layout matches (or `HdfsSafePayloadWriter.buildTargetPath()`
-      adjusted to match — it is a one-line change)
+- [ ] Consumer team confirms they read from the landing directory and
+      handle the archive/error moves
+- [ ] Note for consumers: if a file is moved away and MQ ever redelivers
+      the same message (e.g. recovery), the bridge will re-land and
+      re-notify it — consumers should dedupe on `eventId`
 - [ ] Prod base path verified against the prod `.prm`:
       `application-prod.yml` currently defaults `HDFS_BASE_PATH` to
       `/test/oort/product/bluepcs/hive/csv` — a *test*-looking path in the

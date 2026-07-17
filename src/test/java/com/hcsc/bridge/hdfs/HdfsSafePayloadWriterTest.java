@@ -76,8 +76,8 @@ class HdfsSafePayloadWriterTest {
             assertThat(result.isNewWrite()).isTrue();
             assertThat(result.isAlreadyExists()).isFalse();
             assertThat(result.getHdfsPath()).contains(BASE_PATH);
-            assertThat(result.getHdfsPath()).contains("order_created");
-            assertThat(result.getHdfsPath()).endsWith(".json");
+            // Flat landing directory: no eventType/date partitioning in the path
+            assertThat(result.getHdfsPath()).isEqualTo(BASE_PATH + "/event-id-001.json");
             assertThat(result.getChecksum()).isNotEmpty();
             assertThat(result.getBytesWritten()).isGreaterThan(0);
         }

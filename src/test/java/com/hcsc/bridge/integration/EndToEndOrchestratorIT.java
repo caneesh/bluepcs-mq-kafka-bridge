@@ -315,9 +315,8 @@ class EndToEndOrchestratorIT {
 
             orchestrator.process(message);
 
-            String expectedPath = "/data/bridge/payloads/order_created/" +
-                    java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd")) +
-                    "/" + expectedEventId + ".json";
+            // Flat landing directory: no eventType/date partitioning in the path
+            String expectedPath = "/data/bridge/payloads/" + expectedEventId + ".json";
 
             assertThat(hdfsOperations.exists(expectedPath)).isTrue();
         }

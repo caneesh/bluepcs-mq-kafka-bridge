@@ -9,8 +9,6 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -120,11 +118,8 @@ public class SamplePayloadGenerator {
     }
 
     public String generateHdfsPath(EnrichedPayload payload) {
-        String datePrefix = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
-        return String.format("/data/bridge/payloads/%s/%s/%s.json",
-                payload.getEventType(),
-                datePrefix,
-                payload.getEventId());
+        // Flat landing directory, matching HdfsSafePayloadWriter#buildTargetPath
+        return String.format("/data/bridge/payloads/%s.json", payload.getEventId());
     }
 
     public Map<String, Object> generateSampleOrderData() {

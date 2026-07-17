@@ -12,14 +12,11 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 
 @Component
 public class HdfsSafePayloadWriter {
 
     private static final Logger logger = LoggerFactory.getLogger(HdfsSafePayloadWriter.class);
-    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd");
 
     private final HdfsFileOperations hdfsFileOperations;
     private final String basePath;
@@ -36,7 +33,7 @@ public class HdfsSafePayloadWriter {
 
     /**
      * Writes the given wrapper {@code content} to HDFS. The {@code payload} is used only
-     * for path building (eventType/eventId) and for the messageId used in logging/errors;
+     * for path building (eventId) and for the messageId used in logging/errors;
      * the bytes written are the UTF-8 encoding of {@code content}.
      */
     public HdfsWriteResult write(EnrichedPayload payload, String content) {
@@ -87,10 +84,11 @@ public class HdfsSafePayloadWriter {
     }
 
     private String buildTargetPath(EnrichedPayload payload) {
-        String datePath = LocalDate.now().format(DATE_FORMATTER);
-        String eventType = payload.getEventType().toLowerCase();
-        String fileName = payload.getEventId() + ".json";
-        return basePath + "/" + eventType + "/" + datePath + "/" + fileName;
+        // Single flat landing directory: the consumer owns the file lifecycle and
+        // moves processed files to archive/error locations. Partitioning by
+        // message-derived values (eventType) proved unreliable, and the eventId
+        // filename alone keeps redelivered messages idempotent.
+        return basePath + "/" + payload.getEventId() + ".json";
     }
 
     private void ensureParentDirectoryExists(String filePath) throws IOException {
