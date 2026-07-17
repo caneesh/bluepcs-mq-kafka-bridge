@@ -228,7 +228,16 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
         for (String field : new String[]{"access_token", "accessToken", "token", "jwt", "id_token"}) {
             JsonNode node = json.get(field);
             if (node != null && node.isTextual() && !node.asText().isEmpty()) {
-                return node.asText();
+                String token = node.asText();
+                // Some STS implementations return the value already prefixed for the
+                // Authorization header; sending "Bearer Bearer <jwt>" yields 401
+                if (token.startsWith("Bearer ")) {
+                    token = token.substring("Bearer ".length());
+                }
+                logger.info("Token extracted from response field '{}' ({} chars, {} JWT segments); "
+                                + "other fields present: {}",
+                        field, token.length(), token.split("\\.").length, fieldNames(json));
+                return token;
             }
         }
         return null;

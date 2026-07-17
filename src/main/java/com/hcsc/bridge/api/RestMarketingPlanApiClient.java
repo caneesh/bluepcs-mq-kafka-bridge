@@ -134,7 +134,8 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
             if (statusCode >= 200 && statusCode < 300) {
                 return parseSuccessResponse(response, entityId);
             } else if (statusCode >= 400 && statusCode < 500) {
-                logger.warn("Client error {} for entityId: {}", statusCode, entityId);
+                logger.warn("Client error {} for entityId: {} — response: {}",
+                        statusCode, entityId, safeErrorBody(response));
                 throw new EnrichmentException(
                         "API client error: " + statusCode,
                         entityId,
@@ -142,7 +143,8 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                         false
                 );
             } else if (statusCode >= 500) {
-                logger.error("Server error {} for entityId: {}", statusCode, entityId);
+                logger.error("Server error {} for entityId: {} — response: {}",
+                        statusCode, entityId, safeErrorBody(response));
                 throw new EnrichmentException(
                         "API server error: " + statusCode,
                         entityId,
@@ -162,6 +164,23 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         } catch (IOException e) {
             logger.error("IO error enriching entityId: {}", entityId, e);
             throw new EnrichmentException("Failed to call enrichment API", entityId, e, true);
+        }
+    }
+
+    /**
+     * Reads the error response body for diagnostics, truncated to a safe length.
+     * Gateway error bodies explain WHY a request was rejected (invalid token,
+     * missing client credentials, unknown plan, ...), which the status alone hides.
+     */
+    private String safeErrorBody(Response response) {
+        try {
+            String body = response.body() != null ? response.body().string() : "";
+            if (body.isEmpty()) {
+                return "<empty>";
+            }
+            return body.length() > 300 ? body.substring(0, 300) + "...(truncated)" : body;
+        } catch (IOException e) {
+            return "<unreadable: " + e.getMessage() + ">";
         }
     }
 
