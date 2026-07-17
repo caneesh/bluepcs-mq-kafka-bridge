@@ -115,7 +115,10 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 .url(url)
                 .get()
                 .header("Authorization", "Bearer " + jwtTokenProvider.getToken())
-                .header("Accept", "application/json");
+                .header("Accept", "application/json")
+                // Sent despite the empty GET body: the gateway is strict about content
+                // types and the verified working request includes it
+                .header("Content-Type", "application/json");
         // ClientID / ClientSecret are credentials required by the API gateway; never log them
         if (clientId != null && !clientId.isEmpty()) {
             requestBuilder.header("ClientID", clientId);
