@@ -194,7 +194,7 @@ via Kerberos keytab.
 | Variable | test-env default | Meaning / where it comes from |
 |---|---|---|
 | `HDFS_NAMENODE` | `hdfs://TSTODPHA` | the test HDFS load balancer (prod: `hdfs://PRDODPHA`); a plain DNS name, NameNode default port 8020 |
-| `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | output root — verify layout against the old Talend job (see checklist Step 5) |
+| `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | output root — verify layout against the old Talend job (see checklist Step 6) |
 | `HDFS_KERBEROS_ENABLED` | `true` | leave on for the office cluster |
 | `HDFS_KERBEROS_PRINCIPAL` | `e4193139@HSCTEST.NET` | the service account principal |
 | `HDFS_KERBEROS_KEYTAB` | `/etc/security/keytabs/e4193139.keytab` | must EXIST and be readable; check `klist -kt <keytab>` |

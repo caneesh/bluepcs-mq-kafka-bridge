@@ -44,7 +44,39 @@ mvn clean package -DskipTests   # faster, jar only
 Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
 `package` never touches real infrastructure.
 
-### Step 3: Configure secrets and properties
+### Step 3: Set up the edge node
+
+The application must RUN on a cluster edge node — the keytab
+(`/etc/security/keytabs/...`), the Kafka truststore
+(`/prod/gold/integration/conf/...`), the log directory, and network access to
+MQ/Kafka/HDFS only exist there. Building can happen anywhere (office
+workstation with JDK 11 + Maven, or the edge node itself if it has them); only
+the fat jar needs to reach the edge node.
+
+Recreate this layout on the edge node — the scripts locate the jar and `.env`
+relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
+
+```
+~/bluepcs-bridge/                  <- project root
+|-- .env                           <- created HERE by hand, never transferred
+|-- scripts/                       <- copied from the repo
+`-- target/
+    `-- mq-kafka-bridge-*.jar      <- the built jar
+```
+
+- [ ] Jar copied to `~/bluepcs-bridge/target/`
+- [ ] `scripts/` copied and executable: `chmod +x scripts/*.sh`
+- [ ] Running as the service account (not a personal login) — it must be able
+      to read the keytab: `ls -l /etc/security/keytabs/e4193139.keytab`
+- [ ] `.env` created on the edge node itself (next step) — never carried
+      through OneDrive with real values
+- [ ] `.env` locked down: `chmod 600 .env`
+
+On a shared edge node where others can become the same service account,
+`export` the two secrets in your session instead of keeping them in `.env` —
+the scripts support both.
+
+### Step 4: Configure secrets and properties
 
 Follow [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) — it walks through
 every component's properties step by step. The short version:
@@ -71,13 +103,13 @@ fails and the guide's per-component section says which value to fix:
 `scripts/`. The test-env and prod profiles fail fast at startup if the
 required secrets are missing.
 
-### Step 4: Verify supporting files
+### Step 5: Verify supporting files
 
 - [ ] Kafka truststore exists at the configured `KAFKA_TRUSTSTORE_LOCATION`
 - [ ] Kerberos keytab exists; verify with `klist -kt <keytab>`
 - [ ] Log directory exists and is writable
 
-### Step 5: Verify the HDFS layout matches what downstream expects
+### Step 6: Verify the HDFS layout matches what downstream expects
 
 The bridge writes to `{base-path}/{eventType lowercased}/{yyyy/MM/dd}/{eventId}.json`.
 This subpath scheme was chosen by this application — it is NOT confirmed
@@ -107,7 +139,7 @@ SHOW CREATE TABLE <table over this data>;
       prod profile. Confirm the real prod value and override via
       `HDFS_BASE_PATH` if it differs.
 
-### Step 6: Validate connectivity (no messages consumed)
+### Step 7: Validate connectivity (no messages consumed)
 
 ```bash
 ./scripts/validate-only.sh test-env    # exit 0 = ready
@@ -141,7 +173,7 @@ each component section (§3 MQ, §4 API, §5 Kafka, §6 HDFS) explains what the
 common failures mean and which property to fix; §10 is a quick index keyed by
 error text.
 
-### Step 7: Start safely, then enable consumption
+### Step 8: Start safely, then enable consumption
 
 ```bash
 ./scripts/run-test-env.sh                      # listener OFF by default
@@ -149,7 +181,7 @@ curl localhost:8080/actuator/health            # confirm healthy
 ./scripts/run-test-env.sh --listener-enabled   # start consuming
 ```
 
-### Step 8: Verify the first message end-to-end
+### Step 9: Verify the first message end-to-end
 
 - [ ] Log shows the `=== INCOMING MQ MESSAGE ===` block
 - [ ] Wrapper JSON file appears in HDFS under the configured base path
