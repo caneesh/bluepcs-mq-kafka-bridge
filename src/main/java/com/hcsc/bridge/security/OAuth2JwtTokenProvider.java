@@ -225,7 +225,10 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
      * variants of the token field name.
      */
     private String extractToken(JsonNode json) {
-        for (String field : new String[]{"access_token", "accessToken", "token", "jwt", "id_token"}) {
+        // jwt_token first: it is the field the STS (sts/v5/jwt_token_internal) actually
+        // returns; the rest are fallbacks for standard OAuth2-style responses
+        for (String field : new String[]{"jwt_token", "jwtToken", "access_token", "accessToken",
+                "token", "jwt", "id_token"}) {
             JsonNode node = json.get(field);
             if (node != null && node.isTextual() && !node.asText().isEmpty()) {
                 String token = node.asText();

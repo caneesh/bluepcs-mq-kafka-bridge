@@ -200,6 +200,30 @@ class OAuth2JwtTokenProviderTest {
         }
 
         @Test
+        @DisplayName("should prefer jwt_token over other token-like fields (STS contract)")
+        void shouldPreferJwtTokenField() {
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"token\":\"some-session-id\",\"jwt_token\":\"the-real-jwt\",\"expires_in\":3600}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = createProvider();
+
+            assertThat(tokenProvider.getToken()).isEqualTo("the-real-jwt");
+        }
+
+        @Test
+        @DisplayName("should strip an embedded Bearer prefix from the token value")
+        void shouldStripBearerPrefix() {
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"jwt_token\":\"Bearer prefixed-jwt-value\",\"expires_in\":3600}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = createProvider();
+
+            assertThat(tokenProvider.getToken()).isEqualTo("prefixed-jwt-value");
+        }
+
+        @Test
         @DisplayName("should read expiry from the JWT exp claim when no expires field")
         void shouldReadExpiryFromJwtExpClaim() {
             // header {"alg":"none"} . payload {"exp": 4102444800} (year 2100) . empty sig
