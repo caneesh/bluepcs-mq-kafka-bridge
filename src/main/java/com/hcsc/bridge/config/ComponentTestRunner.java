@@ -346,7 +346,9 @@ public class ComponentTestRunner implements ApplicationRunner {
     // Mode: hdfs — write / verify-checksum / cleanup roundtrip
     // ------------------------------------------------------------------------
     private int runHdfsTest() {
-        String targetPath = hdfsBasePath + "/component-test/" + UUID.randomUUID() + ".json";
+        // Tolerate a trailing slash on the configured base path
+        String base = hdfsBasePath.replaceAll("/+$", "");
+        String targetPath = base + "/component-test/" + UUID.randomUUID() + ".json";
         String tempPath = targetPath + hdfsTempSuffix;
         String content = "{\"componentTest\":true,\"timestamp\":\"" + Instant.now() + "\"}";
         byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);

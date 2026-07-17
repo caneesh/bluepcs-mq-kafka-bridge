@@ -27,7 +27,9 @@ public class HdfsSafePayloadWriter {
             @Value("${bridge.hdfs.base-path:/data/bridge/payloads}") String basePath,
             @Value("${bridge.hdfs.temp-suffix:.tmp}") String tempSuffix) {
         this.hdfsFileOperations = hdfsFileOperations;
-        this.basePath = basePath;
+        // Tolerate a trailing slash on the configured base path — the advertised
+        // hdfsPath must stay clean (no "//") for consumers comparing paths
+        this.basePath = basePath.replaceAll("/+$", "");
         this.tempSuffix = tempSuffix;
     }
 

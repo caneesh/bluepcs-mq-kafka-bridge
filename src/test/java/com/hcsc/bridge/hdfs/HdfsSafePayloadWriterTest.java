@@ -83,6 +83,27 @@ class HdfsSafePayloadWriterTest {
         }
 
         @Test
+        @DisplayName("should tolerate a trailing slash on the base path")
+        void shouldTolerateTrailingSlashOnBasePath() throws IOException {
+            HdfsSafePayloadWriter slashWriter =
+                    new HdfsSafePayloadWriter(hdfsFileOperations, BASE_PATH + "/", TEMP_SUFFIX);
+            EnrichedPayload payload = createEnrichedPayload("MSG-SLASH", "TXN-SLASH", "event-id-slash");
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+            when(hdfsFileOperations.exists(anyString())).thenReturn(false);
+            when(hdfsFileOperations.create(endsWith(TEMP_SUFFIX))).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+
+            HdfsWriteResult result = slashWriter.write(payload, WRAPPER_CONTENT);
+
+            assertThat(result.getHdfsPath()).isEqualTo(BASE_PATH + "/event-id-slash.json");
+            assertThat(result.getHdfsPath()).doesNotContain("//");
+        }
+
+        @Test
         @DisplayName("should use eventId in file path")
         void shouldUseEventIdInFilePath() throws IOException {
             EnrichedPayload payload = createEnrichedPayload("MSG-002", "TXN-002", "deterministic-event-id");
