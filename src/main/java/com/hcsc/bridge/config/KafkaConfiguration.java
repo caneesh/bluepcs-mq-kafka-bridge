@@ -135,7 +135,12 @@ public class KafkaConfiguration {
 
         if (hasValue(jaasConfigPath)) {
             System.setProperty("java.security.auth.login.config", jaasConfigPath);
-            logger.debug("Using file-based JAAS config: {}", jaasConfigPath);
+            // The JVM caches the JAAS Configuration on first use, and Hadoop's
+            // Kerberos login earlier in startup may already have initialized it —
+            // in which case setting the system property alone is silently ignored.
+            // Reset forces a reload that picks up the file above.
+            javax.security.auth.login.Configuration.setConfiguration(null);
+            logger.info("Using file-based JAAS config: {}", jaasConfigPath);
         } else if (hasValue(saslJaasConfig)) {
             props.put("sasl.jaas.config", saslJaasConfig);
         }

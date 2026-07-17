@@ -35,6 +35,9 @@ bridge:
     truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
     truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
     truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
+    # Kerberos (GSSAPI) client login: path to a JAAS file with a KafkaClient section
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:}
+    sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
     request-size: 4194400
     delivery-timeout-ms: 120000
     request-timeout-ms: 30000
