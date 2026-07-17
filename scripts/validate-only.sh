@@ -87,7 +87,16 @@ echo "Starting validation..."
 echo "============================================"
 echo ""
 
-java -jar "${JAR_PATH}" \
+# Set the JAAS file as a JVM flag when configured: this applies before the JVM
+# starts anything, so it cannot be defeated by JAAS-configuration caching or
+# bean initialization order inside the app.
+JAAS_OPT=""
+if [ -n "${KAFKA_JAAS_CONFIG_PATH}" ]; then
+    JAAS_OPT="-Djava.security.auth.login.config=${KAFKA_JAAS_CONFIG_PATH}"
+    echo "Using JAAS config: ${KAFKA_JAAS_CONFIG_PATH}"
+fi
+
+java ${JAAS_OPT} -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --bridge.validate-only=true \
     --bridge.mq.listener-enabled=false
