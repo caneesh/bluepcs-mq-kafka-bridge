@@ -2,7 +2,8 @@ package com.hcsc.bridge.security;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import okhttp3.FormBody;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
 import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -152,35 +154,42 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
 
         logger.debug("Refreshing OAuth2 JWT token");
 
-        FormBody.Builder formBuilder = new FormBody.Builder();
-
-        if (hasValue(clientId)) {
-            formBuilder.add("client_id", clientId);
-        }
-
-        if (hasValue(clientSecret)) {
-            formBuilder.add("client_secret", clientSecret);
-        }
-
+        // The STS (sts/v5/jwt_token_internal) is not a standard OAuth2 form endpoint:
+        // client credentials and scope travel as HEADERS, and the body is a JSON
+        // document carrying only the username/password. Sending form-encoding gets 415.
+        ObjectNode bodyNode = objectMapper.createObjectNode();
         if (hasValue(username)) {
-            formBuilder.add("username", username);
+            bodyNode.put("username", username);
         }
-
         if (hasValue(password)) {
-            formBuilder.add("password", password);
+            bodyNode.put("password", password);
         }
 
-        if (hasValue(scope)) {
-            formBuilder.add("scope", scope);
+        RequestBody body;
+        try {
+            body = RequestBody.create(
+                    objectMapper.writeValueAsString(bodyNode),
+                    MediaType.get("application/json"));
+        } catch (IOException e) {
+            throw new TokenRefreshException("Failed to serialize token request body", e);
         }
 
-        RequestBody body = formBuilder.build();
-
-        Request request = new Request.Builder()
+        Request.Builder requestBuilder = new Request.Builder()
                 .url(tokenUrl)
                 .post(body)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .build();
+                .header("Content-Type", "application/json");
+
+        if (hasValue(clientId)) {
+            requestBuilder.header("ClientID", clientId);
+        }
+        if (hasValue(clientSecret)) {
+            requestBuilder.header("ClientSecret", clientSecret);
+        }
+        if (hasValue(scope)) {
+            requestBuilder.header("scope", scope);
+        }
+
+        Request request = requestBuilder.build();
 
         try (Response response = httpClient.newCall(request).execute()) {
             // OkHttp response bodies can only be consumed once — read exactly once, then branch
@@ -193,19 +202,83 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
 
             JsonNode json = objectMapper.readTree(responseBody);
 
-            if (!json.has("access_token")) {
-                throw new TokenRefreshException("Token response missing access_token");
+            String token = extractToken(json);
+            if (token == null) {
+                // Log field NAMES only — values could include the token itself
+                throw new TokenRefreshException(
+                        "Token response has no recognized token field; response fields: "
+                                + fieldNames(json));
             }
 
-            cachedToken = json.get("access_token").asText();
-            long expiresIn = json.has("expires_in") ? json.get("expires_in").asLong() : 3600;
-            tokenExpiry = Instant.now().plusSeconds(expiresIn);
+            cachedToken = token;
+            tokenExpiry = extractExpiry(json, token);
 
             logger.info("OAuth2 JWT token refreshed successfully, expires at: {}", tokenExpiry);
 
         } catch (IOException e) {
             throw new TokenRefreshException("Failed to refresh token: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * The STS response shape is not the standard OAuth2 one; accept the common
+     * variants of the token field name.
+     */
+    private String extractToken(JsonNode json) {
+        for (String field : new String[]{"access_token", "accessToken", "token", "jwt", "id_token"}) {
+            JsonNode node = json.get(field);
+            if (node != null && node.isTextual() && !node.asText().isEmpty()) {
+                return node.asText();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Expiry precedence: an explicit expires_in/expiresIn field, then the JWT's own
+     * exp claim, then a conservative one-hour default.
+     */
+    private Instant extractExpiry(JsonNode json, String token) {
+        for (String field : new String[]{"expires_in", "expiresIn"}) {
+            JsonNode node = json.get(field);
+            if (node != null && node.isNumber()) {
+                return Instant.now().plusSeconds(node.asLong());
+            }
+        }
+
+        Instant jwtExpiry = expiryFromJwt(token);
+        if (jwtExpiry != null) {
+            return jwtExpiry;
+        }
+
+        return Instant.now().plusSeconds(3600);
+    }
+
+    private Instant expiryFromJwt(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) {
+                return null;
+            }
+            byte[] payload = Base64.getUrlDecoder().decode(parts[1]);
+            JsonNode claims = objectMapper.readTree(payload);
+            JsonNode exp = claims.get("exp");
+            return exp != null && exp.isNumber() ? Instant.ofEpochSecond(exp.asLong()) : null;
+        } catch (Exception e) {
+            logger.debug("Could not read exp claim from JWT: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String fieldNames(JsonNode json) {
+        StringBuilder sb = new StringBuilder();
+        json.fieldNames().forEachRemaining(name -> {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(name);
+        });
+        return sb.length() > 0 ? sb.toString() : "<none>";
     }
 
     private boolean hasValue(String value) {

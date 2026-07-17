@@ -8,8 +8,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
@@ -43,6 +41,15 @@ public class ReadinessCheckService {
 
     @Value("${bridge.security.client-secret:}")
     private String oauthClientSecret;
+
+    @Value("${bridge.security.scope:}")
+    private String oauthScope;
+
+    @Value("${bridge.security.username:}")
+    private String oauthUsername;
+
+    @Value("${bridge.security.password:}")
+    private String oauthPassword;
 
     @Value("${spring.profiles.active:}")
     private String activeProfile;
@@ -175,15 +182,20 @@ public class ReadinessCheckService {
         }
 
         try {
+            // The STS expects client credentials + scope as headers and a JSON body
+            // with username/password (form-encoding is rejected with 415)
             HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("ClientID", oauthClientId);
+            headers.set("ClientSecret", oauthClientSecret);
+            if (!isBlank(oauthScope)) {
+                headers.set("scope", oauthScope);
+            }
 
-            MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
-            body.add("grant_type", "client_credentials");
-            body.add("client_id", oauthClientId);
-            body.add("client_secret", oauthClientSecret);
+            String body = String.format("{\"username\":\"%s\",\"password\":\"%s\"}",
+                    oauthUsername, oauthPassword);
 
-            HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
+            HttpEntity<String> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(oauthTokenUrl, request, String.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {

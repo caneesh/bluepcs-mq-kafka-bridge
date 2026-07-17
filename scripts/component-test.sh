@@ -59,7 +59,7 @@ fi
 # with NO defaults, so Spring fails placeholder resolution at startup regardless of
 # which component we intend to exercise. Require both here for a clear message.
 MISSING_VARS=0
-for var in KAFKA_TRUSTSTORE_PASSWORD OAUTH_CLIENT_SECRET; do
+for var in KAFKA_TRUSTSTORE_PASSWORD OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET API_PASSWORD; do
     if [ -z "${!var}" ]; then
         echo "MISSING: $var"
         MISSING_VARS=$((MISSING_VARS + 1))

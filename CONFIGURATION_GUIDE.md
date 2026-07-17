@@ -45,18 +45,22 @@ default (hosts, ports, queue names, topics — all carried over from the Talend
 
 ---
 
-## 2. The two values you MUST set (test-env)
+## 2. The four values you MUST set (test-env)
 
 | Variable | What it is | Where to get it |
 |---|---|---|
 | `KAFKA_TRUSTSTORE_PASSWORD` | password of the JKS truststore at `/prod/gold/integration/conf/product/common/kafka_truststore_test.jks` | Kafka platform team, or the old Talend job's context (`cv_kfk_*`) |
-| `OAUTH_CLIENT_SECRET` | client secret for OAuth client id `pendatum.profile` | API gateway / security team, or the old Talend context (`cv_clientSecret`) |
+| `OAUTH_CLIENT_ID` | STS client id (32-char hex) — sent as the `ClientID` header to both the token endpoint and the enrichment API | your working Insomnia token request / security team |
+| `OAUTH_CLIENT_SECRET` | STS client secret — sent as the `ClientSecret` header | same source |
+| `API_PASSWORD` | password for the STS user (`a6193139`) — JSON body of the token request | same source |
 
 Put them in `.env`:
 
 ```bash
 KAFKA_TRUSTSTORE_PASSWORD=<value>
+OAUTH_CLIENT_ID=<value>
 OAUTH_CLIENT_SECRET=<value>
+API_PASSWORD=<value>
 ```
 
 `MQ_PASSWORD` is **not** needed for test-env — the test queue manager
@@ -110,12 +114,29 @@ wrong host/port or firewall. `MQRC_UNKNOWN_CHANNEL_NAME` → wrong `MQ_CHANNEL`.
 | Variable | test-env default | Meaning / where it comes from |
 |---|---|---|
 | `API_BASE_URL` | `https://api-gateway-ssl-svc.test.hcscint.net/eps_product_catalog/v2/plans` | the plans resource (from your working Insomnia request) |
-| `OAUTH_TOKEN_URL` | `https://f5-app-gw-wv.test.hscint.net/sts/v6/jwt_token_internal` | STS token endpoint (Talend `cv_security_token_url`) |
-| `OAUTH_CLIENT_ID` | `pendatum.profile` | OAuth client id — same value is sent as the `ClientID` header |
-| `OAUTH_CLIENT_SECRET` | **required, no default** | same value is sent as the `ClientSecret` header |
-| `API_USERNAME` | `e4193139` | sent as `username` in the token request |
-| `API_PASSWORD` | *(empty)* | sent as `password` in the token request if set |
+| `OAUTH_TOKEN_URL` | `https://t-sso-sg-uat-svc.test.hcscint.net/sts/v5/jwt_token_internal` | STS token endpoint (verified via working curl) |
+| `OAUTH_CLIENT_ID` | **required, no default** | sent as the `ClientID` HEADER on token + API requests |
+| `OAUTH_CLIENT_SECRET` | **required, no default** | sent as the `ClientSecret` HEADER |
+| `OAUTH_SCOPE` | `oob openid profile roles permissions` | sent as the `scope` HEADER on the token request |
+| `API_USERNAME` | `a6193139` | `username` in the token request's JSON body |
+| `API_PASSWORD` | **required, no default** | `password` in the token request's JSON body |
 | `API_TIMEOUT_SECONDS` | `30` | HTTP timeout |
+
+**The STS token request shape** (not standard OAuth2 — form-encoding gets 415):
+
+```
+POST {OAUTH_TOKEN_URL}
+ClientID: <OAUTH_CLIENT_ID>          ← headers, not body fields
+ClientSecret: <OAUTH_CLIENT_SECRET>
+scope: oob openid profile roles permissions
+Content-Type: application/json
+
+{"username": "a6193139", "password": "<API_PASSWORD>"}
+```
+
+The token is read from `access_token`/`accessToken`/`token`/`jwt`/`id_token`
+in the response, and expiry from `expires_in`, the JWT's own `exp` claim, or a
+one-hour default — in that order.
 
 **Verify** (use any plan id + effective date you know exists — take one from
 a real MQ message or from Insomnia):
@@ -233,7 +254,9 @@ the LB isn't forwarding port 8020.
 ```bash
 # --- Required secrets ---
 KAFKA_TRUSTSTORE_PASSWORD=<from Kafka team / Talend context>
-OAUTH_CLIENT_SECRET=<from security team / Talend context>
+OAUTH_CLIENT_ID=<STS client id, from the working token request>
+OAUTH_CLIENT_SECRET=<STS client secret>
+API_PASSWORD=<STS user password for a6193139>
 
 # --- Only if the defaults don't match your environment ---
 # MQ_HOST=teenuslika02.app.test.hscint.net
@@ -274,7 +297,8 @@ full pipeline has no untested integration left.
 | Startup/run error contains... | Look at |
 |---|---|
 | `Could not resolve placeholder 'KAFKA_TRUSTSTORE_PASSWORD'` | step 2 — secret missing from `.env` |
-| `Could not resolve placeholder 'OAUTH_CLIENT_SECRET'` | step 2 |
+| `Could not resolve placeholder 'OAUTH_CLIENT_ID'` / `'OAUTH_CLIENT_SECRET'` / `'API_PASSWORD'` | step 2 |
+| `Token refresh failed with status: 415` | section 4 — token endpoint URL is wrong (an old form-encoded endpoint); use the v5 STS URL |
 | `MQRC_NOT_AUTHORIZED` / `2035` | section 3 — MQ needs a real password |
 | `Token refresh failed with status 401` | section 4 — OAuth credentials |
 | `API client error: 401` (token was OK) | section 4 — ClientID/ClientSecret headers |

@@ -73,11 +73,15 @@ bridge:
   # OAuth2 Security Configuration (Test Environment)
   # ============================================================================
   security:
-    token-url: ${OAUTH_TOKEN_URL:https://f5-app-gw-wv.test.hscint.net/sts/v6/jwt_token_internal}
-    client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
+    # STS contract (verified via working curl): ClientID/ClientSecret/scope as
+    # HEADERS, JSON body {"username","password"}; form-encoding is rejected (415)
+    token-url: ${OAUTH_TOKEN_URL:https://t-sso-sg-uat-svc.test.hcscint.net/sts/v5/jwt_token_internal}
+    # No defaults for credentials: supply via .env on the edge node
+    client-id: ${OAUTH_CLIENT_ID}
     client-secret: ${OAUTH_CLIENT_SECRET}
-    username: ${API_USERNAME:e4193139}
-    password: ${API_PASSWORD:}
+    scope: ${OAUTH_SCOPE:oob openid profile roles permissions}
+    username: ${API_USERNAME:a6193139}
+    password: ${API_PASSWORD}
 
   # ============================================================================
   # Audit Configuration

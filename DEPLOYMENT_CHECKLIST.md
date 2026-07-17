@@ -83,9 +83,11 @@ every component's properties step by step. The short version:
 
 ```bash
 cp .env.template .env
-# test-env requires exactly two values (guide §2):
+# test-env requires exactly four values (guide §2):
 #   KAFKA_TRUSTSTORE_PASSWORD  — from the Kafka team / Talend cv_kfk_* context
-#   OAUTH_CLIENT_SECRET        — from the security team / Talend cv_clientSecret
+#   OAUTH_CLIENT_ID            — STS client id (ClientID header)
+#   OAUTH_CLIENT_SECRET        — STS client secret (ClientSecret header)
+#   API_PASSWORD               — STS user password (token request JSON body)
 # MQ_PASSWORD is NOT needed for test-env (prod only).
 ```
 

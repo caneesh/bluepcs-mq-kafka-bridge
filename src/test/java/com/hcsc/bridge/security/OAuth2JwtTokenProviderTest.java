@@ -46,7 +46,7 @@ class OAuth2JwtTokenProviderTest {
     class TokenFetching {
 
         @Test
-        @DisplayName("should fetch token with username and password")
+        @DisplayName("should send STS-shaped request: credential headers + JSON body")
         void shouldFetchTokenWithCredentials() throws InterruptedException {
             mockServer.enqueue(new MockResponse()
                     .setBody("{\"access_token\":\"test-jwt-token\",\"expires_in\":3600}")
@@ -60,12 +60,14 @@ class OAuth2JwtTokenProviderTest {
 
             RecordedRequest request = mockServer.takeRequest();
             assertThat(request.getMethod()).isEqualTo("POST");
+            assertThat(request.getHeader("Content-Type")).startsWith("application/json");
+            assertThat(request.getHeader("ClientID")).isEqualTo("test-client");
+            assertThat(request.getHeader("ClientSecret")).isEqualTo("test-secret");
+            assertThat(request.getHeader("scope")).isEqualTo("api.read");
             String body = request.getBody().readUtf8();
-            assertThat(body).contains("client_id=test-client");
-            assertThat(body).contains("client_secret=test-secret");
-            assertThat(body).contains("username=test-user");
-            assertThat(body).contains("password=test-password");
-            assertThat(body).contains("scope=api.read");
+            assertThat(body).contains("\"username\":\"test-user\"");
+            assertThat(body).contains("\"password\":\"test-password\"");
+            assertThat(body).doesNotContain("client_id").doesNotContain("client_secret");
         }
 
         @Test
@@ -171,7 +173,7 @@ class OAuth2JwtTokenProviderTest {
         }
 
         @Test
-        @DisplayName("should throw exception when response missing access_token")
+        @DisplayName("should throw exception when response has no recognized token field")
         void shouldThrowWhenMissingAccessToken() {
             mockServer.enqueue(new MockResponse()
                     .setBody("{\"error\":\"invalid_grant\"}")
@@ -181,7 +183,40 @@ class OAuth2JwtTokenProviderTest {
 
             assertThatThrownBy(() -> tokenProvider.getToken())
                     .isInstanceOf(OAuth2JwtTokenProvider.TokenRefreshException.class)
-                    .hasMessageContaining("missing access_token");
+                    .hasMessageContaining("no recognized token field")
+                    .hasMessageContaining("error");
+        }
+
+        @Test
+        @DisplayName("should accept alternative token field names")
+        void shouldAcceptAlternativeTokenFieldNames() {
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"token\":\"alt-field-token\"}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = createProvider();
+
+            assertThat(tokenProvider.getToken()).isEqualTo("alt-field-token");
+        }
+
+        @Test
+        @DisplayName("should read expiry from the JWT exp claim when no expires field")
+        void shouldReadExpiryFromJwtExpClaim() {
+            // header {"alg":"none"} . payload {"exp": 4102444800} (year 2100) . empty sig
+            String jwt = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString("{\"alg\":\"none\"}".getBytes())
+                    + "."
+                    + java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString("{\"exp\":4102444800}".getBytes())
+                    + ".";
+            mockServer.enqueue(new MockResponse()
+                    .setBody("{\"token\":\"" + jwt + "\"}")
+                    .setHeader("Content-Type", "application/json"));
+
+            tokenProvider = createProvider();
+
+            assertThat(tokenProvider.getToken()).isEqualTo(jwt);
+            assertThat(tokenProvider.isTokenValid()).isTrue();
         }
 
         @Test
@@ -265,8 +300,7 @@ class OAuth2JwtTokenProviderTest {
             tokenProvider.getToken();
 
             RecordedRequest request = mockServer.takeRequest();
-            String body = request.getBody().readUtf8();
-            assertThat(body).doesNotContain("scope=");
+            assertThat(request.getHeader("scope")).isNull();
         }
 
         @Test
@@ -290,8 +324,8 @@ class OAuth2JwtTokenProviderTest {
 
             RecordedRequest request = mockServer.takeRequest();
             String body = request.getBody().readUtf8();
-            assertThat(body).doesNotContain("username=");
-            assertThat(body).doesNotContain("password=");
+            assertThat(body).doesNotContain("username");
+            assertThat(body).doesNotContain("password");
         }
 
         @Test
@@ -305,12 +339,12 @@ class OAuth2JwtTokenProviderTest {
             tokenProvider.getToken();
 
             RecordedRequest request = mockServer.takeRequest();
+            assertThat(request.getHeader("ClientID")).isEqualTo("test-client");
+            assertThat(request.getHeader("ClientSecret")).isEqualTo("test-secret");
+            assertThat(request.getHeader("scope")).isEqualTo("api.read");
             String body = request.getBody().readUtf8();
-            assertThat(body).contains("client_id=test-client");
-            assertThat(body).contains("client_secret=test-secret");
-            assertThat(body).contains("username=test-user");
-            assertThat(body).contains("password=test-password");
-            assertThat(body).contains("scope=api.read");
+            assertThat(body).contains("\"username\":\"test-user\"");
+            assertThat(body).contains("\"password\":\"test-password\"");
         }
     }
 

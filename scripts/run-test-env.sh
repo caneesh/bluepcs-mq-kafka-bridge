@@ -56,7 +56,7 @@ fi
 # MQ_PASSWORD is intentionally NOT required: the test queue manager
 # authenticates by user id / channel auth without a password.
 MISSING_VARS=0
-for var in KAFKA_TRUSTSTORE_PASSWORD OAUTH_CLIENT_SECRET; do
+for var in KAFKA_TRUSTSTORE_PASSWORD OAUTH_CLIENT_ID OAUTH_CLIENT_SECRET API_PASSWORD; do
     if [ -z "${!var}" ]; then
         echo "MISSING: $var"
         MISSING_VARS=$((MISSING_VARS + 1))
