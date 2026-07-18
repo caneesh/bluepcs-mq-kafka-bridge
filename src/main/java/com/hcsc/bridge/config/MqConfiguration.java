@@ -97,7 +97,12 @@ public class MqConfiguration {
         }
 
         logger.info("Configured IBM MQ connection factory: {}:{}/{}", host, port, queueManager);
-        return new CachingConnectionFactory(factory);
+        CachingConnectionFactory cachingFactory = new CachingConnectionFactory(factory);
+        // DefaultMessageListenerContainer manages its own consumers; cached consumers hold
+        // prefetched messages that would appear "stuck" on the queue. Keep connection/session
+        // caching, but let the listener container own the consumer lifecycle (Spring recommendation).
+        cachingFactory.setCacheConsumers(false);
+        return cachingFactory;
     }
 
     @Bean

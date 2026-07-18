@@ -1,5 +1,8 @@
 package com.hcsc.bridge.mq;
 
+import com.hcsc.bridge.audit.AuditEvent;
+import com.hcsc.bridge.audit.AuditEventType;
+import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.orchestrator.BridgeOrchestrator;
 import com.hcsc.bridge.orchestrator.ProcessingResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.jms.Destination;
 import javax.jms.JMSException;
@@ -34,6 +38,9 @@ class MqMessageListenerTest {
     private BridgeOrchestrator orchestrator;
 
     @Mock
+    private AuditPublisher auditPublisher;
+
+    @Mock
     private TextMessage textMessage;
 
     @Mock
@@ -43,7 +50,7 @@ class MqMessageListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new MqMessageListener(orchestrator);
+        listener = new MqMessageListener(orchestrator, auditPublisher);
     }
 
     @Nested
@@ -262,6 +269,147 @@ class MqMessageListenerTest {
             Message nonTextMessage = mock(Message.class);
 
             listener.onMessage(nonTextMessage);
+        }
+
+        @Test
+        @DisplayName("should acknowledge non-text messages to discard them")
+        void shouldAcknowledgeNonTextMessages() throws JMSException {
+            Message nonTextMessage = mock(Message.class);
+
+            listener.onMessage(nonTextMessage);
+
+            verify(nonTextMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should not throw when acknowledge fails while discarding non-text message")
+        void shouldNotThrowWhenDiscardAcknowledgeFails() throws JMSException {
+            Message nonTextMessage = mock(Message.class);
+            doThrow(new JMSException("Acknowledge failed")).when(nonTextMessage).acknowledge();
+
+            // Throwing here would redeliver a message we can never process — must swallow.
+            listener.onMessage(nonTextMessage);
+
+            verify(nonTextMessage).acknowledge();
+            verify(orchestrator, never()).process(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("poison message handling")
+    class PoisonMessageHandling {
+
+        private static final String DELIVERY_COUNT = "JMSXDeliveryCount";
+
+        private void stubTextMessage(String messageId, int deliveryCount) throws JMSException {
+            when(textMessage.getJMSMessageID()).thenReturn(messageId);
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("{\"bad\":\"payload\"}");
+            when(textMessage.propertyExists(DELIVERY_COUNT)).thenReturn(true);
+            when(textMessage.getIntProperty(DELIVERY_COUNT)).thenReturn(deliveryCount);
+        }
+
+        @Test
+        @DisplayName("should discard and acknowledge when delivery count exceeds max attempts")
+        void shouldDiscardWhenDeliveryCountExceedsMax() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-001", 4);
+
+            listener.onMessage(textMessage);
+
+            verify(orchestrator, never()).process(any());
+            verify(textMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should publish MESSAGE_DISCARDED audit event on discard")
+        void shouldPublishAuditEventOnDiscard() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-002", 4);
+
+            listener.onMessage(textMessage);
+
+            ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+            verify(auditPublisher).publishAsync(captor.capture());
+            AuditEvent event = captor.getValue();
+            assertThat(event.getEventType()).isEqualTo(AuditEventType.MESSAGE_DISCARDED);
+            assertThat(event.getMessageId()).isEqualTo("MSG-POISON-002");
+            assertThat(event.getMetadata()).containsEntry("deliveryCount", 4);
+        }
+
+        @Test
+        @DisplayName("should process normally when delivery count equals max attempts")
+        void shouldProcessWhenDeliveryCountAtMax() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-003", 3);
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.success("event-id-p-003", "/path", "123")
+            );
+            doNothing().when(textMessage).acknowledge();
+
+            listener.onMessage(textMessage);
+
+            verify(orchestrator).process(any());
+        }
+
+        @Test
+        @DisplayName("should never discard when guard is disabled (max-delivery-attempts=0)")
+        void shouldNotDiscardWhenGuardDisabled() throws JMSException {
+            // maxDeliveryAttempts defaults to 0 outside Spring — guard off
+            stubTextMessage("MSG-POISON-004", 99);
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.success("event-id-p-004", "/path", "123")
+            );
+            doNothing().when(textMessage).acknowledge();
+
+            listener.onMessage(textMessage);
+
+            verify(orchestrator).process(any());
+        }
+
+        @Test
+        @DisplayName("should treat missing delivery count as first delivery and never discard")
+        void shouldTreatMissingDeliveryCountAsFirstDelivery() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 1);
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-POISON-005");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("{}");
+            when(textMessage.propertyExists(DELIVERY_COUNT)).thenReturn(false);
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.success("event-id-p-005", "/path", "123")
+            );
+            doNothing().when(textMessage).acknowledge();
+
+            listener.onMessage(textMessage);
+
+            verify(orchestrator).process(any());
+        }
+
+        @Test
+        @DisplayName("should still acknowledge discard when audit publish throws")
+        void shouldAcknowledgeDiscardWhenAuditPublishFails() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-006", 4);
+            doThrow(new RuntimeException("Audit down")).when(auditPublisher).publishAsync(any());
+
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should not throw when acknowledge fails during poison discard")
+        void shouldNotThrowWhenPoisonDiscardAcknowledgeFails() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-007", 4);
+            doThrow(new JMSException("Acknowledge failed")).when(textMessage).acknowledge();
+
+            listener.onMessage(textMessage);
+
+            verify(orchestrator, never()).process(any());
         }
     }
 

@@ -90,6 +90,9 @@ bridge:
     concurrency: ${MQ_CONCURRENCY:1}
     receive-timeout: ${MQ_RECEIVE_TIMEOUT:5000}
     log-payload: ${MQ_LOG_PAYLOAD:false}
+    # Poison-message guard: discard (log + audit + ack) after this many delivery attempts.
+    # 0 = disabled; prefer queue-manager backout (BOTHRESH/BOQNAME) which preserves the message.
+    max-delivery-attempts: ${MQ_MAX_DELIVERY_ATTEMPTS:0}
     ssl:
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
       truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}

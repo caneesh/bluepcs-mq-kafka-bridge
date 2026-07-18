@@ -400,6 +400,25 @@ Key log patterns to monitor:
 - HDFS writes are idempotent (file already exists = skip)
 - Event ID is deterministic (SHA-256 of JMS Message ID)
 
+### Poison Messages (REQUIRED queue configuration)
+
+A message that fails permanently (e.g., unparseable payload) is redelivered forever and
+blocks the queue (concurrency is 1). Protection, in order of preference:
+
+1. **Queue-manager backout (preferred — preserves the message):** ask the MQ team to set a
+   backout threshold and backout requeue queue on the input queue:
+   `ALTER QLOCAL(<INPUT.QUEUE>) BOTHRESH(5) BOQNAME(<INPUT.QUEUE>.BACKOUT)`
+   and grant the bridge user put authority on the backout queue.
+2. **Application guard (fallback — discards the message):** set
+   `bridge.mq.max-delivery-attempts` > 0. When `JMSXDeliveryCount` exceeds it, the bridge logs
+   the full masked payload, publishes a `MESSAGE_DISCARDED` audit event, and acknowledges the
+   message. The payload then survives only in logs and the audit topic — use this only when
+   broker-side backout cannot be configured.
+
+Note: redelivery also occurs during transient outages (HDFS/Kafka down). Backout thresholds
+should be sized so an outage does not exhaust them within seconds; the app guard has the same
+caveat — do not set `max-delivery-attempts` low if outages are expected.
+
 ### Important Properties
 
 | Property | Default | Description |
@@ -407,5 +426,6 @@ Key log patterns to monitor:
 | `bridge.validate-only` | false | Run validation and exit |
 | `bridge.mq.listener-enabled` | false | Enable MQ message consumption |
 | `bridge.mq.concurrency` | 1 | Number of concurrent listeners |
+| `bridge.mq.max-delivery-attempts` | 0 | Poison-message guard; 0 = disabled (use queue BOTHRESH instead) |
 | `bridge.api.retry-attempts` | 3 | API call retry attempts |
 | `bridge.api.timeout-seconds` | 30 | API call timeout |

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.jms.config.DefaultJmsListenerContainerFactory;
 import org.springframework.jms.config.JmsListenerContainerFactory;
+import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.jms.Session;
@@ -50,6 +51,19 @@ class MqConfigurationTest {
         void shouldExposeQueueName() {
             MqConfiguration config = createConfiguration();
             assertThat(config.getQueue()).isEqualTo("BRIDGE.INPUT");
+        }
+
+        @Test
+        @DisplayName("should disable consumer caching for listener container compatibility")
+        void shouldDisableConsumerCaching() throws Exception {
+            MqConfiguration config = createConfiguration();
+
+            javax.jms.ConnectionFactory factory = config.mqConnectionFactory();
+
+            assertThat(factory).isInstanceOf(CachingConnectionFactory.class);
+            // Cached consumers hold prefetched messages that DefaultMessageListenerContainer
+            // never sees — messages would appear stuck on the queue.
+            assertThat(((CachingConnectionFactory) factory).isCacheConsumers()).isFalse();
         }
     }
 
