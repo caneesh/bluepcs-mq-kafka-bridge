@@ -56,7 +56,7 @@ class EndToEndOrchestratorIT {
         when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("12345");
 
         JsonMessageParser parser = new JsonMessageParser();
-        HdfsSafePayloadWriter hdfsWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", ".tmp");
+        HdfsSafePayloadWriter hdfsWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", "", ".tmp");
         EnrichmentWrapperFactory wrapperFactory = new EnrichmentWrapperFactory();
 
         orchestrator = new BridgeOrchestrator(
@@ -171,7 +171,7 @@ class EndToEndOrchestratorIT {
 
             hdfsOperations.cleanup();
             hdfsOperations = new LocalFileSystemHdfsOperations(Files.createTempDirectory("hdfs-test-2"));
-            HdfsSafePayloadWriter hdfsWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", ".tmp");
+            HdfsSafePayloadWriter hdfsWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", "", ".tmp");
             orchestrator = new BridgeOrchestrator(
                     new JsonMessageParser(),
                     apiClient,

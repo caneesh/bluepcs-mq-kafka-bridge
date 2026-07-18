@@ -29,6 +29,17 @@ public final class ProcessingResult {
         return new ProcessingResult(eventId, Status.FAILURE, null, null, errorCode, errorMessage);
     }
 
+    /**
+     * The message could not be processed (permanent failure, e.g. unparseable payload) but its
+     * raw payload has been safely preserved at {@code hdfsPath}. The listener acknowledges
+     * quarantined messages: retrying a permanent failure can never succeed, and the payload is
+     * recoverable from the quarantine directory.
+     */
+    public static ProcessingResult quarantined(String eventId, String hdfsPath,
+                                               String errorCode, String errorMessage) {
+        return new ProcessingResult(eventId, Status.QUARANTINED, hdfsPath, null, errorCode, errorMessage);
+    }
+
     public String getEventId() {
         return eventId;
     }
@@ -61,6 +72,10 @@ public final class ProcessingResult {
         return status == Status.FAILURE;
     }
 
+    public boolean isQuarantined() {
+        return status == Status.QUARANTINED;
+    }
+
     @Override
     public String toString() {
         return "ProcessingResult{" +
@@ -74,6 +89,7 @@ public final class ProcessingResult {
 
     public enum Status {
         SUCCESS,
-        FAILURE
+        FAILURE,
+        QUARANTINED
     }
 }

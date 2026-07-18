@@ -139,6 +139,43 @@ class MqMessageListenerTest {
 
             verify(textMessage, never()).acknowledge();
         }
+
+        @Test
+        @DisplayName("should acknowledge without throwing when message is quarantined")
+        void shouldAcknowledgeOnQuarantine() throws JMSException {
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-ACK-004");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("not json");
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.quarantined("event-id-ack-004",
+                            "/errors/event-id-ack-004.json", "PARSE_ERROR", "Invalid JSON")
+            );
+            doNothing().when(textMessage).acknowledge();
+
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should not throw when acknowledge fails for a quarantined message")
+        void shouldNotThrowOnQuarantineAcknowledgeFailure() throws JMSException {
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-ACK-005");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("not json");
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.quarantined("event-id-ack-005",
+                            "/errors/event-id-ack-005.json", "PARSE_ERROR", "Invalid JSON")
+            );
+            doThrow(new JMSException("Acknowledge failed")).when(textMessage).acknowledge();
+
+            // Redelivery re-quarantines idempotently to the same file — safe to swallow.
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
+        }
     }
 
     @Nested

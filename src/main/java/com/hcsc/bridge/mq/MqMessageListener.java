@@ -107,6 +107,13 @@ public class MqMessageListener {
 
             if (result.isSuccessful()) {
                 acknowledgeProcessedMessage(message, messageId, result.getEventId());
+            } else if (result.isQuarantined()) {
+                // Permanent failure, payload preserved in the HDFS quarantine directory —
+                // acknowledge so the bad message cannot block the queue. Ack failure is
+                // tolerable: redelivery re-quarantines idempotently to the same file.
+                logger.warn("Message {} quarantined ({}): payload preserved at {}; acknowledging",
+                        messageId, result.getErrorCode(), result.getHdfsPath());
+                acknowledgeQuietly(message, "quarantined-message ack (messageId=" + messageId + ")");
             } else {
                 logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
                 throw new MqProcessingException("Processing failed: " + result.getErrorCode(),

@@ -49,7 +49,7 @@ class HdfsSafePayloadWriterTest {
 
     @BeforeEach
     void setUp() {
-        writer = new HdfsSafePayloadWriter(hdfsFileOperations, BASE_PATH, TEMP_SUFFIX);
+        writer = new HdfsSafePayloadWriter(hdfsFileOperations, BASE_PATH, "", TEMP_SUFFIX);
     }
 
     @Nested
@@ -86,7 +86,7 @@ class HdfsSafePayloadWriterTest {
         @DisplayName("should tolerate a trailing slash on the base path")
         void shouldTolerateTrailingSlashOnBasePath() throws IOException {
             HdfsSafePayloadWriter slashWriter =
-                    new HdfsSafePayloadWriter(hdfsFileOperations, BASE_PATH + "/", TEMP_SUFFIX);
+                    new HdfsSafePayloadWriter(hdfsFileOperations, BASE_PATH + "/", "", TEMP_SUFFIX);
             EnrichedPayload payload = createEnrichedPayload("MSG-SLASH", "TXN-SLASH", "event-id-slash");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
@@ -355,6 +355,71 @@ class HdfsSafePayloadWriterTest {
             assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Checksum mismatch");
+        }
+    }
+
+    @Nested
+    @DisplayName("quarantine writes")
+    class QuarantineWrite {
+
+        private void stubSuccessfulWrite(ByteArrayOutputStream outputStream) throws IOException {
+            when(hdfsFileOperations.exists(anyString())).thenReturn(false);
+            when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+        }
+
+        @Test
+        @DisplayName("should write raw payload to default errors directory under base path")
+        void shouldWriteToDefaultErrorsDirectory() throws IOException {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            stubSuccessfulWrite(outputStream);
+
+            HdfsWriteResult result = writer.writeQuarantine("event-id-q1", "not json", "MSG-Q1");
+
+            assertThat(result.isNewWrite()).isTrue();
+            assertThat(result.getHdfsPath()).isEqualTo(BASE_PATH + "/errors/event-id-q1.json");
+            assertThat(outputStream.toString("UTF-8")).isEqualTo("not json");
+        }
+
+        @Test
+        @DisplayName("should use explicitly configured error path")
+        void shouldUseConfiguredErrorPath() throws IOException {
+            HdfsSafePayloadWriter customWriter = new HdfsSafePayloadWriter(
+                    hdfsFileOperations, BASE_PATH, "/custom/quarantine/", TEMP_SUFFIX);
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            stubSuccessfulWrite(outputStream);
+
+            HdfsWriteResult result = customWriter.writeQuarantine("event-id-q2", "{}", "MSG-Q2");
+
+            // Trailing slash tolerated, no "//" in the advertised path
+            assertThat(result.getHdfsPath()).isEqualTo("/custom/quarantine/event-id-q2.json");
+        }
+
+        @Test
+        @DisplayName("should tolerate a null raw payload")
+        void shouldTolerateNullPayload() throws IOException {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            stubSuccessfulWrite(outputStream);
+
+            HdfsWriteResult result = writer.writeQuarantine("event-id-q3", null, "MSG-Q3");
+
+            assertThat(result.isNewWrite()).isTrue();
+            assertThat(result.getBytesWritten()).isZero();
+        }
+
+        @Test
+        @DisplayName("should be idempotent: existing quarantine file is not rewritten")
+        void shouldSkipExistingQuarantineFile() throws IOException {
+            when(hdfsFileOperations.exists(BASE_PATH + "/errors/event-id-q4.json")).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("existing-checksum");
+
+            HdfsWriteResult result = writer.writeQuarantine("event-id-q4", "not json", "MSG-Q4");
+
+            assertThat(result.isAlreadyExists()).isTrue();
+            verify(hdfsFileOperations, never()).create(anyString());
         }
     }
 

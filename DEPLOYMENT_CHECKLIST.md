@@ -395,15 +395,21 @@ Key log patterns to monitor:
 
 ### Failure Handling
 
-- Any step failure → MQ message NOT acknowledged → MQ will redeliver
+- **Parse failure (permanent):** raw payload is quarantined to the HDFS error directory
+  (`bridge.hdfs.error-path`, default `<base-path>/errors`), a `MESSAGE_QUARANTINED` audit
+  event is published, and the MQ message IS acknowledged — a bad message cannot block the
+  queue. The message is only acked if the quarantine write succeeded; if HDFS is down the
+  message stays on the queue and redelivery retries the quarantine.
+- **Transient failure (enrichment/HDFS/Kafka):** MQ message NOT acknowledged → MQ will
+  redeliver until the dependency recovers
 - Duplicate Kafka publishes are acceptable (downstream deduplicates by event_id)
-- HDFS writes are idempotent (file already exists = skip)
+- HDFS writes are idempotent (file already exists = skip) — including quarantine writes
 - Event ID is deterministic (SHA-256 of JMS Message ID)
 
-### Poison Messages (REQUIRED queue configuration)
+### Poison Messages
 
-A message that fails permanently (e.g., unparseable payload) is redelivered forever and
-blocks the queue (concurrency is 1). Protection, in order of preference:
+Unparseable messages are handled by the quarantine flow above and cannot block the queue.
+Backstops for OTHER repeating failures (e.g., a message that permanently fails enrichment):
 
 1. **Queue-manager backout (preferred — preserves the message):** ask the MQ team to set a
    backout threshold and backout requeue queue on the input queue:
@@ -427,5 +433,6 @@ caveat — do not set `max-delivery-attempts` low if outages are expected.
 | `bridge.mq.listener-enabled` | false | Enable MQ message consumption |
 | `bridge.mq.concurrency` | 1 | Number of concurrent listeners |
 | `bridge.mq.max-delivery-attempts` | 0 | Poison-message guard; 0 = disabled (use queue BOTHRESH instead) |
+| `bridge.hdfs.error-path` | `<base-path>/errors` | Quarantine dir for unparseable messages (`HDFS_ERROR_PATH`) |
 | `bridge.api.retry-attempts` | 3 | API call retry attempts |
 | `bridge.api.timeout-seconds` | 30 | API call timeout |

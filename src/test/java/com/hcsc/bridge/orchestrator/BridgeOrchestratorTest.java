@@ -176,19 +176,64 @@ class BridgeOrchestratorTest {
     class ParserFailure {
 
         @Test
-        @DisplayName("should return failure result on parse error")
-        void shouldReturnFailureOnParseError() {
+        @DisplayName("should quarantine raw payload and return quarantined result on parse error")
+        void shouldQuarantineOnParseError() {
             MqMessage mqMessage = createMqMessage("MSG-PARSE-001");
 
             when(eventIdGenerator.generateEventId("MSG-PARSE-001")).thenReturn("event-id-parse-001");
             when(messageParser.parse(mqMessage))
                     .thenThrow(new MessageParseException("Invalid JSON", "MSG-PARSE-001", "{}"));
+            when(hdfsWriter.writeQuarantine("event-id-parse-001", "{\"test\":\"payload\"}", "MSG-PARSE-001"))
+                    .thenReturn(HdfsWriteResult.success("/errors/event-id-parse-001.json", "checksum", 20));
             doNothing().when(auditPublisher).publishAsync(any());
 
             ProcessingResult result = orchestrator.process(mqMessage);
 
-            assertThat(result.isFailed()).isTrue();
+            assertThat(result.isQuarantined()).isTrue();
+            assertThat(result.isFailed()).isFalse();
+            assertThat(result.isSuccessful()).isFalse();
             assertThat(result.getErrorCode()).isEqualTo("PARSE_ERROR");
+            assertThat(result.getHdfsPath()).isEqualTo("/errors/event-id-parse-001.json");
+        }
+
+        @Test
+        @DisplayName("should return failure (not quarantined) when quarantine write fails")
+        void shouldReturnFailureWhenQuarantineWriteFails() {
+            MqMessage mqMessage = createMqMessage("MSG-PARSE-002");
+
+            when(eventIdGenerator.generateEventId("MSG-PARSE-002")).thenReturn("event-id-parse-002");
+            when(messageParser.parse(mqMessage))
+                    .thenThrow(new MessageParseException("Invalid JSON", "MSG-PARSE-002", "{}"));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenThrow(new HdfsWriteException("HDFS down", "/errors/x.json", "MSG-PARSE-002"));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(mqMessage);
+
+            // Payload was NOT preserved — must stay a failure so the message is redelivered
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.isQuarantined()).isFalse();
+            assertThat(result.getErrorCode()).isEqualTo("PARSE_ERROR");
+        }
+
+        @Test
+        @DisplayName("should publish MESSAGE_QUARANTINED audit event on quarantine")
+        void shouldPublishMessageQuarantinedAudit() {
+            MqMessage mqMessage = createMqMessage("MSG-PARSE-004");
+
+            when(eventIdGenerator.generateEventId("MSG-PARSE-004")).thenReturn("event-id-parse-004");
+            when(messageParser.parse(mqMessage))
+                    .thenThrow(new MessageParseException("Invalid", "MSG-PARSE-004", "{}"));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/errors/event-id-parse-004.json", "checksum", 20));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            orchestrator.process(mqMessage);
+
+            verify(auditPublisher, times(2)).publishAsync(auditEventCaptor.capture());
+            java.util.List<AuditEvent> events = auditEventCaptor.getAllValues();
+            assertThat(events.get(0).getEventType()).isEqualTo(AuditEventType.MESSAGE_RECEIVED);
+            assertThat(events.get(1).getEventType()).isEqualTo(AuditEventType.MESSAGE_QUARANTINED);
         }
 
         @Test
@@ -199,12 +244,16 @@ class BridgeOrchestratorTest {
             when(eventIdGenerator.generateEventId("MSG-PARSE-003")).thenReturn("event-id-parse-003");
             when(messageParser.parse(mqMessage))
                     .thenThrow(new MessageParseException("Invalid", "MSG-PARSE-003", "{}"));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/errors/event-id-parse-003.json", "checksum", 20));
             doNothing().when(auditPublisher).publishAsync(any());
 
             orchestrator.process(mqMessage);
 
             verify(apiClient, never()).enrich(any());
+            // The landing-directory write never happens; only the quarantine write does
             verify(hdfsWriter, never()).write(any(), anyString());
+            verify(hdfsWriter).writeQuarantine("event-id-parse-003", "{\"test\":\"payload\"}", "MSG-PARSE-003");
             verify(kafkaPublisher, never()).publish(anyString(), anyString());
         }
     }
@@ -338,6 +387,9 @@ class BridgeOrchestratorTest {
             when(eventIdGenerator.generateEventId("MSG-AUD-003")).thenReturn("event-id-aud-003");
             when(messageParser.parse(mqMessage))
                     .thenThrow(new MessageParseException("Invalid", "MSG-AUD-003", "{}"));
+            // Quarantine write also fails → the parse failure surfaces as PROCESSING_FAILED
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenThrow(new HdfsWriteException("HDFS down", "/errors/x.json", "MSG-AUD-003"));
             doNothing().when(auditPublisher).publishAsync(any());
 
             orchestrator.process(mqMessage);

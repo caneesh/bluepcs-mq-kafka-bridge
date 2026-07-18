@@ -39,7 +39,7 @@ class LocalFilesystemHdfsIT {
     void setUp() throws IOException {
         tempDir = Files.createTempDirectory("hdfs-integration-test");
         hdfsOperations = new LocalFileSystemHdfsOperations(tempDir);
-        payloadWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", ".tmp");
+        payloadWriter = new HdfsSafePayloadWriter(hdfsOperations, "/data/bridge/payloads", "", ".tmp");
         payloadGenerator = new SamplePayloadGenerator();
     }
 

@@ -117,7 +117,7 @@ public class BridgeOrchestrator {
             return ProcessingResult.success(eventId, hdfsResult.getHdfsPath(), kafkaOffset);
 
         } catch (MessageParseException e) {
-            return handleParseFailure(ctx, e);
+            return handleParseFailure(ctx, mqMessage, e);
         } catch (EnrichmentException e) {
             return handleEnrichmentFailure(ctx, e);
         } catch (HdfsWriteException e) {
@@ -154,11 +154,36 @@ public class BridgeOrchestrator {
         );
     }
 
-    private ProcessingResult handleParseFailure(ProcessingContext ctx, MessageParseException e) {
+    /**
+     * A parse failure is PERMANENT: redelivering the same payload can never succeed, and an
+     * unacknowledged message blocks the queue forever. Instead, quarantine the raw payload to
+     * the HDFS error directory and return QUARANTINED so the listener acknowledges it.
+     *
+     * <p>Safety invariant: the message is only acknowledged if its payload was durably
+     * preserved. If the quarantine write itself fails (e.g. HDFS outage), fall back to a
+     * FAILURE result — the message stays on the queue and redelivery retries the quarantine.
+     */
+    private ProcessingResult handleParseFailure(ProcessingContext ctx, MqMessage mqMessage,
+                                                MessageParseException e) {
         logger.error("Parse failure for eventId {}: {}", ctx.getEventId(), e.getMessage());
-        publishAudit(ctx, null, AuditEventType.PROCESSING_FAILED,
-                "Parse failure", e.getMessage());
-        return ProcessingResult.failure(ctx.getEventId(), "PARSE_ERROR", e.getMessage());
+
+        try {
+            HdfsWriteResult quarantineResult = hdfsWriter.writeQuarantine(
+                    ctx.getEventId(), mqMessage.getPayload(), ctx.getOriginalMqMessageId());
+            logger.warn("Quarantined unparseable message: eventId={}, path={}",
+                    ctx.getEventId(), quarantineResult.getHdfsPath());
+            publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
+                    "Unparseable message quarantined to " + quarantineResult.getHdfsPath(),
+                    e.getMessage());
+            return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
+                    "PARSE_ERROR", e.getMessage());
+        } catch (RuntimeException quarantineFailure) {
+            logger.error("Quarantine write failed for eventId {} — message will stay on the queue "
+                    + "for redelivery", ctx.getEventId(), quarantineFailure);
+            publishAudit(ctx, null, AuditEventType.PROCESSING_FAILED,
+                    "Parse failure (quarantine write also failed)", e.getMessage());
+            return ProcessingResult.failure(ctx.getEventId(), "PARSE_ERROR", e.getMessage());
+        }
     }
 
     private ProcessingResult handleEnrichmentFailure(ProcessingContext ctx, EnrichmentException e) {

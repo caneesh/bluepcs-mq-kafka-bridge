@@ -20,16 +20,24 @@ public class HdfsSafePayloadWriter {
 
     private final HdfsFileOperations hdfsFileOperations;
     private final String basePath;
+    private final String errorPath;
     private final String tempSuffix;
 
     public HdfsSafePayloadWriter(
             HdfsFileOperations hdfsFileOperations,
             @Value("${bridge.hdfs.base-path:/data/bridge/payloads}") String basePath,
+            @Value("${bridge.hdfs.error-path:}") String errorPath,
             @Value("${bridge.hdfs.temp-suffix:.tmp}") String tempSuffix) {
         this.hdfsFileOperations = hdfsFileOperations;
         // Tolerate a trailing slash on the configured base path — the advertised
         // hdfsPath must stay clean (no "//") for consumers comparing paths
         this.basePath = basePath.replaceAll("/+$", "");
+        // Quarantine directory for unparseable payloads. Defaults to a sibling of the
+        // landing directory (same pattern as archive) so it never pollutes the flat
+        // landing dir that the downstream consumer sweeps.
+        this.errorPath = (errorPath == null || errorPath.trim().isEmpty())
+                ? this.basePath + "/errors"
+                : errorPath.replaceAll("/+$", "");
         this.tempSuffix = tempSuffix;
     }
 
@@ -39,9 +47,22 @@ public class HdfsSafePayloadWriter {
      * the bytes written are the UTF-8 encoding of {@code content}.
      */
     public HdfsWriteResult write(EnrichedPayload payload, String content) {
-        String targetPath = buildTargetPath(payload);
+        return safeWrite(buildTargetPath(payload), content, payload.getMessageId());
+    }
+
+    /**
+     * Preserves the raw payload of an unparseable message in the quarantine (error)
+     * directory: {@code <error-path>/<eventId>.json}. Uses the same temp-write / rename /
+     * checksum-verify sequence as the landing-directory write, and is idempotent by
+     * eventId so a redelivered message quarantines to the same file.
+     */
+    public HdfsWriteResult writeQuarantine(String eventId, String rawPayload, String messageId) {
+        return safeWrite(errorPath + "/" + eventId + ".json",
+                rawPayload != null ? rawPayload : "", messageId);
+    }
+
+    private HdfsWriteResult safeWrite(String targetPath, String content, String messageId) {
         String tempPath = targetPath + tempSuffix;
-        String messageId = payload.getMessageId();
 
         logger.debug("Writing payload {} to HDFS: {}", messageId, targetPath);
 

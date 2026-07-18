@@ -43,6 +43,8 @@ bridge:
   # HDFS Configuration
   hdfs:
     base-path: ${HDFS_BASE_PATH:/data/bridge/payloads}
+    # Quarantine dir for unparseable messages; empty = <base-path>/errors
+    error-path: ${HDFS_ERROR_PATH:}
     temp-suffix: .tmp
     replication: ${HDFS_REPLICATION:3}
     namenode: ${HDFS_NAMENODE:hdfs://localhost:9000}
