@@ -94,6 +94,15 @@ JAAS_OPT=""
 if [ -n "${KAFKA_JAAS_CONFIG_PATH}" ]; then
     JAAS_OPT="-Djava.security.auth.login.config=${KAFKA_JAAS_CONFIG_PATH}"
     echo "Using JAAS config: ${KAFKA_JAAS_CONFIG_PATH}"
+    if [ ! -r "${KAFKA_JAAS_CONFIG_PATH}" ]; then
+        echo "WARNING: JAAS file is missing or unreadable: ${KAFKA_JAAS_CONFIG_PATH}"
+        echo "         Kafka SASL/GSSAPI login will fail (producer construction error)."
+    fi
+elif [ -z "${KAFKA_SASL_JAAS_CONFIG}" ]; then
+    echo "WARNING: KAFKA_JAAS_CONFIG_PATH is not set (and no inline KAFKA_SASL_JAAS_CONFIG)."
+    echo "         Kafka SASL/GSSAPI has no JAAS login config; producer construction will"
+    echo "         fail with 'Failed to construct kafka producer'. Set it in .env — see"
+    echo "         config/test-env.env.template and CONFIGURATION_GUIDE.md."
 fi
 
 java ${JAAS_OPT} -jar "${JAR_PATH}" \
