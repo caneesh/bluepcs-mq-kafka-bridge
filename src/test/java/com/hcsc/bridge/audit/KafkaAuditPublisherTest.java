@@ -147,7 +147,8 @@ class KafkaAuditPublisherTest {
                 }
             };
 
-            SafeAuditPublisher safePublisher = new SafeAuditPublisher(failingPublisher);
+            SafeAuditPublisher safePublisher =
+                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka");
             AuditEvent event = createTestEvent("event-id-safe-001", "bridge-safe-001", "MSG-SAFE-001", AuditEventType.MESSAGE_RECEIVED);
 
             safePublisher.publish(event);
@@ -168,10 +169,58 @@ class KafkaAuditPublisherTest {
                 }
             };
 
-            SafeAuditPublisher safePublisher = new SafeAuditPublisher(failingPublisher);
+            SafeAuditPublisher safePublisher =
+                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka");
             AuditEvent event = createTestEvent("event-id-safe-002", "bridge-safe-002", "MSG-SAFE-002", AuditEventType.MESSAGE_RECEIVED);
 
             safePublisher.publishAsync(event);
+        }
+
+        @Test
+        @DisplayName("should delegate to logging publisher when mode is log")
+        void shouldDelegateToLoggingPublisherInLogMode() {
+            java.util.concurrent.atomic.AtomicInteger kafkaCalls = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger logCalls = new java.util.concurrent.atomic.AtomicInteger();
+            AuditPublisher kafka = countingPublisher(kafkaCalls);
+            AuditPublisher log = countingPublisher(logCalls);
+
+            SafeAuditPublisher safePublisher = new SafeAuditPublisher(kafka, log, "log");
+            safePublisher.publish(createTestEvent("event-id-safe-003", "b-003", "MSG-SAFE-003",
+                    AuditEventType.MESSAGE_RECEIVED));
+            safePublisher.publishAsync(createTestEvent("event-id-safe-004", "b-004", "MSG-SAFE-004",
+                    AuditEventType.MESSAGE_RECEIVED));
+
+            org.assertj.core.api.Assertions.assertThat(logCalls.get()).isEqualTo(2);
+            org.assertj.core.api.Assertions.assertThat(kafkaCalls.get()).isZero();
+        }
+
+        @Test
+        @DisplayName("should default to kafka publisher for unknown mode")
+        void shouldDefaultToKafkaForUnknownMode() {
+            java.util.concurrent.atomic.AtomicInteger kafkaCalls = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger logCalls = new java.util.concurrent.atomic.AtomicInteger();
+
+            SafeAuditPublisher safePublisher = new SafeAuditPublisher(
+                    countingPublisher(kafkaCalls), countingPublisher(logCalls), "bogus");
+            safePublisher.publish(createTestEvent("event-id-safe-005", "b-005", "MSG-SAFE-005",
+                    AuditEventType.MESSAGE_RECEIVED));
+
+            org.assertj.core.api.Assertions.assertThat(kafkaCalls.get()).isEqualTo(1);
+            org.assertj.core.api.Assertions.assertThat(logCalls.get()).isZero();
+        }
+
+        private AuditPublisher countingPublisher(java.util.concurrent.atomic.AtomicInteger counter) {
+            return new AuditPublisher() {
+                @Override
+                public void publish(AuditEvent event) {
+                    counter.incrementAndGet();
+                }
+
+                @Override
+                public void publishAsync(AuditEvent event) {
+                    counter.incrementAndGet();
+                }
+            };
         }
     }
 

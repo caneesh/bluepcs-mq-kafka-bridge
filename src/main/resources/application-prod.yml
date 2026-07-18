@@ -117,6 +117,9 @@ bridge:
   audit:
     hive-table: ${AUDIT_HIVE_TABLE:bluepcs_mq_listener}
     enabled: true
+    # kafka = publish to bridge.kafka.audit-topic; log = write JSON lines to the 'audit'
+    # logger instead (bring-up fallback while the audit topic does not exist yet)
+    publisher: ${AUDIT_PUBLISHER:kafka}
 
   logging:
     directory: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}

@@ -4,12 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+/**
+ * Writes audit events as JSON lines to the "audit" logger. Sole publisher in the local
+ * profile; in other profiles it is available as the {@code bridge.audit.publisher=log}
+ * fallback delegate of {@link SafeAuditPublisher} (e.g. while the Kafka audit topic does
+ * not exist yet).
+ */
 @Component
-@Profile("local")
 public class LoggingAuditPublisher implements AuditPublisher {
 
     private static final Logger auditLogger = LoggerFactory.getLogger("audit");

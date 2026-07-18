@@ -434,5 +434,6 @@ caveat — do not set `max-delivery-attempts` low if outages are expected.
 | `bridge.mq.concurrency` | 1 | Number of concurrent listeners |
 | `bridge.mq.max-delivery-attempts` | 0 | Poison-message guard; 0 = disabled (use queue BOTHRESH instead) |
 | `bridge.hdfs.error-path` | `<base-path>/errors` | Quarantine dir for unparseable messages (`HDFS_ERROR_PATH`) |
+| `bridge.audit.publisher` | kafka | `kafka` = audit topic; `log` = app log fallback until the audit topic exists (`AUDIT_PUBLISHER`) |
 | `bridge.api.retry-attempts` | 3 | API call retry attempts |
 | `bridge.api.timeout-seconds` | 30 | API call timeout |
