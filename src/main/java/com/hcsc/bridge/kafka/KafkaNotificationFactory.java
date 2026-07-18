@@ -19,12 +19,26 @@ import org.springframework.stereotype.Component;
  *   "marketingPlanIdentifier": "...",
  *   "hdfsPath": "/.../&lt;eventId&gt;.json",
  *   "checksum": "&lt;sha-256 of the HDFS file content&gt;",
- *   "eventId": "&lt;sha-256 of the JMS message id, also the Kafka message key&gt;"
+ *   "eventId": "&lt;sha-256 of the JMS message id, also the Kafka message key&gt;",
+ *   "source": "mq-kafka-bridge",
+ *   "schemaVersion": 1
  * }
  * </pre>
+ *
+ * <p>{@code source} and {@code schemaVersion} form the explicit format discriminator for
+ * consumers: legacy Talend messages on the same topic carry the full document inline
+ * (with a {@code RestAPIResponse} field) and have neither marker. Consumers should treat
+ * {@code schemaVersion} presence as "claim-check message — fetch {@code hdfsPath}".
+ * Bump {@link #SCHEMA_VERSION} on any breaking change to this contract.
  */
 @Component
 public class KafkaNotificationFactory {
+
+    /** Value of the {@code source} field identifying this producer. */
+    public static final String SOURCE = "mq-kafka-bridge";
+
+    /** Claim-check notification contract version; bump on breaking changes. */
+    public static final int SCHEMA_VERSION = 1;
 
     private final ObjectMapper objectMapper;
 
@@ -41,6 +55,8 @@ public class KafkaNotificationFactory {
         notification.put("hdfsPath", hdfsPath);
         notification.put("checksum", checksum);
         notification.put("eventId", eventId);
+        notification.put("source", SOURCE);
+        notification.put("schemaVersion", SCHEMA_VERSION);
 
         try {
             return objectMapper.writeValueAsString(notification);

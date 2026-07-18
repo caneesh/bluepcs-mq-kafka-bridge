@@ -31,10 +31,12 @@ public class KafkaEnvelopePublisher {
     }
 
     /**
-     * Publishes the wrapper JSON to Kafka synchronously.
+     * Publishes the claim-check notification JSON to Kafka synchronously. The full wrapper
+     * document lives in HDFS; the value here is the small notification built by
+     * {@link KafkaNotificationFactory}.
      *
      * @param key   the Kafka message key (the eventId, supplied by the orchestrator)
-     * @param value the wrapper JSON string (message value)
+     * @param value the claim-check notification JSON string (message value)
      * @return the offset the record was written to, as a string
      */
     public String publish(String key, String value) {

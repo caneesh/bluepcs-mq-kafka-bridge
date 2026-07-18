@@ -7,8 +7,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
 /**
- * Builds the JSON wrapper that the bridge publishes to BOTH Kafka (message value)
- * and HDFS (file content).
+ * Builds the JSON wrapper that the bridge writes to HDFS (file content). Kafka carries
+ * only the small claim-check notification pointing at the file (see
+ * {@code KafkaNotificationFactory}); this wrapper's shape matches what the legacy Talend
+ * job used to publish inline on the topic.
  *
  * <p>The wrapper has exactly three top-level fields, in this order (insertion order
  * is preserved by {@link ObjectNode}):

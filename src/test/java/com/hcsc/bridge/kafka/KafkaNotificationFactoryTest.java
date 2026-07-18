@@ -55,8 +55,26 @@ class KafkaNotificationFactoryTest {
                 .isEqualTo("/data/bridge/payloads/readytosell/2026/07/10/abc123.json");
         assertThat(notification.get("checksum").asText()).isEqualTo("cafe1234");
         assertThat(notification.get("eventId").asText()).isEqualTo("abc123");
-        assertThat(notification.size()).isEqualTo(6);
+        assertThat(notification.get("source").asText()).isEqualTo("mq-kafka-bridge");
+        assertThat(notification.get("schemaVersion").asInt()).isEqualTo(1);
+        assertThat(notification.size()).isEqualTo(8);
         assertThat(json).doesNotContain("RestAPIResponse").doesNotContain("planName");
+    }
+
+    @Test
+    @DisplayName("carries the format discriminator distinguishing bridge messages from legacy Talend ones")
+    void carriesFormatDiscriminator() {
+        EnrichmentWrapperFactory.WrapperResult wrapper = wrapperFor("{\"PlanResponse\":{}}");
+
+        JsonNode notification = read(factory.buildNotification(
+                wrapper, "MP", "/p", "c", "e"));
+
+        // Legacy Talend messages have RestAPIResponse inline and no marker fields;
+        // consumers detect the claim-check format by schemaVersion presence.
+        assertThat(notification.hasNonNull("source")).isTrue();
+        assertThat(notification.hasNonNull("schemaVersion")).isTrue();
+        assertThat(notification.get("schemaVersion").isInt()).isTrue();
+        assertThat(notification.has("RestAPIResponse")).isFalse();
     }
 
     @Test
@@ -86,5 +104,7 @@ class KafkaNotificationFactoryTest {
                 .isLessThan(json.indexOf("hdfsPath"));
         assertThat(json.indexOf("hdfsPath")).isLessThan(json.indexOf("checksum"));
         assertThat(json.indexOf("checksum")).isLessThan(json.indexOf("eventId"));
+        assertThat(json.indexOf("eventId")).isLessThan(json.indexOf("source"));
+        assertThat(json.indexOf("\"source\"")).isLessThan(json.indexOf("schemaVersion"));
     }
 }
