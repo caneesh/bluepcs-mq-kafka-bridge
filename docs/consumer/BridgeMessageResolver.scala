@@ -80,22 +80,36 @@ object BridgeMessageResolver extends Serializable {
 
   /** Strict variant: throws on any resolution problem, including a missing file. */
   def resolve(raw: String, fs: FileSystem, mapper: ObjectMapper): ResolvedMessage = {
-    val node = mapper.readTree(raw)
+    parseJsonOrNull(raw, mapper) match {
+      case node if node != null && isBridgeMessage(node) =>
+        val version = node.path("schemaVersion").asInt(1) // pre-marker builds -> treat as v1
+        require(
+          version <= SupportedSchemaVersion,
+          s"Unsupported bridge schemaVersion $version " +
+            s"(this consumer supports <= $SupportedSchemaVersion). " +
+            s"eventId=${node.path("eventId").asText("?")} — update the consumer before processing."
+        )
+        resolveClaimCheck(node, fs)
 
-    if (isBridgeMessage(node)) {
-      val version = node.path("schemaVersion").asInt(1) // pre-marker builds -> treat as v1
-      require(
-        version <= SupportedSchemaVersion,
-        s"Unsupported bridge schemaVersion $version " +
-          s"(this consumer supports <= $SupportedSchemaVersion). " +
-          s"eventId=${node.path("eventId").asText("?")} — update the consumer before processing."
-      )
-      resolveClaimCheck(node, fs)
-    } else {
-      // Legacy Talend inline message — pass through untouched.
-      ResolvedMessage(raw, isClaimCheck = false, eventId = None)
+      case _ =>
+        // Legacy Talend inline message — OR anything that is not parseable JSON.
+        // Both pass through untouched: the processor must see exactly what it saw
+        // before this resolver existed, including malformed values it already has
+        // its own handling for. The resolver must never fail a batch on input the
+        // old pipeline tolerated.
+        ResolvedMessage(raw, isClaimCheck = false, eventId = None)
     }
   }
+
+  /** Null when the value is not valid JSON (or is null/empty) — caller passes through. */
+  private def parseJsonOrNull(raw: String, mapper: ObjectMapper): JsonNode =
+    try {
+      if (raw == null || raw.trim.isEmpty) null else mapper.readTree(raw)
+    } catch {
+      case _: Exception =>
+        logger.warn("@@@ Kafka value is not valid JSON — passing through to processor unchanged")
+        null
+    }
 
   /**
    * Primary discriminator: schemaVersion. Fallback: hdfsPath-without-RestAPIResponse
