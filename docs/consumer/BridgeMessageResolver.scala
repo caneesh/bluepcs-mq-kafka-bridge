@@ -1,7 +1,7 @@
 package com.hcsc.bluepcs.consumer
 
 // =============================================================================
-// BridgeMessageResolver — drop-in for BluepcsPMMPLusConsumer (Spark/Scala)
+// BridgeMessageResolver — drop-in for BluepcsPMMPLusConsumer (Spark DStream job)
 // =============================================================================
 // The Kafka topic carries TWO message formats during the Talend → bridge
 // migration:
@@ -20,9 +20,8 @@ package com.hcsc.bluepcs.consumer
 //                                  "schemaVersion": 1}
 //
 // The file at hdfsPath has EXACTLY the legacy inline shape, so resolving a
-// claim-check message yields a document the existing processor already
-// understands. Resolve first, then feed everything into the unchanged
-// BluepcsPMMPLusProcessor path.
+// claim-check message yields a document BluepcsPMMPLusProcessor already
+// understands — no processor changes needed.
 //
 // Detection contract (in this order):
 //   - schemaVersion present  -> bridge claim-check message
@@ -31,12 +30,19 @@ package com.hcsc.bluepcs.consumer
 //   - schemaVersion absent   -> legacy Talend inline message: use raw value as-is
 //       (belt-and-braces: a bridge build older than 8003daa lacks the markers but
 //        also lacks RestAPIResponse — the hdfsPath fallback below covers it)
+//
+// Duplicate handling: the bridge is at-least-once, and offsets commit to HBase
+// AFTER processing — so a redelivered claim-check message can reference a file
+// this job already processed and archived out of the landing directory.
+// resolveOrSkip() treats a missing HDFS file as such a duplicate: WARN + skip,
+// instead of crash-looping the batch on FileNotFoundException.
 // =============================================================================
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
+import org.slf4j.LoggerFactory
 
+import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
@@ -47,22 +53,37 @@ object BridgeMessageResolver extends Serializable {
 
   val ExpectedSource = "mq-kafka-bridge"
 
+  @transient private lazy val logger = LoggerFactory.getLogger(getClass)
+
   final case class ResolvedMessage(
       json: String,              // full wrapper document (legacy shape), ready for the processor
       isClaimCheck: Boolean,     // true when fetched via hdfsPath
-      eventId: Option[String]    // present only for bridge messages — use for dedupe
+      eventId: Option[String]    // present only for bridge messages — usable for dedupe
   )
 
   /**
-   * Normalizes one Kafka record value to the full wrapper document.
-   * Throws on unknown schemaVersion or checksum mismatch — better a loud failure
-   * than silently processing a contract we do not understand.
+   * Normalizes one Kafka record value; returns None for a claim-check duplicate
+   * whose HDFS file no longer exists (already processed + archived).
+   * Still throws on unknown schemaVersion or checksum mismatch — those are
+   * contract violations that must stop the job, not be skipped.
    */
+  def resolveOrSkip(raw: String, fs: FileSystem, mapper: ObjectMapper): Option[ResolvedMessage] =
+    try {
+      Some(resolve(raw, fs, mapper))
+    } catch {
+      case e: FileNotFoundException =>
+        logger.warn(
+          "@@@ Claim-check HDFS file missing — treating as already-processed duplicate and skipping: {}",
+          e.getMessage)
+        None
+    }
+
+  /** Strict variant: throws on any resolution problem, including a missing file. */
   def resolve(raw: String, fs: FileSystem, mapper: ObjectMapper): ResolvedMessage = {
     val node = mapper.readTree(raw)
 
     if (isBridgeMessage(node)) {
-      val version = node.get("schemaVersion").asInt()
+      val version = node.path("schemaVersion").asInt(1) // pre-marker builds -> treat as v1
       require(
         version <= SupportedSchemaVersion,
         s"Unsupported bridge schemaVersion $version " +
@@ -89,7 +110,7 @@ object BridgeMessageResolver extends Serializable {
     val eventId  = node.get("eventId").asText()
 
     val bytes = {
-      val in = fs.open(new Path(hdfsPath))
+      val in = fs.open(new Path(hdfsPath)) // throws FileNotFoundException if archived
       try org.apache.commons.io.IOUtils.toByteArray(in)
       finally in.close()
     }
@@ -111,42 +132,63 @@ object BridgeMessageResolver extends Serializable {
 
   private def sha256Hex(bytes: Array[Byte]): String =
     MessageDigest.getInstance("SHA-256").digest(bytes).map("%02x".format(_)).mkString
-
-  // ---------------------------------------------------------------------------
-  // Wiring into runKafkaMode — put this right after CAST(value AS STRING) and
-  // before the existing parsing/processing:
-  //
-  //   import spark.implicits._
-  //
-  //   val resolved: Dataset[BridgeMessageResolver.ResolvedMessage] =
-  //     kafkaDf
-  //       .selectExpr("CAST(value AS STRING) AS raw")
-  //       .as[String]
-  //       .mapPartitions { it =>
-  //         // one FileSystem + ObjectMapper per partition, not per record
-  //         val fs = FileSystem.get(new Configuration())
-  //         val mapper = new ObjectMapper()
-  //         it.map(raw => BridgeMessageResolver.resolve(raw, fs, mapper))
-  //       }
-  //
-  //   // Dedupe: at-least-once delivery means bridge messages can repeat.
-  //   // Only bridge messages carry an eventId; legacy ones pass through.
-  //   val deduped = resolved
-  //     .withColumn("dedupeKey", coalesce($"eventId", sha2($"json", 256)))
-  //     .dropDuplicates("dedupeKey")
-  //
-  //   // `json` column now ALWAYS holds the legacy wrapper shape:
-  //   //   {"changeEventTimeStamp", "RestAPIResponse": {...}, "changeEventTypeName"}
-  //   // -> feed into the existing BluepcsPMMPLusProcessor unchanged.
-  //
-  // Notes:
-  //   - Spark executors need HDFS read access to the bridge landing directory
-  //     (test: /test/oort/product/bluepcs/hive/csv) — same Kerberos login the
-  //     job already uses for Hive.
-  //   - After successful processing, the consumer owns the file lifecycle:
-  //     move processed files out of the landing dir (archive/), per the
-  //     flat-landing-directory convention.
-  //   - Keep the resolver after Talend is decommissioned: it also guards
-  //     against stray/manual test messages on the topic.
-  // ---------------------------------------------------------------------------
 }
+
+// =============================================================================
+// Wiring into runKafkaMode (the actual change — replaces the processor call)
+// =============================================================================
+// Additional imports needed at the top of BluepcsPMMPLusConsumer:
+//
+//   import com.fasterxml.jackson.databind.ObjectMapper
+//   import org.apache.hadoop.conf.Configuration
+//   import org.apache.hadoop.fs.FileSystem
+//
+// Inside stream.foreachRDD, keep everything up to and including the
+// debug-sampling `inputRDD` exactly as-is, then REPLACE:
+//
+//   BluepcsPMMPLusProcessor.processJSONMessages(
+//     common_conf, bluepcs_conf, inputRDD, kafkaOffsetDetailsDF, env)
+//
+// WITH:
+//
+//   // Normalize both formats (legacy Talend inline vs bridge claim-check) to
+//   // the same wrapper shape; (partition, offset, json) tuple layout unchanged,
+//   // so the processor and HBase offset management need no modifications.
+//   val resolvedRDD =
+//     inputRDD.mapPartitions { it =>
+//       // one FileSystem + ObjectMapper per partition, not per record
+//       val fs = FileSystem.get(new Configuration())
+//       val mapper = new ObjectMapper()
+//       it.flatMap {
+//         case (partition, offset, raw) =>
+//           BridgeMessageResolver
+//             .resolveOrSkip(raw, fs, mapper)
+//             .map(resolved => (partition, offset, resolved.json))
+//       }
+//     }
+//
+//   logger.info("@@@ Messages normalized (claim-check resolved from HDFS where present)")
+//
+//   BluepcsPMMPLusProcessor.processJSONMessages(
+//     common_conf, bluepcs_conf, resolvedRDD, kafkaOffsetDetailsDF, env)
+//
+// Behavior notes:
+//   - Legacy messages: passed through byte-for-byte; the processor sees exactly
+//     what it sees today.
+//   - Bridge messages: replaced by the HDFS file content (same shape as
+//     legacy); checksum-verified.
+//   - Unknown schemaVersion / checksum mismatch: the batch fails and, because
+//     offsets are committed to HBase only after processing, the messages are
+//     reprocessed after the consumer is fixed — nothing is lost.
+//   - Missing HDFS file: skipped as an already-processed duplicate (WARN log).
+//     Offset bookkeeping is unaffected — the skip only drops the record from
+//     the processing RDD, not from the offset ranges.
+//   - Debug mode: sampling happens BEFORE resolution, so debug runs exercise
+//     the HDFS fetch path too (on the sampled records only).
+//   - Executors need HDFS read access to the bridge landing directory
+//     (test: /test/oort/product/bluepcs/hive/csv) — same Kerberos login the
+//     job already uses for Hive/HBase.
+//   - After successful processing, this job owns the file lifecycle: move
+//     processed files out of the landing dir (archive/), per the
+//     flat-landing-directory convention.
+// =============================================================================
