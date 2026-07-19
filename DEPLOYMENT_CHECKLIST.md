@@ -364,6 +364,44 @@ green-looking health while consuming nothing.
 | Silence on the audit topic (`MESSAGE_RECEIVED` events stop) | Consumption stopped while traffic exists | Kafka audit topic |
 | `"JMS listener error"` log pattern | Listener-level failures during reconnect cycles | Application logs |
 
+### 4. Control-M monitor job (enterprise alerting)
+
+`scripts/monitor.sh` runs read-only checks and exits with a routable code — schedule it from
+Control-M as a **cyclic job every 10–15 minutes** on the edge-node agent. The monitor never
+remediates (restarts belong to systemd/the watchdog); a non-zero exit turns into a red job and
+flows into existing ops alerting.
+
+```bash
+./scripts/monitor.sh test-env    # or prod
+```
+
+| Exit code | Meaning | Suggested Control-M On-Do |
+|-----------|---------|---------------------------|
+| 0 | All checks passed | — |
+| 1 | Bridge unreachable or health DOWN | Alert (systemd/watchdog is likely already restarting; page if it persists) |
+| 2 | Bridge up but MQ listener disabled — NOT consuming | Alert: someone forgot `listener-enabled=true` |
+| 3 | HDFS landing-dir backlog (files older than threshold) | Alert the downstream consumer team — bridge is fine |
+| 4 | Monitor could not evaluate (e.g. HDFS/Kerberos access) | Investigate the monitor/edge node |
+
+Checks performed: actuator health of the running instance (incl. the `mqListener`
+listener-enabled state) and HDFS landing-directory backlog. Tuning (env vars or properties):
+
+```
+bridge.monitor.health-url             # default http://localhost:8080/actuator/health
+bridge.monitor.backlog-age-minutes    # default 30 — a file older than this is "stale"
+bridge.monitor.backlog-max-files      # default 0  — stale files tolerated before failing
+```
+
+Do NOT configure the Control-M job to auto-rerun with a restart action — that would fight the
+systemd watchdog.
+
+**Dynatrace note:** OneAgent on the edge node auto-instruments the bridge JVM (process
+availability, memory/GC, and the actuator endpoints), covering infrastructure/APM telemetry.
+The Control-M monitor complements it with the checks Dynatrace does not know about out of the
+box: the listener-enabled business state and the landing-directory backlog (end-to-end
+consumer stall). If a Dynatrace custom metric/synthetic is preferred later, the same exit-code
+semantics can feed it.
+
 ---
 
 ## Runtime Monitoring

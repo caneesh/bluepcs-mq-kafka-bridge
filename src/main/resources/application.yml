@@ -110,6 +110,13 @@ bridge:
   reconciliation:
     enabled: ${RECONCILIATION_ENABLED:false}
 
+  # Monitor Mode (read-only checks for Control-M / external schedulers; scripts/monitor.sh)
+  monitor:
+    enabled: ${MONITOR_ENABLED:false}
+    health-url: ${MONITOR_HEALTH_URL:http://localhost:8080/actuator/health}
+    backlog-age-minutes: ${MONITOR_BACKLOG_AGE_MINUTES:30}
+    backlog-max-files: ${MONITOR_BACKLOG_MAX_FILES:0}
+
 # Actuator Configuration
 management:
   endpoints:

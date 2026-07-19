@@ -2,6 +2,7 @@ package com.hcsc.bridge.hdfs;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileChecksum;
@@ -15,6 +16,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 @Profile("!local")
@@ -96,5 +99,20 @@ public class HadoopFileOperations implements HdfsFileOperations {
     @Override
     public void mkdirs(String path) throws IOException {
         fileSystem.mkdirs(new Path(path));
+    }
+
+    @Override
+    public List<HdfsFileInfo> listFiles(String path) throws IOException {
+        Path dir = new Path(path);
+        if (!fileSystem.exists(dir)) {
+            return List.of();
+        }
+        List<HdfsFileInfo> files = new ArrayList<>();
+        for (FileStatus status : fileSystem.listStatus(dir)) {
+            if (status.isFile()) {
+                files.add(new HdfsFileInfo(status.getPath().toString(), status.getModificationTime()));
+            }
+        }
+        return files;
     }
 }

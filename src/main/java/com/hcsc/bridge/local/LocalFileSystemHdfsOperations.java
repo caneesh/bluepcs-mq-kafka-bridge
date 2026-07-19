@@ -17,6 +17,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 @Profile("local")
@@ -110,6 +112,24 @@ public class LocalFileSystemHdfsOperations implements HdfsFileOperations {
     public void mkdirs(String path) throws IOException {
         Path fullPath = resolvePath(path);
         Files.createDirectories(fullPath);
+    }
+
+    @Override
+    public List<HdfsFileInfo> listFiles(String path) throws IOException {
+        Path dir = resolvePath(path);
+        if (!Files.isDirectory(dir)) {
+            return List.of();
+        }
+        List<HdfsFileInfo> files = new ArrayList<>();
+        try (var entries = Files.list(dir)) {
+            for (Path entry : (Iterable<Path>) entries::iterator) {
+                if (Files.isRegularFile(entry)) {
+                    files.add(new HdfsFileInfo(entry.toString(),
+                            Files.getLastModifiedTime(entry).toMillis()));
+                }
+            }
+        }
+        return files;
     }
 
     private Path resolvePath(String path) {
