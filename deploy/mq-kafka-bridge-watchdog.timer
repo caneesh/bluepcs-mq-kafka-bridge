@@ -1,0 +1,15 @@
+# Runs the bridge health watchdog every minute. With MAX_FAILURES=3 in the
+# script, a persistently DOWN health endpoint triggers a service restart within
+# ~4 minutes; transient blips (a single failed poll) never do.
+
+[Unit]
+Description=Run MQ-Kafka Bridge health watchdog every minute
+
+[Timer]
+# Grace period after boot so the bridge can finish starting before checks begin
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -33,7 +33,15 @@ EnvironmentFile=/prod/gold/integration/product/bluepcs-bridge/.env
 
 # listener-enabled=true is what makes this a 24/7 consumer. Without it the app
 # runs healthy but consumes nothing (safe-start mode is for manual bring-up only).
-ExecStart=/usr/bin/java -jar /prod/gold/integration/product/bluepcs-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
+#
+# OOM crash-fast: a JVM that hits OutOfMemoryError must EXIT (systemd restarts a
+# fresh one) rather than limp along as a zombie with dead listener threads. The
+# heap dump dir must exist and be writable by the service user.
+ExecStart=/usr/bin/java \
+    -XX:+ExitOnOutOfMemoryError \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/prod/gold/integration/product/bluepcs-bridge/heapdumps \
+    -jar /prod/gold/integration/product/bluepcs-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
     --spring.profiles.active=test-env \
     --bridge.mq.listener-enabled=true
 

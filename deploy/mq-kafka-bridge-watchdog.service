@@ -1,0 +1,18 @@
+# One-shot health check for the MQ-Kafka Bridge, driven by
+# mq-kafka-bridge-watchdog.timer. See mq-kafka-bridge-watchdog.sh for behavior.
+#
+# Install (together with the .timer and .sh):
+#   sudo cp deploy/mq-kafka-bridge-watchdog.sh /usr/local/bin/
+#   sudo chmod +x /usr/local/bin/mq-kafka-bridge-watchdog.sh
+#   sudo cp deploy/mq-kafka-bridge-watchdog.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mq-kafka-bridge-watchdog.timer
+
+[Unit]
+Description=MQ-Kafka Bridge health watchdog (one shot)
+# No hard dependency on the bridge unit: the script itself checks is-active
+# and exits quietly when the bridge is intentionally stopped.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mq-kafka-bridge-watchdog.sh

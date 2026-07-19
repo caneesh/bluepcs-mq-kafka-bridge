@@ -316,7 +316,38 @@ journalctl -u mq-kafka-bridge -f     # follow logs
 ```
 
 The unit restarts on any crash (10s delay), stops flapping after 5 failures in 10 minutes
-(broken config), and starts the bridge on boot.
+(broken config), and starts the bridge on boot. It also runs the JVM with
+`-XX:+ExitOnOutOfMemoryError` so an OOM kills the process (systemd restarts it fresh) instead of
+leaving a zombie with dead listener threads — the heap dump lands in the configured
+`heapdumps/` directory for diagnosis (create it, writable by the service user).
+
+### 1b. Health watchdog (auto-restart on persistent DOWN)
+
+The `mqListener` health indicator *reports* a wedged listener; the watchdog *acts* on it.
+A systemd timer polls `/actuator/health` every minute and restarts the bridge after 3
+consecutive failures (~4 minutes worst case). Transient blips never restart; an intentionally
+stopped bridge is never touched.
+
+```bash
+sudo cp deploy/mq-kafka-bridge-watchdog.sh /usr/local/bin/
+sudo chmod +x /usr/local/bin/mq-kafka-bridge-watchdog.sh
+sudo cp deploy/mq-kafka-bridge-watchdog.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mq-kafka-bridge-watchdog.timer
+
+systemctl list-timers mq-kafka-bridge-watchdog.timer   # verify scheduling
+journalctl -u mq-kafka-bridge-watchdog -f              # watchdog decisions
+```
+
+### 1c. Kerberos ticket self-renewal (in-app)
+
+The keytab login happens once at startup; without renewal the TGT lapses at its lifetime
+boundary and HDFS writes fail until restart. When `bridge.hdfs.kerberos.enabled=true` the app
+now re-checks/relogins from the keytab every 5 minutes automatically. Tune with:
+
+```
+bridge.hdfs.kerberos.relogin-interval-ms   # default 300000 (5 min)
+```
 
 ### 2. Listener must be explicitly enabled
 
