@@ -89,7 +89,7 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 }
                 logger.warn("Retryable error on attempt {}/{} for entityId {}: {}",
                         attempt, retryAttempts, entityId, e.getMessage());
-                sleep(retryDelayMs * attempt);
+                sleep(retryDelayMs * attempt, entityId);
             }
         }
         throw lastException;
@@ -111,10 +111,21 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
 
         logger.debug("Enriching payload for entityId: {} (attempt {})", entityId, attempt);
 
+        // Translate token-provider failures (e.g. TokenRefreshException) into a retryable
+        // EnrichmentException: a bare RuntimeException would bypass the retry loop, the
+        // orchestrator's typed handlers and the ENRICHMENT_FAILED audit entirely.
+        String token;
+        try {
+            token = jwtTokenProvider.getToken();
+        } catch (RuntimeException e) {
+            logger.error("Token acquisition failed for entityId {}: {}", entityId, e.getMessage());
+            throw new EnrichmentException("Failed to acquire API token: " + e.getMessage(), entityId, e, true);
+        }
+
         Request.Builder requestBuilder = new Request.Builder()
                 .url(url)
                 .get()
-                .header("Authorization", "Bearer " + jwtTokenProvider.getToken())
+                .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/json")
                 // Sent despite the empty GET body: the gateway is strict about content
                 // types and the verified working request includes it
@@ -184,11 +195,14 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         }
     }
 
-    private void sleep(long ms) {
+    private void sleep(long ms, String entityId) {
         try {
             Thread.sleep(ms);
         } catch (InterruptedException e) {
+            // Abort the retry loop immediately (e.g. on shutdown) instead of burning the
+            // remaining attempts; non-retryable so callers do not re-enter the loop.
             Thread.currentThread().interrupt();
+            throw new EnrichmentException("Enrichment retry interrupted", entityId, e, false);
         }
     }
 
