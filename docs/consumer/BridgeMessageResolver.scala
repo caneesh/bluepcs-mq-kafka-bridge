@@ -137,6 +137,12 @@ object BridgeMessageResolver extends Serializable {
       s"Checksum mismatch for $hdfsPath (eventId=$eventId): expected $expected, got $actual"
     )
 
+    // Unmissable per-message marker: grep consumer logs for "CLAIM-CHECK RESOLVED"
+    // to find every message that took the new bridge path (legacy messages log nothing).
+    logger.info(
+      "@@@ CLAIM-CHECK RESOLVED: eventId={}, hdfsPath={}, bytes={}",
+      eventId, hdfsPath, Integer.valueOf(bytes.length))
+
     ResolvedMessage(
       json = new String(bytes, StandardCharsets.UTF_8),
       isClaimCheck = true,
