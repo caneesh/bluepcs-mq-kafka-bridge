@@ -1,0 +1,53 @@
+# systemd unit for running the MQ-Kafka Bridge 24/7 on an edge node.
+#
+# Install:
+#   1. Adjust the paths, user, and profile below for the target host.
+#   2. sudo cp deploy/mq-kafka-bridge.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now mq-kafka-bridge
+#
+# Operate:
+#   systemctl status mq-kafka-bridge        # process state + last log lines
+#   journalctl -u mq-kafka-bridge -f        # follow logs
+#   sudo systemctl restart mq-kafka-bridge  # manual restart (e.g. after config change)
+#
+# The unit restarts the JVM automatically on crash/OOM and starts it on boot.
+# Broker outages do NOT need a restart: the JMS listener container reconnects
+# to MQ on its own. Restart=always covers the process dying, not MQ being down.
+
+[Unit]
+Description=BluePCS MQ-Kafka Bridge
+Documentation=https://github.com/caneesh/bluepcs-mq-kafka-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Service account that owns the keytabs/truststores referenced by the profile
+User=bluepcsapp
+WorkingDirectory=/prod/gold/integration/product/bluepcs-bridge
+
+# All secrets (KAFKA_TRUSTSTORE_PASSWORD, OAUTH_CLIENT_ID/SECRET, API_PASSWORD,
+# MQ_PASSWORD for prod, ...) live in the gitignored .env file, mode 600.
+EnvironmentFile=/prod/gold/integration/product/bluepcs-bridge/.env
+
+# listener-enabled=true is what makes this a 24/7 consumer. Without it the app
+# runs healthy but consumes nothing (safe-start mode is for manual bring-up only).
+ExecStart=/usr/bin/java -jar /prod/gold/integration/product/bluepcs-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
+    --spring.profiles.active=test-env \
+    --bridge.mq.listener-enabled=true
+
+# Restart on any exit (crash, OOM kill, unexpected System.exit)...
+Restart=always
+RestartSec=10
+# ...but stop retrying if it dies 5 times within 10 minutes — that is a broken
+# config or environment, and flapping only floods MQ/STS with connection attempts.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Give in-flight message processing a chance to finish on shutdown
+TimeoutStopSec=60
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

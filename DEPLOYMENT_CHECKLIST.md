@@ -294,6 +294,47 @@ java -jar mq-kafka-bridge.jar \
 
 ---
 
+## Running 24/7
+
+Three independent layers keep the bridge consuming continuously. Broker outages need none of
+them — the JMS listener container reconnects to MQ on its own (retries indefinitely, ~5s
+interval) and resumes where it left off.
+
+### 1. Process supervision (systemd)
+
+Nothing in the app restarts the JVM if it dies (OOM, node reboot, accidental kill). Install the
+provided unit so the OS does:
+
+```bash
+# adjust paths/user/profile inside the unit first
+sudo cp deploy/mq-kafka-bridge.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mq-kafka-bridge
+
+systemctl status mq-kafka-bridge     # process state
+journalctl -u mq-kafka-bridge -f     # follow logs
+```
+
+The unit restarts on any crash (10s delay), stops flapping after 5 failures in 10 minutes
+(broken config), and starts the bridge on boot.
+
+### 2. Listener must be explicitly enabled
+
+`bridge.mq.listener-enabled` defaults to **false** (safe-start). A 24/7 deployment must pin
+`--bridge.mq.listener-enabled=true` (the systemd unit does this) — otherwise the app runs with
+green-looking health while consuming nothing.
+
+### 3. Monitoring signals
+
+| Signal | What it catches | Where |
+|--------|-----------------|-------|
+| `mqListener` health indicator | Listener enabled but not running → overall health DOWN. Listener disabled → UP but with `"listenerEnabled": false` + warning detail (alert on this in prod). | `/actuator/health` |
+| Queue depth (`CURDEPTH`) growth or `IPPROCS=0` on the input queue | **The definitive signal** — catches every failure mode incl. dead JVM and idle-but-healthy app | MQ queue manager (ask MQ admins to alert) |
+| Silence on the audit topic (`MESSAGE_RECEIVED` events stop) | Consumption stopped while traffic exists | Kafka audit topic |
+| `"JMS listener error"` log pattern | Listener-level failures during reconnect cycles | Application logs |
+
+---
+
 ## Runtime Monitoring
 
 ### Health Endpoints
