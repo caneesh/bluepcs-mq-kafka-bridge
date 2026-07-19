@@ -105,22 +105,9 @@ bridge:
   reconciliation:
     enabled: false
 
-# ============================================================================
-# Spring Kafka Configuration
-# ============================================================================
-spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:teenuslika02.app.test.hscint.net:9093,teenuslika03.app.test.hscint.net:9093,teenuslika04.app.test.hscint.net:9093}
-    producer:
-      acks: all
-      retries: 3
-    properties:
-      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
-      sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
-      sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
-      ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
-      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD}
-      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
+# NOTE: no spring.kafka block here. The custom KafkaConfiguration beans (bridge.kafka.*)
+# replace Spring Boot's auto-configured KafkaTemplate in all !local profiles, so a
+# parallel spring.kafka block is inert and silently drifts from the authoritative config.
 
 # ============================================================================
 # Logging Configuration

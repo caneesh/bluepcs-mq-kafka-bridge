@@ -67,8 +67,11 @@ public class KafkaAuditPublisher implements AuditPublisher {
                             result -> logger.debug("Async audit published: {}", event.getAuditEventId()),
                             ex -> logger.error("Async audit failed: {}", event.getAuditEventId(), ex)
                     );
-        } catch (JsonProcessingException e) {
-            logger.error("Failed to serialize async audit event: {}", event, e);
+        } catch (Exception e) {
+            // send() can also throw synchronously (buffer full, closed producer, metadata
+            // timeout after max.block.ms). Audit must never break message processing —
+            // don't rely solely on the SafeAuditPublisher wrapper for that guarantee.
+            logger.error("Failed to publish async audit event: {}", event.getAuditEventId(), e);
         }
     }
 }

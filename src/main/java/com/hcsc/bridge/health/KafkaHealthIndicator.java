@@ -36,6 +36,13 @@ public class KafkaHealthIndicator implements HealthIndicator {
                     .withDetail("clusterId", clusterId)
                     .withDetail("nodeCount", nodeCount)
                     .build();
+        } catch (InterruptedException e) {
+            // Restore the flag: swallowing it would hide shutdown from the actuator thread
+            Thread.currentThread().interrupt();
+            logger.warn("Kafka health check interrupted");
+            return Health.down()
+                    .withDetail("error", "Health check interrupted")
+                    .build();
         } catch (Exception e) {
             logger.warn("Kafka health check failed: {}", e.getMessage());
             return Health.down()

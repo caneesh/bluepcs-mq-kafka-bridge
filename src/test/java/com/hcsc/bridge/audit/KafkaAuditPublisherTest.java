@@ -126,6 +126,19 @@ class KafkaAuditPublisherTest {
 
             verify(kafkaTemplate).send(eq("audit-topic"), eq("event-id-async-001"), anyString());
         }
+
+        @Test
+        @DisplayName("should swallow synchronous send failures (buffer full, closed producer)")
+        void shouldSwallowSynchronousSendFailure() {
+            when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                    .thenThrow(new IllegalStateException("producer closed"));
+
+            AuditEvent event = createTestEvent("event-id-async-002", "bridge-async-002",
+                    "MSG-ASYNC-002", AuditEventType.MESSAGE_RECEIVED);
+
+            // Audit must never break message processing, even without the Safe wrapper
+            publisher.publishAsync(event);
+        }
     }
 
     @Nested

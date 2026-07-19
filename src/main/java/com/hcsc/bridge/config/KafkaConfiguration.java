@@ -50,6 +50,27 @@ public class KafkaConfiguration {
         logger.info("=====================================");
 
         validateTruststoreFile();
+        configureJaasOnce();
+    }
+
+    /**
+     * One-time JAAS setup at startup. This mutates JVM-global state, so it must NOT run
+     * from {@code buildCommonConfig()}: the lazy AdminClient would re-run it at whatever
+     * moment the first health probe arrives, and forcing a Configuration reload at
+     * runtime — while the producer, Hadoop UGI and MQ are live — can poison subsequent
+     * Kerberos logins JVM-wide if the JAAS file is momentarily unreadable (NFS rotation).
+     */
+    private void configureJaasOnce() {
+        String jaasConfigPath = kafkaProps.getJaasConfigPath();
+        if (hasValue(kafkaProps.getSaslMechanism()) && hasValue(jaasConfigPath)) {
+            System.setProperty("java.security.auth.login.config", jaasConfigPath);
+            // The JVM caches the JAAS Configuration on first use, and Hadoop's
+            // Kerberos login earlier in startup may already have initialized it —
+            // in which case setting the system property alone is silently ignored.
+            // Reset forces a reload that picks up the file above.
+            javax.security.auth.login.Configuration.setConfiguration(null);
+            logger.info("Using file-based JAAS config: {}", jaasConfigPath);
+        }
     }
 
     private void validateTruststoreFile() {
@@ -136,18 +157,11 @@ public class KafkaConfiguration {
 
         props.put("sasl.mechanism", saslMechanism);
 
-        String jaasConfigPath = kafkaProps.getJaasConfigPath();
+        // File-based JAAS (java.security.auth.login.config) is JVM-global and configured
+        // ONCE in configureJaasOnce() at startup — never here, which also runs when the
+        // lazy AdminClient is created at the first health probe.
         String saslJaasConfig = kafkaProps.getSaslJaasConfig();
-
-        if (hasValue(jaasConfigPath)) {
-            System.setProperty("java.security.auth.login.config", jaasConfigPath);
-            // The JVM caches the JAAS Configuration on first use, and Hadoop's
-            // Kerberos login earlier in startup may already have initialized it —
-            // in which case setting the system property alone is silently ignored.
-            // Reset forces a reload that picks up the file above.
-            javax.security.auth.login.Configuration.setConfiguration(null);
-            logger.info("Using file-based JAAS config: {}", jaasConfigPath);
-        } else if (hasValue(saslJaasConfig)) {
+        if (!hasValue(kafkaProps.getJaasConfigPath()) && hasValue(saslJaasConfig)) {
             props.put("sasl.jaas.config", saslJaasConfig);
         }
 

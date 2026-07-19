@@ -138,31 +138,9 @@ bridge:
   reconciliation:
     enabled: false
 
-# ============================================================================
-# Spring Kafka Configuration
-# ============================================================================
-spring:
-  kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:penuslika02.app.hscint.net:9093,penuslika03.app.hscint.net:9093,penuslika04.app.hscint.net:9093,penuslika05.app.hscint.net:9093,parentlika05.app.hscint.net:9093}
-    producer:
-      acks: all
-      retries: 5
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      properties:
-        max.request.size: ${KAFKA_REQUEST_SIZE:4194400}
-        delivery.timeout.ms: 120000
-        request.timeout.ms: 30000
-    properties:
-      security.protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
-      sasl.mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
-      sasl.kerberos.service.name: ${KAFKA_KERBEROS_SERVICE_NAME:ep-kafka}
-      ssl.truststore.location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
-      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD:}
-      ssl.truststore.type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
-      ssl.keystore.location: ${KAFKA_KEYSTORE_LOCATION:}
-      ssl.keystore.password: ${KAFKA_KEYSTORE_PASSWORD:}
-      ssl.key.password: ${KAFKA_KEY_PASSWORD:}
+# NOTE: no spring.kafka block here. The custom KafkaConfiguration beans (bridge.kafka.*)
+# replace Spring Boot's auto-configured KafkaTemplate in all !local profiles, so a
+# parallel spring.kafka block is inert and silently drifts from the authoritative config.
 
 # ============================================================================
 # Hadoop Configuration

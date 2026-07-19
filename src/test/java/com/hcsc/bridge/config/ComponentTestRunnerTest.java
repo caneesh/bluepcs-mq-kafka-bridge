@@ -194,14 +194,28 @@ class ComponentTestRunnerTest {
         }
 
         @Test
-        void happyPath_shouldPublishToConfiguredTopicAndReturnPassed() throws Exception {
+        void noTopicArg_shouldRefuseWithoutPublishing() throws Exception {
+            ComponentTestRunner runner = newRunner();
+            setField(runner, "mode", "kafka");
+            setField(runner, "modeArgs", "");
+            setField(runner, "kafkaTopic", "configured-topic");
+
+            // The configured (possibly production) topic must never be used implicitly:
+            // an unmarked test record would reach the downstream consumer as junk
+            assertEquals(ComponentTestRunner.EXIT_BAD_MODE, runner.runComponentTest());
+            verify(kafkaTemplate, never()).send(anyString(), anyString(), anyString());
+        }
+
+        @Test
+        void explicitConfiguredTopic_shouldPublishAndReturnPassed() throws Exception {
             when(kafkaTemplateProvider.getObject()).thenReturn(kafkaTemplate);
             when(kafkaTemplate.send(eq("configured-topic"), anyString(), anyString()))
                     .thenReturn(successFuture("configured-topic", 42L));
 
             ComponentTestRunner runner = newRunner();
             setField(runner, "mode", "kafka");
-            setField(runner, "modeArgs", "");
+            // Publishing to the real topic stays possible — by naming it deliberately
+            setField(runner, "modeArgs", "configured-topic");
             setField(runner, "kafkaTopic", "configured-topic");
 
             assertEquals(ComponentTestRunner.EXIT_PASSED, runner.runComponentTest());
@@ -228,11 +242,11 @@ class ComponentTestRunnerTest {
             SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
             future.setException(new RuntimeException("Broker not available"));
             when(kafkaTemplateProvider.getObject()).thenReturn(kafkaTemplate);
-            when(kafkaTemplate.send(eq("configured-topic"), anyString(), anyString())).thenReturn(future);
+            when(kafkaTemplate.send(eq("scratch-topic"), anyString(), anyString())).thenReturn(future);
 
             ComponentTestRunner runner = newRunner();
             setField(runner, "mode", "kafka");
-            setField(runner, "modeArgs", "");
+            setField(runner, "modeArgs", "scratch-topic");
             setField(runner, "kafkaTopic", "configured-topic");
 
             assertEquals(ComponentTestRunner.EXIT_FAILED, runner.runComponentTest());

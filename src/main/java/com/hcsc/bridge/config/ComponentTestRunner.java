@@ -303,12 +303,26 @@ public class ComponentTestRunner implements ApplicationRunner {
     // Mode: kafka — real publish (optional topic override)
     // ------------------------------------------------------------------------
     private int runKafkaTest() {
-        String topic = (modeArgs != null && !modeArgs.trim().isEmpty()) ? modeArgs.trim() : kafkaTopic;
+        // The topic must be passed EXPLICITLY: silently defaulting to the configured
+        // (possibly production) topic would publish a contract-violating record that
+        // downstream consumers classify as a legacy message and pass through as junk.
+        // Publishing to the real topic is still possible — by naming it deliberately.
+        String topic = (modeArgs != null && !modeArgs.trim().isEmpty()) ? modeArgs.trim() : null;
+        if (topic == null) {
+            logger.error("============================================");
+            logger.error("COMPONENT-TEST RESULT: REFUSED (kafka)");
+            logger.error("  No topic argument given. Refusing to publish a test record to the");
+            logger.error("  configured topic '{}' implicitly.", kafkaTopic);
+            logger.error("  Re-run with an explicit topic (a scratch topic is recommended):");
+            logger.error("    --bridge.component-test=kafka --bridge.component-test-args=<topic>");
+            logger.error("============================================");
+            return EXIT_BAD_MODE;
+        }
         String key = "component-test-" + UUID.randomUUID();
-        String value = "{\"componentTest\":true,\"timestamp\":\"" + Instant.now() + "\"}";
+        String value = "{\"componentTest\":true,\"source\":\"mq-kafka-bridge-component-test\","
+                + "\"timestamp\":\"" + Instant.now() + "\"}";
 
-        logger.warn("Component-test 'kafka' publishes a REAL (clearly marked) message to topic '{}'. "
-                + "Pass a scratch topic as the arg for cautious testing.", topic);
+        logger.warn("Component-test 'kafka' publishes a REAL (clearly marked) message to topic '{}'.", topic);
 
         try {
             KafkaTemplate<String, String> kafkaTemplate = kafkaTemplateProvider.getObject();
