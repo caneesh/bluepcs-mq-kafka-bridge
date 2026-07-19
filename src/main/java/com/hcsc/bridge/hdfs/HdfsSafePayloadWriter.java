@@ -80,16 +80,19 @@ public class HdfsSafePayloadWriter {
 
             writeToTempFile(tempPath, contentBytes, messageId);
 
+            // Verify the checksum on the temp file BEFORE the rename: once a bad file is
+            // renamed into place it would satisfy the exists() idempotency check on redelivery
+            // and the corruption would become permanent and acked.
+            String writtenChecksum = hdfsFileOperations.getFileChecksum(tempPath);
+            if (!checksum.equals(writtenChecksum)) {
+                throw new HdfsWriteException(
+                        "Checksum mismatch after write: expected " + checksum + " but got " + writtenChecksum,
+                        targetPath, messageId);
+            }
+
             boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
             if (!renamed) {
                 throw new HdfsWriteException("Failed to rename temp file to target", targetPath, messageId);
-            }
-
-            String finalChecksum = hdfsFileOperations.getFileChecksum(targetPath);
-            if (!checksum.equals(finalChecksum)) {
-                throw new HdfsWriteException(
-                        "Checksum mismatch after write: expected " + checksum + " but got " + finalChecksum,
-                        targetPath, messageId);
             }
 
             logger.info("Successfully wrote payload {} to HDFS: {} ({} bytes)",

@@ -58,6 +58,7 @@ public class MqMessageListener {
             if (!(message instanceof TextMessage)) {
                 logger.error("Received unsupported message type {}, acknowledging to discard",
                         message.getClass().getName());
+                auditDiscardedNonTextMessage(message);
                 // Lenient ack: an ack failure while discarding must not trigger redelivery
                 // of a message we cannot process anyway.
                 acknowledgeQuietly(message, "unsupported-message-type discard");
@@ -184,6 +185,35 @@ public class MqMessageListener {
         }
 
         acknowledgeQuietly(message, "poison-message discard (messageId=" + messageId + ")");
+    }
+
+    /**
+     * Publishes a MESSAGE_DISCARDED audit for an unsupported (non-text) message so the discard
+     * leaves a trail beyond the log line. Best-effort on every step: the message ID may be
+     * unreadable and audit publishing may fail — neither must prevent the discard ack.
+     */
+    private void auditDiscardedNonTextMessage(Message message) {
+        String discardedMessageId = null;
+        try {
+            discardedMessageId = message.getJMSMessageID();
+        } catch (JMSException e) {
+            logger.debug("Could not read JMSMessageID from unsupported message", e);
+        }
+        try {
+            auditPublisher.publishAsync(AuditEvent.builder()
+                    .auditEventId(UUID.randomUUID().toString())
+                    .originalMqMessageId(discardedMessageId)
+                    .messageId(discardedMessageId)
+                    .eventType(AuditEventType.MESSAGE_DISCARDED)
+                    .description("Unsupported message type discarded: " + message.getClass().getName())
+                    .metadata(Map.of(
+                            "messageClass", message.getClass().getName(),
+                            "sourceQueue", extractQueueName(message)))
+                    .errorMessage("Only TextMessage is supported")
+                    .build());
+        } catch (RuntimeException e) {
+            logger.error("Failed to publish MESSAGE_DISCARDED audit for unsupported message type", e);
+        }
     }
 
     /**

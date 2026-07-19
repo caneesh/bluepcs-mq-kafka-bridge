@@ -245,6 +245,8 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(endsWith(TEMP_SUFFIX))).thenReturn(true);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
@@ -265,6 +267,8 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(endsWith(TEMP_SUFFIX))).thenReturn(true);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doThrow(new IOException("Delete failed")).when(hdfsFileOperations).delete(anyString());
 
@@ -287,6 +291,8 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
@@ -304,6 +310,8 @@ class HdfsSafePayloadWriterTest {
             when(hdfsFileOperations.exists(anyString())).thenReturn(false);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
             doNothing().when(hdfsFileOperations).delete(anyString());
 
@@ -337,24 +345,30 @@ class HdfsSafePayloadWriterTest {
             HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getChecksum()).isNotEmpty();
-            verify(hdfsFileOperations).getFileChecksum(anyString());
+            // Verification must run against the temp file, before the rename
+            verify(hdfsFileOperations).getFileChecksum(endsWith(TEMP_SUFFIX));
         }
 
         @Test
-        @DisplayName("should throw exception on checksum mismatch")
+        @DisplayName("should throw on checksum mismatch without renaming, and clean up the temp file")
         void shouldThrowOnChecksumMismatch() throws IOException {
             EnrichedPayload payload = createEnrichedPayload("MSG-CHK-002", "TXN-CHK-002", "event-id-chk-002");
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
-            when(hdfsFileOperations.exists(anyString())).thenReturn(false);
+            when(hdfsFileOperations.exists(contains(".json"))).thenReturn(false);
+            when(hdfsFileOperations.exists(endsWith(TEMP_SUFFIX))).thenReturn(true);
             when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
-            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
             when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("different-checksum");
             doNothing().when(hdfsFileOperations).mkdirs(anyString());
+            doNothing().when(hdfsFileOperations).delete(anyString());
 
             assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
                     .isInstanceOf(HdfsWriteException.class)
                     .hasMessageContaining("Checksum mismatch");
+
+            // The corrupt bytes must never reach the target path: no rename, temp deleted
+            verify(hdfsFileOperations, never()).rename(anyString(), anyString());
+            verify(hdfsFileOperations).delete(endsWith(TEMP_SUFFIX));
         }
     }
 

@@ -20,6 +20,10 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,7 +47,7 @@ class RestMarketingPlanApiClientTest {
                 .connectTimeout(5, TimeUnit.SECONDS)
                 .readTimeout(5, TimeUnit.SECONDS)
                 .build();
-        when(jwtTokenProvider.getToken()).thenReturn("test-jwt-token");
+        lenient().when(jwtTokenProvider.getToken()).thenReturn("test-jwt-token");
     }
 
     @AfterEach
@@ -300,6 +304,68 @@ class RestMarketingPlanApiClientTest {
                         EnrichmentException ex = (EnrichmentException) e;
                         assertThat(ex.isRetryable()).isFalse();
                     });
+        }
+    }
+
+    @Nested
+    @DisplayName("Token Failures")
+    class TokenFailures {
+
+        @Test
+        @DisplayName("should translate token failure into retryable EnrichmentException and retry")
+        void shouldTranslateTokenFailure() {
+            reset(jwtTokenProvider);
+            when(jwtTokenProvider.getToken())
+                    .thenThrow(new RuntimeException("Token refresh failed with status: 503"));
+
+            client = createClient();
+
+            assertThatThrownBy(() -> client.enrich(createPayload("ENT-TOK-001")))
+                    .isInstanceOf(EnrichmentException.class)
+                    .hasMessageContaining("Failed to acquire API token")
+                    .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isTrue());
+
+            // Retryable → all attempts consumed, and no HTTP request ever left the client
+            verify(jwtTokenProvider, times(3)).getToken();
+            assertThat(mockServer.getRequestCount()).isZero();
+        }
+
+        @Test
+        @DisplayName("should recover when the token succeeds on a later attempt")
+        void shouldRecoverOnLaterTokenSuccess() {
+            reset(jwtTokenProvider);
+            when(jwtTokenProvider.getToken())
+                    .thenThrow(new RuntimeException("transient token outage"))
+                    .thenReturn("recovered-token");
+
+            mockServer.enqueue(new MockResponse()
+                    .setBody(planResponseBody("MP-RECOVERED"))
+                    .setHeader("Content-Type", "application/json"));
+
+            client = createClient();
+
+            MarketingPlanApiClient.EnrichmentResult result = client.enrich(createPayload("ENT-TOK-002"));
+
+            assertThat(result.getMarketingPlanId()).isEqualTo("MP-RECOVERED");
+        }
+
+        @Test
+        @DisplayName("should abort the retry loop when interrupted during backoff")
+        void shouldAbortRetryOnInterrupt() {
+            mockServer.enqueue(new MockResponse().setResponseCode(500));
+
+            client = createClient();
+
+            Thread.currentThread().interrupt();
+            try {
+                assertThatThrownBy(() -> client.enrich(createPayload("ENT-INT-001")))
+                        .isInstanceOf(EnrichmentException.class)
+                        .hasMessageContaining("interrupted")
+                        .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isFalse());
+            } finally {
+                // Reads AND clears the flag so it cannot leak into other tests
+                assertThat(Thread.interrupted()).isTrue();
+            }
         }
     }
 

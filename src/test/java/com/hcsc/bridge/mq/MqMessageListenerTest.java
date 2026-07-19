@@ -330,6 +330,34 @@ class MqMessageListenerTest {
             verify(nonTextMessage).acknowledge();
             verify(orchestrator, never()).process(any());
         }
+
+        @Test
+        @DisplayName("should publish MESSAGE_DISCARDED audit for discarded non-text message")
+        void shouldPublishAuditForNonTextDiscard() throws JMSException {
+            Message nonTextMessage = mock(Message.class);
+            when(nonTextMessage.getJMSMessageID()).thenReturn("MSG-NONTEXT-001");
+
+            listener.onMessage(nonTextMessage);
+
+            ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+            verify(auditPublisher).publishAsync(captor.capture());
+            AuditEvent event = captor.getValue();
+            assertThat(event.getEventType()).isEqualTo(AuditEventType.MESSAGE_DISCARDED);
+            assertThat(event.getMessageId()).isEqualTo("MSG-NONTEXT-001");
+            assertThat(event.getDescription()).contains("Unsupported message type");
+        }
+
+        @Test
+        @DisplayName("should still acknowledge when message ID or audit publishing fails")
+        void shouldAckWhenAuditOfNonTextDiscardFails() throws JMSException {
+            Message nonTextMessage = mock(Message.class);
+            when(nonTextMessage.getJMSMessageID()).thenThrow(new JMSException("no id"));
+            doThrow(new RuntimeException("audit down")).when(auditPublisher).publishAsync(any());
+
+            listener.onMessage(nonTextMessage);
+
+            verify(nonTextMessage).acknowledge();
+        }
     }
 
     @Nested

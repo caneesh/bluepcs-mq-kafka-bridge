@@ -1,5 +1,7 @@
 package com.hcsc.bridge.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -192,8 +194,11 @@ public class ReadinessCheckService {
                 headers.set("scope", oauthScope);
             }
 
-            String body = String.format("{\"username\":\"%s\",\"password\":\"%s\"}",
-                    oauthUsername, oauthPassword);
+            // Build with Jackson so quotes/backslashes in credentials stay valid JSON
+            ObjectNode bodyNode = new ObjectMapper().createObjectNode();
+            bodyNode.put("username", oauthUsername);
+            bodyNode.put("password", oauthPassword);
+            String body = bodyNode.toString();
 
             HttpEntity<String> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(oauthTokenUrl, request, String.class);
