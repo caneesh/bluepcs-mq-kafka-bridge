@@ -393,6 +393,34 @@ Key log patterns to monitor:
 5. Publish envelope to Kafka
 6. Acknowledge MQ message (only on complete success)
 
+### HDFS File Lifecycle
+
+The bridge WRITES payload files; nothing in the bridge ever deletes them. The lifecycle
+is time-based, implemented by `scripts/hdfs-landing-cleanup.sh` (run daily from cron):
+
+```
+bridge writes  ->  <base-path>/<eventId>.json          (landing)
+consumer reads via hdfsPath in the Kafka notification  (file stays in place)
+cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
+                     moved to <archive-path> (<base-path>/archive)
+               ->  archive files older than ARCHIVE_RETENTION_DAYS (default 30)
+                     deleted
+               ->  orphaned *.json.tmp older than 1 day deleted
+```
+
+- `LANDING_RETENTION_DAYS` is the consumer's replay window: a Kafka message re-read
+  after its file was archived is skipped as an already-processed duplicate by the
+  consumer's `BridgeMessageResolver` (see `docs/consumer/BridgeMessageResolver.scala`).
+  Size it to exceed the longest expected consumer outage.
+- The `errors/` quarantine directory is NEVER auto-cleaned — a quarantined file is the
+  only copy of an unparseable message; review and delete manually.
+- Cron entry (on the office box, after `hdfs`/`kinit` are on PATH):
+  `15 2 * * * /path/to/scripts/hdfs-landing-cleanup.sh >> /var/log/bluepcs/hdfs-cleanup.log 2>&1`
+- Use `--dry-run` first to see what a sweep would do without touching anything.
+- PREREQUISITE CHECK with the HDFS area owner: confirm no Hive external table points
+  at the landing directory itself — if one does, the bridge's `.json` files would
+  surface as table rows and the lifecycle design must be revisited.
+
 ### Failure Handling
 
 - **Parse failure (permanent):** raw payload is quarantined to the HDFS error directory
