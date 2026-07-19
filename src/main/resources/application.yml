@@ -20,10 +20,15 @@ bridge:
   kafka:
     topic: ${KAFKA_TOPIC:bridge-events}
     audit-topic: ${KAFKA_AUDIT_TOPIC:bridge-audit}
-    timeout-seconds: ${KAFKA_TIMEOUT_SECONDS:10}
+    # Must cover the producer's full send budget (max-block-ms + delivery-timeout-ms) so
+    # the synchronous wait cannot expire while the record is still in flight — a premature
+    # timeout reports failure for a record that is usually still delivered, and the MQ
+    # redelivery then produces a guaranteed duplicate.
+    timeout-seconds: ${KAFKA_TIMEOUT_SECONDS:190}
     audit-timeout-seconds: ${KAFKA_AUDIT_TIMEOUT_SECONDS:5}
     delivery-timeout-ms: ${KAFKA_DELIVERY_TIMEOUT_MS:120000}
     request-timeout-ms: ${KAFKA_REQUEST_TIMEOUT_MS:30000}
+    max-block-ms: ${KAFKA_MAX_BLOCK_MS:60000}
     # Security - must be provided by deployment team for SASL/SSL
     security:
       protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}

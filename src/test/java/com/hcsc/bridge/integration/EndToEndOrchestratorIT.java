@@ -219,12 +219,31 @@ class EndToEndOrchestratorIT {
         }
 
         @Test
-        @DisplayName("should publish failure audit event")
-        void shouldPublishFailureAuditEvent() {
+        @DisplayName("should quarantine and publish MESSAGE_QUARANTINED audit event")
+        void shouldPublishQuarantineAuditEvent() {
             MqMessage message = messageGenerator.generateInvalidMessage("MSG-INVALID-002");
 
-            orchestrator.process(message);
+            ProcessingResult result = orchestrator.process(message);
 
+            // Parse failures are permanent: with a working HDFS the payload is quarantined
+            // (so the listener can ack), not reported as PROCESSING_FAILED
+            assertThat(result.isQuarantined()).isTrue();
+            assertThat(auditPublisher.hasEventOfType(AuditEventType.MESSAGE_QUARANTINED)).isTrue();
+            assertThat(auditPublisher.hasEventOfType(AuditEventType.PROCESSING_FAILED)).isFalse();
+        }
+
+        @Test
+        @DisplayName("should fall back to PROCESSING_FAILED when the quarantine write fails")
+        void shouldFallBackToFailureWhenQuarantineWriteFails() {
+            hdfsOperations.setShouldFailOnCreate(true);
+            MqMessage message = messageGenerator.generateInvalidMessage("MSG-INVALID-003");
+
+            ProcessingResult result = orchestrator.process(message);
+
+            // Payload could not be durably preserved → message must stay on the queue
+            assertThat(result.isQuarantined()).isFalse();
+            assertThat(result.isSuccessful()).isFalse();
+            assertThat(result.getErrorCode()).isEqualTo("PARSE_ERROR");
             assertThat(auditPublisher.hasEventOfType(AuditEventType.PROCESSING_FAILED)).isTrue();
         }
     }

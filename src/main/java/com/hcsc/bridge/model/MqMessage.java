@@ -11,11 +11,18 @@ public final class MqMessage {
     private final Instant receivedAt;
     private final String sourceQueue;
 
+    /**
+     * messageId and payload are deliberately nullable: JMS permits a null
+     * JMSMessageID (e.g. messages bridged from another provider) and
+     * TextMessage.getText() can return null. Rejecting them here would NPE in the
+     * listener before any audit is emitted, producing an invisible redelivery loop —
+     * the orchestrator instead derives a fallback eventId and quarantines.
+     */
     public MqMessage(String messageId, String correlationId, String payload,
                      Instant receivedAt, String sourceQueue) {
-        this.messageId = Objects.requireNonNull(messageId, "messageId must not be null");
+        this.messageId = messageId;
         this.correlationId = correlationId;
-        this.payload = Objects.requireNonNull(payload, "payload must not be null");
+        this.payload = payload;
         this.receivedAt = Objects.requireNonNull(receivedAt, "receivedAt must not be null");
         this.sourceQueue = sourceQueue;
     }

@@ -301,23 +301,18 @@ class LocalFilesystemHdfsIT {
     class PathGenerationTests {
 
         @Test
-        @DisplayName("should generate path with event type")
-        void shouldGeneratePathWithEventType() {
+        @DisplayName("should generate a flat landing-directory path (no eventType/date partitioning)")
+        void shouldGenerateFlatLandingPath() {
             EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
 
             HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
 
-            assertThat(result.getHdfsPath()).contains(payload.getEventType().toLowerCase());
-        }
-
-        @Test
-        @DisplayName("should generate path with date hierarchy")
-        void shouldGeneratePathWithDateHierarchy() {
-            EnrichedPayload payload = payloadGenerator.generateEnrichedPayload();
-
-            HdfsWriteResult result = payloadWriter.write(payload, WRAPPER_CONTENT);
-
-            assertThat(result.getHdfsPath()).matches(".*\\d{4}/\\d{2}/\\d{2}.*");
+            // Claim-check contract: a single flat landing dir owned by the downstream
+            // consumer — the path is exactly <base>/<eventId>.json with no partitioning
+            assertThat(result.getHdfsPath())
+                    .isEqualTo("/data/bridge/payloads/" + payload.getEventId() + ".json");
+            assertThat(result.getHdfsPath()).doesNotContain(payload.getEventType().toLowerCase());
+            assertThat(result.getHdfsPath()).doesNotMatch(".*\\d{4}/\\d{2}/\\d{2}.*");
         }
 
         @Test

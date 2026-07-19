@@ -268,8 +268,8 @@ public class BridgeProperties {
 
         private String acks = "all";
 
-        
-        private int retries = 5;
+        // Upper bound on how long send() itself may block (metadata fetch / full buffer)
+        private long maxBlockMs = 60000;
 
         public String getBootstrapServers() {
             return bootstrapServers;
@@ -415,12 +415,12 @@ public class BridgeProperties {
             this.acks = acks;
         }
 
-        public int getRetries() {
-            return retries;
+        public long getMaxBlockMs() {
+            return maxBlockMs;
         }
 
-        public void setRetries(int retries) {
-            this.retries = retries;
+        public void setMaxBlockMs(long maxBlockMs) {
+            this.maxBlockMs = maxBlockMs;
         }
     }
 

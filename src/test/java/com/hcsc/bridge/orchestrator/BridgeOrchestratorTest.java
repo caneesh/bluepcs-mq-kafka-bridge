@@ -427,6 +427,48 @@ class BridgeOrchestratorTest {
         doNothing().when(auditPublisher).publishAsync(any());
     }
 
+    @Nested
+    @DisplayName("unexpected failure handling")
+    class UnexpectedFailureHandling {
+
+        @Test
+        @DisplayName("should derive eventId from payload hash when JMSMessageID is null")
+        void shouldDeriveEventIdFromPayloadWhenMessageIdNull() {
+            MqMessage message = new MqMessage(null, "CORR-NULL", "{\"test\":\"payload\"}",
+                    Instant.now(), "TEST.QUEUE");
+            when(eventIdGenerator.generateEventId("{\"test\":\"payload\"}"))
+                    .thenReturn("payload-derived-event-id");
+            when(messageParser.parse(any())).thenThrow(
+                    new MessageParseException("bad", null, "{\"test\":\"payload\"}"));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), any()))
+                    .thenReturn(HdfsWriteResult.success("/errors/payload-derived-event-id.json", "cs", 10));
+
+            ProcessingResult result = orchestrator.process(message);
+
+            // No exception escaped, and the deterministic payload-hash eventId was used
+            assertThat(result.getEventId()).isEqualTo("payload-derived-event-id");
+            verify(eventIdGenerator).generateEventId("{\"test\":\"payload\"}");
+        }
+
+        @Test
+        @DisplayName("should audit PROCESSING_FAILED and return UNEXPECTED_ERROR on an escaping RuntimeException")
+        void shouldHandleEscapingRuntimeException() {
+            MqMessage message = createMqMessage("MSG-UNEXPECTED-001");
+            when(eventIdGenerator.generateEventId("MSG-UNEXPECTED-001")).thenReturn("event-unexpected-001");
+            when(messageParser.parse(any())).thenReturn(createParsedPayload("MSG-UNEXPECTED-001", "TXN-1"));
+            when(apiClient.enrich(any())).thenThrow(new IllegalStateException("defensive serialization failure"));
+
+            ProcessingResult result = orchestrator.process(message);
+
+            assertThat(result.isSuccessful()).isFalse();
+            assertThat(result.getErrorCode()).isEqualTo("UNEXPECTED_ERROR");
+            verify(auditPublisher, times(3)).publishAsync(auditEventCaptor.capture());
+            assertThat(auditEventCaptor.getAllValues())
+                    .extracting(AuditEvent::getEventType)
+                    .contains(AuditEventType.PROCESSING_FAILED);
+        }
+    }
+
     private MqMessage createMqMessage(String messageId) {
         return new MqMessage(
                 messageId,

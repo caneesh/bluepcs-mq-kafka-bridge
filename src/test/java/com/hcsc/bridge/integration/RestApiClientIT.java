@@ -118,9 +118,8 @@ class RestApiClientIT {
         @Test
         @DisplayName("should throw EnrichmentException on 500 error")
         void shouldThrowOnServerError() {
-            mockWebServer.enqueue(new MockResponse()
-                    .setResponseCode(500)
-                    .setBody("Internal Server Error"));
+            // One response per retry attempt: the client retries retryable 500s
+            enqueue500Responses(3);
 
             ParsedPayload payload = createTestPayload("MSG-500-001", "ENTITY-500-001");
 
@@ -132,8 +131,7 @@ class RestApiClientIT {
         @Test
         @DisplayName("should include entity ID in exception on 500")
         void shouldIncludeEntityIdInException() {
-            mockWebServer.enqueue(new MockResponse()
-                    .setResponseCode(500));
+            enqueue500Responses(3);
 
             ParsedPayload payload = createTestPayload("MSG-500-002", "ENTITY-500-002");
 
@@ -146,8 +144,7 @@ class RestApiClientIT {
         @Test
         @DisplayName("should include status code in exception on 500")
         void shouldIncludeStatusCodeInException() {
-            mockWebServer.enqueue(new MockResponse()
-                    .setResponseCode(500));
+            enqueue500Responses(3);
 
             ParsedPayload payload = createTestPayload("MSG-500-003", "ENTITY-500-003");
 
@@ -160,13 +157,21 @@ class RestApiClientIT {
         @Test
         @DisplayName("should be retryable on 500")
         void shouldBeRetryableOn500() {
-            mockWebServer.enqueue(new MockResponse().setResponseCode(500));
+            enqueue500Responses(3);
 
             ParsedPayload payload = createTestPayload("MSG-500-004", "ENTITY-500-004");
 
             assertThatThrownBy(() -> apiClient.enrich(payload))
                     .isInstanceOf(EnrichmentException.class)
                     .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isTrue());
+        }
+
+        private void enqueue500Responses(int count) {
+            for (int i = 0; i < count; i++) {
+                mockWebServer.enqueue(new MockResponse()
+                        .setResponseCode(500)
+                        .setBody("Internal Server Error"));
+            }
         }
     }
 
@@ -180,9 +185,14 @@ class RestApiClientIT {
             MockWebServer slowServer = new MockWebServer();
             slowServer.start();
             try {
-                slowServer.enqueue(new MockResponse()
-                        .setBodyDelay(5, TimeUnit.SECONDS)
-                        .setBody("{\"marketingPlanId\":\"MP-1\"}"));
+                // Delay the headers so the timeout is a connection-level SocketTimeout
+                // (a body delay would deliver a 200 first and take the parse path);
+                // one delayed response per retry attempt
+                for (int i = 0; i < 3; i++) {
+                    slowServer.enqueue(new MockResponse()
+                            .setHeadersDelay(5, TimeUnit.SECONDS)
+                            .setBody("{\"marketingPlanId\":\"MP-1\"}"));
+                }
 
                 OkHttpClient shortTimeoutClient = new OkHttpClient.Builder()
                         .connectTimeout(100, TimeUnit.MILLISECONDS)

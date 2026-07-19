@@ -210,7 +210,7 @@ class KafkaConfigurationTest {
         props.setRequestTimeoutMs(30000);
         props.setSecurityProtocol("PLAINTEXT");
         props.setAcks("all");
-        props.setRetries(5);
+        props.setMaxBlockMs(60000);
         props.setTruststoreType("JKS");
         return props;
     }

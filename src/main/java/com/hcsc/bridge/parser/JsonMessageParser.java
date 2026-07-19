@@ -51,6 +51,12 @@ public class JsonMessageParser implements MessageParser {
 
         logger.debug("Parsing message: {}", messageId);
 
+        // A null body is JMS-legal (TextMessage.getText() may return null); treat it as a
+        // parse failure so it takes the quarantine path instead of NPE-ing in Jackson
+        if (payload == null) {
+            throw new MessageParseException("Message payload is null", messageId, null);
+        }
+
         try {
             JsonNode rootNode = objectMapper.readTree(payload);
 

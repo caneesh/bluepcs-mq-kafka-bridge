@@ -24,7 +24,10 @@ public class KafkaEnvelopePublisher {
     public KafkaEnvelopePublisher(
             KafkaTemplate<String, String> kafkaTemplate,
             @Value("${bridge.kafka.topic:bridge-events}") String topic,
-            @Value("${bridge.kafka.timeout-seconds:30}") long timeoutSeconds) {
+            // Default covers max.block.ms (60s) + delivery.timeout.ms (120s) with margin:
+            // a wait shorter than the producer's own budget times out while the record is
+            // still in flight, reporting failure for a message that is usually delivered
+            @Value("${bridge.kafka.timeout-seconds:190}") long timeoutSeconds) {
         this.kafkaTemplate = kafkaTemplate;
         this.topic = topic;
         this.timeoutSeconds = timeoutSeconds;

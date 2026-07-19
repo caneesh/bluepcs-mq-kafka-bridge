@@ -2,6 +2,7 @@ package com.hcsc.bridge.integration;
 
 import com.hcsc.bridge.api.EnrichmentWrapperFactory;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
+import com.hcsc.bridge.kafka.KafkaNotificationFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.consumer.Consumer;
@@ -36,6 +37,7 @@ class KafkaPublisherIT {
     private static final String TOPIC = "test-bridge-events";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final EnrichmentWrapperFactory WRAPPER_FACTORY = new EnrichmentWrapperFactory();
+    private static final KafkaNotificationFactory NOTIFICATION_FACTORY = new KafkaNotificationFactory();
 
     private static EmbeddedKafkaBroker embeddedKafka;
 
@@ -90,19 +92,19 @@ class KafkaPublisherIT {
     class SuccessfulPublish {
 
         @Test
-        @DisplayName("should publish wrapper and return offset")
-        void shouldPublishWrapperAndReturnOffset() {
-            String offset = publisher.publish("event-id-001", buildWrapper("MP-001"));
+        @DisplayName("should publish notification and return offset")
+        void shouldPublishNotificationAndReturnOffset() {
+            String offset = publisher.publish("event-id-001", buildNotification("MP-001", "event-id-001"));
 
             assertThat(offset).isNotNull();
             assertThat(Long.parseLong(offset)).isGreaterThanOrEqualTo(0);
         }
 
         @Test
-        @DisplayName("should publish message with correct wrapper payload")
-        void shouldPublishWithCorrectPayload() throws Exception {
+        @DisplayName("should publish the claim-check notification contract, not the inline wrapper")
+        void shouldPublishClaimCheckContract() throws Exception {
             String key = "event-" + UUID.randomUUID().toString().substring(0, 8);
-            publisher.publish(key, buildWrapper("MP-CORRECT"));
+            publisher.publish(key, buildNotification("MP-CORRECT", key));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
@@ -111,11 +113,17 @@ class KafkaPublisherIT {
             for (ConsumerRecord<String, String> record : records) {
                 if (key.equals(record.key())) {
                     JsonNode node = OBJECT_MAPPER.readTree(record.value());
+                    // Claim-check fields the downstream resolver depends on
+                    assertThat(node.path("marketingPlanIdentifier").asText()).isEqualTo("MP-CORRECT");
+                    assertThat(node.path("hdfsPath").asText()).isEqualTo("/data/bridge/payloads/" + key + ".json");
+                    assertThat(node.path("checksum").asText()).isNotEmpty();
+                    assertThat(node.path("eventId").asText()).isEqualTo(key);
                     assertThat(node.has("changeEventTimeStamp")).isTrue();
                     assertThat(node.has("changeEventTypeName")).isTrue();
-                    assertThat(node.path("RestAPIResponse").path("PlanResponse")
-                            .path("planIdentification").path("marketingPlanIdentifier").asText())
-                            .isEqualTo("MP-CORRECT");
+                    // Format discriminator: schemaVersion/source present, legacy inline body absent
+                    assertThat(node.path("source").asText()).isEqualTo(KafkaNotificationFactory.SOURCE);
+                    assertThat(node.path("schemaVersion").asInt()).isEqualTo(KafkaNotificationFactory.SCHEMA_VERSION);
+                    assertThat(node.has("RestAPIResponse")).isFalse();
                     found = true;
                     break;
                 }
@@ -132,7 +140,7 @@ class KafkaPublisherIT {
         @DisplayName("should use supplied key")
         void shouldUseSuppliedKey() {
             String key = "ENTITY-KEY-001:TXN-KEY-001";
-            publisher.publish(key, buildWrapper("MP-KEY"));
+            publisher.publish(key, buildNotification("MP-KEY", key));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
@@ -151,7 +159,7 @@ class KafkaPublisherIT {
         @DisplayName("should handle special characters in key")
         void shouldHandleSpecialCharactersInKey() {
             String key = "ENTITY.WITH.DOTS:TXN-WITH-DASH_AND_UNDERSCORE";
-            publisher.publish(key, buildWrapper("MP-SPECIAL"));
+            publisher.publish(key, buildNotification("MP-SPECIAL", key));
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             assertThat(records.count()).isGreaterThanOrEqualTo(1);
@@ -174,10 +182,10 @@ class KafkaPublisherIT {
         @Test
         @DisplayName("should allow publishing same message twice with different offsets")
         void shouldAllowPublishingSameMessageTwice() {
-            String wrapper = buildWrapper("MP-IDEM");
+            String notification = buildNotification("MP-IDEM", "event-idem-001");
 
-            String offset1 = publisher.publish("event-idem-001", wrapper);
-            String offset2 = publisher.publish("event-idem-001", wrapper);
+            String offset1 = publisher.publish("event-idem-001", notification);
+            String offset2 = publisher.publish("event-idem-001", notification);
 
             assertThat(offset1).isNotNull();
             assertThat(offset2).isNotNull();
@@ -187,10 +195,10 @@ class KafkaPublisherIT {
         @DisplayName("duplicate messages should have same content")
         void duplicateMessagesShouldHaveSameContent() throws Exception {
             String key = "event-idem-002";
-            String wrapper = buildWrapper("MP-IDEM-CONTENT");
+            String notification = buildNotification("MP-IDEM-CONTENT", key);
 
-            publisher.publish(key, wrapper);
-            publisher.publish(key, wrapper);
+            publisher.publish(key, notification);
+            publisher.publish(key, notification);
 
             ConsumerRecords<String, String> records = KafkaTestUtils.getRecords(consumer, 10000);
             int matchCount = 0;
@@ -203,13 +211,21 @@ class KafkaPublisherIT {
         }
     }
 
-    private String buildWrapper(String marketingPlanId) {
+    /** Builds the claim-check notification exactly as the orchestrator does. */
+    private String buildNotification(String marketingPlanId, String eventId) {
         String raw = "{\"PlanResponse\":{"
                 + "\"planIdentification\":{\"marketingPlanIdentifier\":\"" + marketingPlanId + "\"},"
                 + "\"changeEvent\":{\"typeName\":\"Update\",\"timestamp\":\"20260710T162108.143 CDT\"}"
                 + "}}";
         try {
-            return WRAPPER_FACTORY.buildWrapper(OBJECT_MAPPER.readTree(raw));
+            EnrichmentWrapperFactory.WrapperResult wrapper =
+                    WRAPPER_FACTORY.build(OBJECT_MAPPER.readTree(raw), null);
+            return NOTIFICATION_FACTORY.buildNotification(
+                    wrapper,
+                    marketingPlanId,
+                    "/data/bridge/payloads/" + eventId + ".json",
+                    "checksum-" + eventId,
+                    eventId);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

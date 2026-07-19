@@ -64,7 +64,7 @@ public class BridgeOrchestrator {
 
     public ProcessingResult process(MqMessage mqMessage) {
         String originalMqMessageId = mqMessage.getMessageId();
-        String eventId = eventIdGenerator.generateEventId(originalMqMessageId);
+        String eventId = deriveEventId(originalMqMessageId, mqMessage.getPayload());
         ProcessingContext ctx = new ProcessingContext(eventId, originalMqMessageId, mqMessage.getReceivedAt());
 
         logger.info("Processing message: originalMqMessageId={}, eventId={}, bridgeMessageId={}",
@@ -124,7 +124,27 @@ public class BridgeOrchestrator {
             return handleHdfsFailure(ctx, e);
         } catch (KafkaPublishException e) {
             return handleKafkaFailure(ctx, e);
+        } catch (RuntimeException e) {
+            // Anything escaping the typed handlers would otherwise propagate to the
+            // listener with no audit trail and no ProcessingResult — an invisible
+            // redelivery loop. Audit it and return a failure so redelivery stays visible.
+            return handleUnexpectedFailure(ctx, e);
         }
+    }
+
+    /**
+     * Derives the deterministic eventId. JMSMessageID can legally be null or empty
+     * (e.g. messages bridged from another JMS provider); falling back to a hash of the
+     * payload keeps the eventId deterministic across redeliveries so HDFS idempotency
+     * and downstream dedup still work, instead of throwing before any audit is emitted.
+     */
+    private String deriveEventId(String messageId, String payload) {
+        if (messageId != null && !messageId.isEmpty()) {
+            return eventIdGenerator.generateEventId(messageId);
+        }
+        logger.warn("Message has no JMSMessageID; deriving eventId from payload hash");
+        String basis = (payload != null && !payload.isEmpty()) ? payload : "<empty-mq-message>";
+        return eventIdGenerator.generateEventId(basis);
     }
 
     /**
@@ -205,6 +225,13 @@ public class BridgeOrchestrator {
         publishAudit(ctx, null,
                 AuditEventType.KAFKA_PUBLISH_FAILED, "Kafka publish failure", e.getMessage());
         return ProcessingResult.failure(ctx.getEventId(), "KAFKA_ERROR", e.getMessage());
+    }
+
+    private ProcessingResult handleUnexpectedFailure(ProcessingContext ctx, RuntimeException e) {
+        logger.error("Unexpected failure for eventId {}", ctx.getEventId(), e);
+        publishAudit(ctx, null, AuditEventType.PROCESSING_FAILED,
+                "Unexpected failure: " + e.getClass().getSimpleName(), e.getMessage());
+        return ProcessingResult.failure(ctx.getEventId(), "UNEXPECTED_ERROR", e.getMessage());
     }
 
     private void publishAudit(ProcessingContext ctx, @Nullable String transactionId,

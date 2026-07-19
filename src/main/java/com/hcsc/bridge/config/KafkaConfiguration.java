@@ -74,11 +74,17 @@ public class KafkaConfiguration {
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         props.put(ProducerConfig.ACKS_CONFIG, kafkaProps.getAcks());
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        props.put(ProducerConfig.RETRIES_CONFIG, kafkaProps.getRetries());
+        // retries stays at the client default (effectively infinite): delivery.timeout.ms is
+        // the intended bound for total send time. A small explicit retries value exhausts in
+        // under a second of backoff and turns routine broker failovers into publish failures
+        // (and, via MQ redelivery, duplicates) long before the delivery timeout is reached.
         props.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "snappy");
         props.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, (int) kafkaProps.getDeliveryTimeoutMs());
         props.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, (int) kafkaProps.getRequestTimeoutMs());
+        // Bound the time send() itself may block (metadata fetch / full buffer) so the
+        // publisher's synchronous wait can be sized to cover the producer's entire budget
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, (int) kafkaProps.getMaxBlockMs());
         props.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, kafkaProps.getRequestSize());
 
         logger.info("Creating Kafka producer factory");

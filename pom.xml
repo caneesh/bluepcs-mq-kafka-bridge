@@ -88,11 +88,24 @@
                 <version>${hadoop.version}</version>
             </dependency>
 
-            <!-- Force aligned Kafka versions -->
+            <!-- Force aligned Kafka versions (classifier'd test jars need their own
+                 entries: an unclassified pin does not manage them) -->
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
                 <version>${kafka.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-clients</artifactId>
+                <version>${kafka.version}</version>
+                <classifier>test</classifier>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka_2.13</artifactId>
+                <version>${kafka.version}</version>
+                <classifier>test</classifier>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
@@ -418,16 +431,13 @@
             </exclusions>
         </dependency>
 
+        <!-- No kafka-clients exclusion here: excluding the artifact also strips the
+             test-classified jar EmbeddedKafkaBroker needs (NoClassDefFound MockTime).
+             dependencyManagement already pins kafka-clients to ${kafka.version}. -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.apache.kafka</groupId>
-                    <artifactId>kafka-clients</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <dependency>

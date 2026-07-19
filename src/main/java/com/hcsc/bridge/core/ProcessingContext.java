@@ -11,10 +11,14 @@ public final class ProcessingContext {
     private final String originalMqMessageId;
     private final Instant receivedAt;
 
+    /**
+     * originalMqMessageId is nullable: JMS permits a null JMSMessageID, and the
+     * orchestrator derives the (required) eventId from the payload in that case.
+     */
     public ProcessingContext(String eventId, String originalMqMessageId, Instant receivedAt) {
         this.eventId = Objects.requireNonNull(eventId, "eventId must not be null");
         this.bridgeMessageId = UUID.randomUUID().toString();
-        this.originalMqMessageId = Objects.requireNonNull(originalMqMessageId, "originalMqMessageId must not be null");
+        this.originalMqMessageId = originalMqMessageId;
         this.receivedAt = Objects.requireNonNull(receivedAt, "receivedAt must not be null");
     }
 
