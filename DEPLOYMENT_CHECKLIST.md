@@ -339,6 +339,33 @@ systemctl list-timers mq-kafka-bridge-watchdog.timer   # verify scheduling
 journalctl -u mq-kafka-bridge-watchdog -f              # watchdog decisions
 ```
 
+### 1b-alt. No sudo? Control-M keep-alive instead of systemd
+
+Installing the units above needs root. If the service account is not in sudoers, file a
+request with the platform team (give them the `deploy/` files — install commands are in each
+file's header), and in the interim run `scripts/bridge-keepalive.sh` as a **Control-M cyclic
+job every ~5 minutes** on the edge-node agent, Run As the service account:
+
+```bash
+./scripts/bridge-keepalive.sh test-env    # or prod
+```
+
+Each run: healthy → no-op; process dead → start it detached (`setsid nohup`, survives the
+agent's cleanup); unhealthy 3 runs in a row → kill + fresh start. Exit 1 only when a start
+attempt fails — route that to an alert. Output markers `KEEPALIVE: STARTED` /
+`KEEPALIVE: START-FAIL` are stable for On-Do text matching.
+
+- [ ] Job is cyclic 24/7 (no time window), on the edge-node agent, Run As the service account
+- [ ] No auto-rerun-with-restart On-Do — the script already remediates
+- [ ] To stop the bridge intentionally: hold the Control-M job FIRST, then kill the process
+      (unlike the systemd watchdog, the script cannot tell "stopped on purpose" from "dead")
+- [ ] DECOMMISSION this job when the systemd units are installed — two supervisors fight
+- [ ] Console log lands in `logs/bridge-console.log`; pid in `bridge.pid` (project root)
+
+This replaces systemd layers 1 and 1b (weaker: up to one cycle of restart latency, no
+start-limit backoff, no start-on-boot until the first cycle after reboot). The read-only
+`monitor.sh` job (section 4 below) stays a separate, alert-only job either way.
+
 ### 1c. Kerberos ticket self-renewal (in-app)
 
 The keytab login happens once at startup; without renewal the TGT lapses at its lifetime
