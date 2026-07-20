@@ -67,9 +67,25 @@ bridge_pid() {
 
 start_bridge() {
     mkdir -p "$(dirname "$APP_LOG")" "$HEAPDUMP_DIR"
+
+    # Same JAAS handling as run-test-env.sh: pass the file as a JVM flag so it
+    # applies before anything in the app initializes Kerberos/JAAS state.
+    local jaas_opt=""
+    if [ -n "${KAFKA_JAAS_CONFIG_PATH:-}" ]; then
+        jaas_opt="-Djava.security.auth.login.config=${KAFKA_JAAS_CONFIG_PATH}"
+        echo "Using JAAS config: ${KAFKA_JAAS_CONFIG_PATH}"
+        if [ ! -r "${KAFKA_JAAS_CONFIG_PATH}" ]; then
+            echo "WARNING: JAAS file is missing or unreadable: ${KAFKA_JAAS_CONFIG_PATH}"
+        fi
+    elif [ -z "${KAFKA_SASL_JAAS_CONFIG:-}" ]; then
+        echo "WARNING: neither KAFKA_JAAS_CONFIG_PATH nor KAFKA_SASL_JAAS_CONFIG is set;"
+        echo "         Kafka SASL/GSSAPI has no login config and publishing/health will fail."
+    fi
+
     # setsid + nohup + full fd redirection so the JVM survives this script
     # (and the Control-M agent's process cleanup) exiting
     setsid nohup java \
+        ${jaas_opt} \
         -XX:+ExitOnOutOfMemoryError \
         -XX:+HeapDumpOnOutOfMemoryError \
         -XX:HeapDumpPath="$HEAPDUMP_DIR" \
