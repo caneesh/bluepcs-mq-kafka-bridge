@@ -347,7 +347,8 @@ file's header), and in the interim run `scripts/bridge-keepalive.sh` as a **Cont
 job every ~5 minutes** on the edge-node agent, Run As the service account:
 
 ```bash
-./scripts/bridge-keepalive.sh test-env    # or prod
+./scripts/bridge-keepalive.sh    # profile from BRIDGE_PROFILE in .env (default test-env);
+                                 # or pass it explicitly: ./scripts/bridge-keepalive.sh prod
 ```
 
 Each run: healthy → no-op; process dead → start it detached (`setsid nohup`, survives the
@@ -399,7 +400,8 @@ remediates (restarts belong to systemd/the watchdog); a non-zero exit turns into
 flows into existing ops alerting.
 
 ```bash
-./scripts/monitor.sh test-env    # or prod
+./scripts/monitor.sh    # profile from BRIDGE_PROFILE in .env (default test-env);
+                        # or pass it explicitly: ./scripts/monitor.sh prod
 ```
 
 | Exit code | Meaning | Suggested Control-M On-Do |

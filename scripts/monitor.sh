@@ -24,16 +24,19 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROFILE="${1:-test-env}"
-JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
-
-# Load .env if present (same convention as the other scripts)
+# Load .env FIRST (same convention as the other scripts): it supplies
+# BRIDGE_PROFILE so the same Control-M job definition works unchanged in
+# test and prod.
 if [ -f "${PROJECT_DIR}/.env" ]; then
     set -a
     # shellcheck disable=SC1091
     source "${PROJECT_DIR}/.env"
     set +a
 fi
+
+# Profile: explicit argument > BRIDGE_PROFILE from .env > test-env (safe default)
+PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
+JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
 
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
     echo "ERROR: JAR file not found. Run 'mvn package' first."

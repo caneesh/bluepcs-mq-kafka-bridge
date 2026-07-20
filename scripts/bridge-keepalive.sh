@@ -31,7 +31,18 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROFILE="${1:-test-env}"
+# Load .env FIRST (same convention as the other scripts): it supplies
+# BRIDGE_PROFILE plus optional tuning (HEALTH_URL, MAX_FAILURES, ...), so the
+# same Control-M job definition works unchanged in test and prod.
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${PROJECT_DIR}/.env"
+    set +a
+fi
+
+# Profile: explicit argument > BRIDGE_PROFILE from .env > test-env (safe default)
+PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health}"
 MAX_FAILURES="${MAX_FAILURES:-3}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
@@ -40,14 +51,6 @@ PID_FILE="${PROJECT_DIR}/bridge.pid"
 STATE_FILE="${PROJECT_DIR}/.keepalive-failures"
 APP_LOG="${PROJECT_DIR}/logs/bridge-console.log"
 HEAPDUMP_DIR="${PROJECT_DIR}/heapdumps"
-
-# Load .env if present (same convention as the other scripts)
-if [ -f "${PROJECT_DIR}/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "${PROJECT_DIR}/.env"
-    set +a
-fi
 
 JAR_PATH=$(ls "${PROJECT_DIR}"/target/mq-kafka-bridge-*.jar 2>/dev/null | head -1)
 if [ -z "${JAR_PATH}" ]; then
