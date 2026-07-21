@@ -146,6 +146,10 @@ startup:
 
 ## Consuming the audit stream
 
+A complete reference implementation of a Kafka→Hive audit consumer (Spark DStream job,
+matching the existing cluster consumer's conventions, with Hive DDL and spark-submit
+wiring) lives at [consumer/AuditHiveConsumer.scala](consumer/AuditHiveConsumer.scala).
+
 - **Join key:** `eventId` → the Kafka notification (`eventId` field / message key) and the
   HDFS payload (`<landing>/<eventId>.json`, quarantines at `<landing>/errors/<eventId>.json`).
 - **Dedup:** treat (`eventId`, `eventType`) as repeatable; use `bridgeEventId` to group one
