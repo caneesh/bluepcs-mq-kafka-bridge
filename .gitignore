@@ -12,3 +12,4 @@ target/
 .classpath
 .factorypath
 .DS_Store
+audit-hive-consumer/dependency-reduced-pom.xml
