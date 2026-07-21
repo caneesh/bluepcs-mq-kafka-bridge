@@ -49,9 +49,36 @@ BridgeOrchestrator.process()
 PROCESSING_COMPLETED, ack
 ```
 
-A fully successful message therefore emits **six** events: `MESSAGE_RECEIVED`,
+A fully successful message therefore emits **six** bridge events: `MESSAGE_RECEIVED`,
 `MESSAGE_PARSED`, `ENRICHMENT_COMPLETED`, `HDFS_WRITE_COMPLETED`,
 `KAFKA_PUBLISH_COMPLETED`, `PROCESSING_COMPLETED`.
+
+### Consumer stages (end-to-end trail)
+
+The bridge's `PROCESSING_COMPLETED` only means "handed to Kafka" — it says nothing about
+the downstream DStream job actually loading the data into the Hive product tables. The
+consumer job closes the loop by emitting its own events to the **same audit topic**, keyed
+by the same `eventId` (see `docs/consumer/ConsumerAuditEmitter.scala`):
+
+```
+BluepcsPMMPLusConsumer (per micro-batch, claim-check messages only)
+   │
+   ├─ resolve hdfsPath ── ok ──► CLAIM_CHECK_RESOLVED
+   │        └─ file missing ──► CLAIM_CHECK_SKIPPED   (already-processed duplicate)
+   ├─ BluepcsPMMPLusProcessor loads batch to Hive product tables
+   │        ├─ ok (before offset commit) ──► HIVE_LOAD_COMPLETED  per eventId
+   │        └─ fail ────────────────────► HIVE_LOAD_FAILED     per eventId, batch retries
+```
+
+A fully successful end-to-end message therefore shows **eight** events for one `eventId`:
+the six bridge events plus `CLAIM_CHECK_RESOLVED` and `HIVE_LOAD_COMPLETED`.
+`HIVE_LOAD_COMPLETED` — not `PROCESSING_COMPLETED` — is the true terminal state of the
+pipeline. Legacy Talend inline messages carry no `eventId` and emit no consumer events.
+
+Consumer-emitted events differ from bridge events in these fields: `bridgeEventId` is null,
+`transactionId` is null, and `metadata` carries `kafkaPartition`/`kafkaOffset`/`batchTime`.
+The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
+`scripts/audit-gap-check.sh` (Control-M, see DEPLOYMENT_CHECKLIST.md).
 
 ## Event catalog
 
@@ -71,6 +98,10 @@ A fully successful message therefore emits **six** events: `MESSAGE_RECEIVED`,
 | `MESSAGE_QUARANTINED` | `BridgeOrchestrator` | Unparseable payload durably preserved in the HDFS error dir; message acked |
 | `MESSAGE_DISCARDED` | `MqMessageListener` | Poison guard exceeded (`bridge.mq.max-delivery-attempts`) **or** unsupported (non-text) message type; message acked |
 | `RECOVERY_STARTED` / `RECOVERY_FAILED` | `RecoveryService` | Only when `bridge.recovery.enabled=true` (off by default; ledger-based) |
+| `CLAIM_CHECK_RESOLVED` | DStream consumer | HDFS payload fetched and checksum-verified |
+| `CLAIM_CHECK_SKIPPED` | DStream consumer | HDFS file missing → treated as already-processed duplicate |
+| `HIVE_LOAD_COMPLETED` | DStream consumer | Batch containing this eventId loaded into the Hive product tables (emitted before offset commit) |
+| `HIVE_LOAD_FAILED` | DStream consumer | Batch load failed for this eventId's batch; batch will retry |
 | `DUPLICATE_DETECTED`, `RECOVERY_COMPLETED`, `RECONCILIATION_*` | — | **Reserved, never emitted today.** Consumers must tolerate them but should not expect them. |
 
 ## Event schema
@@ -146,18 +177,23 @@ startup:
 
 ## Consuming the audit stream
 
-A complete reference implementation of a Kafka→Hive audit consumer (Spark DStream job,
-matching the existing cluster consumer's conventions, with Hive DDL and spark-submit
-wiring) lives at [consumer/AuditHiveConsumer.scala](consumer/AuditHiveConsumer.scala).
+The Kafka→Hive audit consumer is a buildable subproject at
+[`audit-hive-consumer/`](../audit-hive-consumer/) (Spark DStream job, Hive DDL, README).
+The DStream job's consumer-stage instrumentation is the drop-in reference
+[consumer/ConsumerAuditEmitter.scala](consumer/ConsumerAuditEmitter.scala).
 
 - **Join key:** `eventId` → the Kafka notification (`eventId` field / message key) and the
   HDFS payload (`<landing>/<eventId>.json`, quarantines at `<landing>/errors/<eventId>.json`).
 - **Dedup:** treat (`eventId`, `eventType`) as repeatable; use `bridgeEventId` to group one
   processing attempt, `auditEventId` as the unique row key.
-- **Terminal states per message:** `PROCESSING_COMPLETED` (success), `MESSAGE_QUARANTINED`
-  (permanent parse failure, payload preserved), `MESSAGE_DISCARDED` (poison/unsupported —
-  payload preserved **only** in the application log line for poison discards), or no
-  terminal event yet (still failing/redelivering — look for the latest `*_FAILED`).
+- **Terminal states per message:** `HIVE_LOAD_COMPLETED` (end-to-end success),
+  `PROCESSING_COMPLETED` (bridge success, consumer stage pending or not yet instrumented),
+  `MESSAGE_QUARANTINED` (permanent parse failure, payload preserved), `MESSAGE_DISCARDED`
+  (poison/unsupported — payload preserved **only** in the application log line for poison
+  discards), or no terminal event yet (still failing/redelivering — look for the latest
+  `*_FAILED`).
+- **ACLs:** three principals touch the audit topic — the bridge (produce), the DStream
+  consumer job (produce, for its stage events), and the audit Hive consumer group (consume).
 - **Monitoring signals:** silence on the audit topic during expected-traffic hours means
   consumption stopped (see the "Running 24/7" monitoring table in
   `DEPLOYMENT_CHECKLIST.md`); a growing rate of `*_FAILED` events for a single `eventId`

@@ -431,6 +431,34 @@ box: the listener-enabled business state and the landing-directory backlog (end-
 consumer stall). If a Dynatrace custom metric/synthetic is preferred later, the same exit-code
 semantics can feed it.
 
+### 5. Control-M end-to-end audit gap check
+
+Once the audit pipeline is live (audit topic + `audit-hive-consumer/` job + instrumented
+DStream consumer, see `docs/AUDIT.md`), `scripts/audit-gap-check.sh` closes the monitoring
+loop: it queries the Hive audit table for messages the bridge finished
+(`PROCESSING_COMPLETED`) that never reached the Hive product tables
+(`HIVE_LOAD_COMPLETED`) within a threshold. Schedule as a **cyclic Control-M job, hourly**,
+on the edge-node agent (needs Hive CLI/beeline access — set `HIVE_CMD` in `.env`).
+
+```bash
+./scripts/audit-gap-check.sh            # config from .env; --dry-run prints the query
+```
+
+| Exit code | Meaning | Suggested Control-M On-Do |
+|-----------|---------|---------------------------|
+| 0 | Every bridge-completed message reached Hive | — |
+| 1 | Gaps found (eventIds in sysout) | Alert the consumer-job owner — the bridge already did its part |
+| 2 | Query failed (Hive/Kerberos/connectivity) | Investigate the edge node / this job |
+
+Tuning (in `.env`): `AUDIT_GAP_THRESHOLD_MINUTES` (default 120 — must comfortably exceed
+the audit consumer's 300s batch interval PLUS the DStream job's cadence, or in-flight
+messages false-alarm), `AUDIT_GAP_LOOKBACK_DAYS` (default 2), `AUDIT_GAP_TABLE`.
+
+- [ ] Prerequisite: all three audit pieces deployed (topic+ACLs, audit-hive-consumer
+      running, DStream job instrumented with `ConsumerAuditEmitter`) — before that,
+      exit 1 is meaningless (nothing emits `HIVE_LOAD_COMPLETED` yet)
+- [ ] No auto-rerun/restart On-Do — read-only check; gaps need a human decision
+
 ---
 
 ## Runtime Monitoring

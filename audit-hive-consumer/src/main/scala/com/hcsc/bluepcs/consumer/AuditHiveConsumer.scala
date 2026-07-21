@@ -24,26 +24,15 @@ package com.hcsc.bluepcs.consumer
 //     table never needs a schema change when the bridge adds a metadata key.
 //
 // -----------------------------------------------------------------------------
-// Hive DDL (create once, before first run; adjust db/table/location to env):
+// Hive DDL: hive/bridge_audit_event.ddl at this project's root (source of
+// truth — create once per environment before first run). Column order there
+// MUST match the AuditRow case class below.
 //
-//   CREATE TABLE IF NOT EXISTS bluepcs.bridge_audit_event (
-//     audit_event_id        STRING,   -- unique per event: dedupe key
-//     event_id              STRING,   -- joins notification + HDFS payload file
-//     bridge_event_id       STRING,   -- groups one processing attempt
-//     original_mq_message_id STRING,
-//     transaction_id        STRING,
-//     event_type            STRING,   -- MESSAGE_RECEIVED, ..., null if unparseable
-//     description           STRING,
-//     error_message         STRING,
-//     metadata_json         STRING,   -- JSON map; get_json_object(metadata_json,'$.deliveryCount')
-//     event_timestamp       STRING,   -- ISO-8601 UTC as emitted by the bridge
-//     kafka_partition       INT,      -- lineage / debugging
-//     kafka_offset          BIGINT,
-//     raw_value             STRING    -- set ONLY when the value failed to parse
-//   )
-//   PARTITIONED BY (event_dt STRING)  -- yyyy-MM-dd from event_timestamp (UTC);
-//                                     -- ingestion date when unparseable
-//   STORED AS ORC;
+// The topic carries BRIDGE events (MESSAGE_RECEIVED ... PROCESSING_COMPLETED)
+// and CONSUMER-STAGE events (CLAIM_CHECK_RESOLVED/SKIPPED, HIVE_LOAD_COMPLETED/
+// FAILED — emitted by the instrumented DStream job; docs/AUDIT.md). Both flow
+// through this job identically: event_type lands as a plain string, so new
+// event types never require changes here.
 //
 // -----------------------------------------------------------------------------
 // spark-submit (copy the Kafka JAAS/keytab confs from the existing consumer's

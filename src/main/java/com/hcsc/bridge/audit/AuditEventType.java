@@ -14,6 +14,14 @@ public enum AuditEventType {
     PROCESSING_FAILED,
     MESSAGE_DISCARDED,
     MESSAGE_QUARANTINED,
+    // Consumer-stage events: emitted by the downstream DStream job (via
+    // ConsumerAuditEmitter, see docs/consumer/), never by the bridge itself.
+    // Declared here so this enum stays the single source of truth for the
+    // audit contract on the topic.
+    CLAIM_CHECK_RESOLVED,
+    CLAIM_CHECK_SKIPPED,
+    HIVE_LOAD_COMPLETED,
+    HIVE_LOAD_FAILED,
     DUPLICATE_DETECTED,
     RECOVERY_STARTED,
     RECOVERY_COMPLETED,
