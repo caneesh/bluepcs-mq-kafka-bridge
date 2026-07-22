@@ -435,29 +435,40 @@ semantics can feed it.
 
 Once the audit pipeline is live (audit topic + `audit-hive-consumer/` job + instrumented
 DStream consumer, see `docs/AUDIT.md`), `scripts/audit-gap-check.sh` closes the monitoring
-loop: it queries the Hive audit table for messages the bridge finished
-(`PROCESSING_COMPLETED`) that never reached the Hive product tables
-(`HIVE_LOAD_COMPLETED`) within a threshold. Schedule as a **cyclic Control-M job, hourly**,
-on the edge-node agent (needs Hive CLI/beeline access — set `HIVE_CMD` in `.env`).
+loop with **three checks** against the Hive audit table: load gaps (bridge finished but no
+`HIVE_LOAD_COMPLETED` within the threshold, with redelivery-after-archive
+`CLAIM_CHECK_SKIPPED` cases reported as a WARN bucket instead of a gap), stuck messages
+(consumed but never terminal — a redelivery loop), and quarantined payloads awaiting manual
+review. Schedule as a **cyclic Control-M job, hourly**, on the edge-node agent (needs Hive
+CLI/beeline access — set `HIVE_CMD` in `.env`).
 
 ```bash
-./scripts/audit-gap-check.sh            # config from .env; --dry-run prints the query
+./scripts/audit-gap-check.sh            # config from .env; --dry-run prints the queries
 ```
 
 | Exit code | Meaning | Suggested Control-M On-Do |
 |-----------|---------|---------------------------|
-| 0 | Every bridge-completed message reached Hive | — |
-| 1 | Gaps found (eventIds in sysout) | Alert the consumer-job owner — the bridge already did its part |
-| 2 | Query failed (Hive/Kerberos/connectivity) | Investigate the edge node / this job |
+| 0 | All checks passed | — |
+| 1 | Load gaps (eventIds in sysout) | Alert the consumer-job owner — the bridge already did its part |
+| 2 | Stuck messages (no terminal state) | Alert the bridge owner — look for `*_FAILED` events per eventId |
+| 3 | Quarantined payloads pending review | Review-queue task, not a page |
+| 4 | Query failed (Hive/Kerberos/connectivity) | Investigate the edge node / this job |
+
+Highest severity wins: 4 > 2 > 1 > 3.
 
 Tuning (in `.env`): `AUDIT_GAP_THRESHOLD_MINUTES` (default 120 — must comfortably exceed
 the audit consumer's 300s batch interval PLUS the DStream job's cadence, or in-flight
-messages false-alarm), `AUDIT_GAP_LOOKBACK_DAYS` (default 2), `AUDIT_GAP_TABLE`.
+messages false-alarm), `AUDIT_GAP_GRACE_MINUTES` (default 30 — stuck-message grace),
+`AUDIT_GAP_LOOKBACK_DAYS` (default 2), `AUDIT_GAP_RESULT_LIMIT` (default 50),
+`AUDIT_GAP_TABLE`.
 
 - [ ] Prerequisite: all three audit pieces deployed (topic+ACLs, audit-hive-consumer
       running, DStream job instrumented with `ConsumerAuditEmitter`) — before that,
-      exit 1 is meaningless (nothing emits `HIVE_LOAD_COMPLETED` yet)
+      exit 1 is meaningless (nothing emits `HIVE_LOAD_COMPLETED` yet). The stuck and
+      quarantine checks work as soon as the audit topic + Hive consumer are live.
 - [ ] No auto-rerun/restart On-Do — read-only check; gaps need a human decision
+- [ ] Known limitation: a real gap stops alerting once its rows age past
+      `AUDIT_GAP_LOOKBACK_DAYS` — treat every exit-1 seriously while it fires
 
 ---
 

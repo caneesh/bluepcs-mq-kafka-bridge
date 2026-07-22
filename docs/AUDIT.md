@@ -119,7 +119,7 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `description` | Human-readable stage summary (e.g. HDFS path, Kafka offset) | usually set |
 | `errorMessage` | Failure detail on `*_FAILED` / discard / quarantine events | null on success events |
 | `metadata` | Map of extras — used by discard events (`deliveryCount`, `maxDeliveryAttempts`, `sourceQueue`, `correlationId`, `messageClass`) | empty map when unused |
-| `timestamp` | Event creation time (UTC instant) | never null |
+| `timestamp` | Event creation time, serialized as an **ISO-8601 UTC string** (e.g. `2026-07-21T12:34:56.789Z`) — never an epoch number. The Hive consumer's `event_dt` partitioning and the gap check's cutoff comparison depend on this; the wire format is pinned by `KafkaAuditPublisherTest`/`LoggingAuditPublisherTest`. | never null |
 
 ## Publishers
 

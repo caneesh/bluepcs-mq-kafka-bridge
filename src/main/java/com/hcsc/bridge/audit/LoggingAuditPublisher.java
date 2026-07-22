@@ -1,6 +1,7 @@
 package com.hcsc.bridge.audit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,9 @@ public class LoggingAuditPublisher implements AuditPublisher {
     public LoggingAuditPublisher() {
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
+        // Same wire contract as KafkaAuditPublisher: timestamp as ISO-8601 STRING, so the
+        // log fallback's lines stay format-identical to what lands on the audit topic.
+        this.objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Override

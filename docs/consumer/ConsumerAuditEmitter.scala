@@ -47,6 +47,13 @@ object ConsumerAuditEmitter {
   @volatile private var producer: KafkaProducer[String, String] = _
   @volatile private var auditTopic: String = _
 
+  // Outage cooldown: a synchronous send failure (e.g. metadata timeout after
+  // max.block.ms with brokers down) suppresses further emits for this long.
+  // Without it EVERY send blocks the full max.block.ms during an audit-Kafka
+  // outage — a 500-message batch would stall the driver ~42 minutes.
+  private val SuppressMillis = 60000L
+  @volatile private var suppressUntil: Long = 0L
+
   /**
    * Initialize once at job startup (driver), BEFORE the streaming context
    * starts. kafkaParams: reuse the job's existing consumer security settings
@@ -79,7 +86,8 @@ object ConsumerAuditEmitter {
   /** Call from a shutdown hook / StreamingContext stop; safe to skip. */
   def close(): Unit = synchronized {
     if (producer != null) {
-      try producer.close() catch { case _: Exception => () }
+      // Bounded: an unbounded close() in a shutdown hook hangs JVM exit when Kafka is down
+      try producer.close(java.time.Duration.ofSeconds(5)) catch { case _: Exception => () }
       producer = null
     }
   }
@@ -102,11 +110,16 @@ object ConsumerAuditEmitter {
 
   /**
    * Best-effort fire-and-forget. Never throws. The send callback only logs;
-   * no state depends on audit delivery.
+   * no state depends on audit delivery. A SYNCHRONOUS send failure (broker
+   * unreachable -> metadata timeout after max.block.ms) trips the cooldown so
+   * the remaining events of the batch are skipped instead of each blocking
+   * the driver for the full max.block.ms. Async callback failures do not trip
+   * it — they never blocked the driver.
    */
   private def emit(eventType: String, eventId: String, description: String,
                    errorMessage: String, partition: Int, offset: Long, batchTime: Long): Unit =
     try {
+      if (System.currentTimeMillis() < suppressUntil) return
       require(producer != null, "ConsumerAuditEmitter.init(...) not called")
       val json = buildJson(eventType, eventId, description, errorMessage, partition, offset, batchTime)
       // Explicit Callback (not a lambda): Scala 2.11 has no SAM conversion
@@ -118,20 +131,25 @@ object ConsumerAuditEmitter {
         })
     } catch {
       case e: Exception =>
-        logger.warn("@@@ AUDIT EMIT FAILED: {} {} - {}", eventType, eventId, e.getMessage)
+        suppressUntil = System.currentTimeMillis() + SuppressMillis
+        logger.warn("@@@ AUDIT EMIT FAILED, suppressing emits for {}s: {} {} - {}",
+          Long.box(SuppressMillis / 1000), eventType, eventId, e.getMessage)
     }
 
   /**
    * Hand-built JSON (no Jackson dependency on the emit path; field set matches
-   * com.hcsc.bridge.audit.AuditEvent). eventId is a SHA-256 hex string and
-   * eventType/description are controlled values — only errorMessage needs
-   * escaping.
+   * com.hcsc.bridge.audit.AuditEvent). eventType/description are controlled
+   * internal values, but eventId and errorMessage are MESSAGE-DERIVED on some
+   * paths (CLAIM_CHECK_SKIPPED re-parses eventId from the raw notification;
+   * anyone who can write to the product topic controls it) — both are escaped
+   * so a crafted value cannot inject fields (e.g. a forged HIVE_LOAD_COMPLETED
+   * that would blind the gap check) or corrupt the JSON.
    */
   private def buildJson(eventType: String, eventId: String, description: String,
                         errorMessage: String, partition: Int, offset: Long, batchTime: Long): String = {
     val err = if (errorMessage == null) "null" else "\"" + escape(errorMessage) + "\""
     s"""{"auditEventId":"${UUID.randomUUID()}",""" +
-      s""""eventId":"$eventId",""" +
+      s""""eventId":"${escape(eventId)}",""" +
       s""""bridgeEventId":null,""" +
       s""""originalMqMessageId":null,""" +
       s""""messageId":null,""" +
@@ -179,14 +197,16 @@ object ConsumerAuditEmitter {
 //          val fs = FileSystem.get(new Configuration())
 //          val mapper = new ObjectMapper()
 //          it.map { case (partition, offset, raw) =>
-//            try {
-//              BridgeMessageResolver.resolveOrSkip(raw, fs, mapper) match {
-//                case Some(r) => (partition, offset, r.json, r.eventId, "resolved", r.isClaimCheck)
-//                case None    =>
-//                  // eventId for the skip event: re-parse the claim-check envelope
-//                  val id = new ObjectMapper().readTree(raw).path("eventId").asText(null)
-//                  (partition, offset, null, Option(id), "skipped", true)
-//              }
+//            BridgeMessageResolver.resolveOrSkip(raw, fs, mapper) match {
+//              case Some(r) => (partition, offset, r.json, r.eventId, "resolved", r.isClaimCheck)
+//              case None    =>
+//                // eventId for the skip event: re-parse the claim-check envelope
+//                // (reuse the partition's mapper; guard the parse — the raw value is
+//                // untrusted and a throw here would fail the whole batch)
+//                val id =
+//                  try mapper.readTree(raw).path("eventId").asText(null)
+//                  catch { case _: Exception => null }
+//                (partition, offset, null, Option(id), "skipped", true)
 //            }
 //          }
 //        }.persist()
@@ -234,7 +254,11 @@ object ConsumerAuditEmitter {
 //     dedupe downstream on audit_event_id / latest event_timestamp.
 //   - Legacy inline messages flow through processRDD untouched and emit no
 //     audit events (they carry no eventId).
-//   - If the audit topic is unreachable the job logs @@@ AUDIT EMIT FAILED and
-//     processes at full speed: max.block.ms=5000 bounds the one-time connect
-//     stall; subsequent sends fail fast from the producer's error state.
+//   - If the audit topic is unreachable: the FIRST send of a batch blocks up to
+//     max.block.ms (5s), fails synchronously, and trips a 60s emit-suppression
+//     cooldown — the rest of the batch's events are skipped, not blocked. (The
+//     producer has NO latched error state of its own: without the cooldown,
+//     every send would block the full max.block.ms.) Batches process at full
+//     speed; suppressed audit events are lost, which is acceptable best-effort
+//     behavior and logged via @@@ AUDIT EMIT FAILED.
 // =============================================================================

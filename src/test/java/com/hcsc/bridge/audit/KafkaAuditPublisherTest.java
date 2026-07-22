@@ -1,5 +1,7 @@
 package com.hcsc.bridge.audit;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -56,6 +58,29 @@ class KafkaAuditPublisherTest {
             assertThat(valueCaptor.getValue()).contains("auditEventId");
             assertThat(valueCaptor.getValue()).contains("eventId");
             assertThat(valueCaptor.getValue()).contains("bridgeEventId");
+        }
+
+        @Test
+        @DisplayName("wire contract: timestamp is an ISO-8601 STRING, never an epoch number")
+        void shouldSerializeTimestampAsIsoString() throws Exception {
+            SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+            future.set(null);
+            when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenReturn(future);
+
+            publisher.publish(createTestEvent("event-id-ts", "bridge-ts", "MSG-TS", AuditEventType.MESSAGE_RECEIVED));
+
+            ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+            verify(kafkaTemplate).send(anyString(), anyString(), valueCaptor.capture());
+
+            // The Hive audit consumer and audit-gap-check.sh both depend on this: Instant.parse
+            // must work, and lexicographic comparison must be chronologically correct. A
+            // hand-built ObjectMapper defaults to epoch-seconds numbers — this test pins the fix.
+            JsonNode json = new ObjectMapper().readTree(valueCaptor.getValue());
+            assertThat(json.get("timestamp").isTextual())
+                    .as("timestamp must serialize as a JSON string, not a number")
+                    .isTrue();
+            Instant parsed = Instant.parse(json.get("timestamp").asText());
+            assertThat(parsed).isBeforeOrEqualTo(Instant.now());
         }
 
         @Test

@@ -1,118 +1,102 @@
-# Implementation Plan: End-to-End Reconciliation (consumed → landed → loaded)
+# Reconciliation Strategy: confirming consumed → landed → loaded
 
-Status: **planned, not yet implemented.** This document is the agreed design for the
-reconciliation job; implementation will follow it.
+Status: **checks 1–3 implemented** (`scripts/audit-gap-check.sh`); check 4 (target-table)
+is a planned, configuration-activated extension.
 
-## Context
+## Goal
 
-Goal: confirm that every message the bridge consumed from MQ (a) reached a proper terminal
-outcome, (b) landed in HDFS, and (c) was picked up by the downstream consumer — with an
-optional check that rows appear in the target tables.
+Confirm that every message the bridge consumes from MQ (a) reaches a proper terminal
+outcome, (b) lands in HDFS, and (c) is actually loaded by the downstream consumer — with an
+optional check that rows appear in the target product tables.
 
-Evidence sources: the audit Hive table (`bluepcs.bridge_audit_event`, fed by
-`docs/consumer/AuditHiveConsumer.scala`) and the HDFS landing-directory file lifecycle.
+## Evidence model (three layers, strongest first)
 
-Key design constraint: the retention sweep (`scripts/hdfs-landing-cleanup.sh`) archives
-landing files **by age** (`LANDING_RETENTION_DAYS`, default 7), so "file in archive" is
-ambiguous evidence — it may mean consumer-processed *or* merely aged out. The reliable
-"loaded by consumer" signal is *absent from the landing dir while younger than the retention
-window* (only the consumer moves young files). The reconciliation must therefore run daily,
-inside that window.
+1. **Design guarantee (prevention).** The bridge acknowledges an MQ message only after one
+   of three terminal outcomes: full success (`PROCESSING_COMPLETED`), durable quarantine
+   (`MESSAGE_QUARANTINED`), or audited discard (`MESSAGE_DISCARDED`). Any failure → no ack →
+   MQ redelivers. "Consumed" therefore *implies* "processed or preserved" by construction.
+2. **End-to-end audit trail (detection).** The bridge and the DStream consumer emit to the
+   same audit topic keyed by the same `eventId` (see `docs/AUDIT.md`, "Consumer stages");
+   the `audit-hive-consumer/` job lands everything in `bluepcs.bridge_audit_event`.
+   `HIVE_LOAD_COMPLETED` — not `PROCESSING_COMPLETED` — is the true terminal state.
+3. **Independent cross-checks (corroboration).** Audit is best-effort, so counts should be
+   corroborated against sources that cannot lie: MQ dequeue counts, HDFS file lifecycle,
+   and (eventually) target-table rows.
 
-## Deliverable 1 — `scripts/audit-reconciliation.sh`
+## The checks
 
-Read-only Control-M job following the repo's script conventions (`set -u`, `.env` sourcing,
-optional kinit via `HDFS_KERBEROS_PRINCIPAL`/`HDFS_KERBEROS_KEYTAB`, `--dry-run` flag,
-summary block for sysout capture). It never remediates.
+### Implemented — `scripts/audit-gap-check.sh` (hourly Control-M)
 
-### Configuration (env / `.env`; defaults in brackets)
+| # | Check | Question answered | Exit code |
+|---|---|---|---|
+| 1 | **Load gaps** — `PROCESSING_COMPLETED` with no `HIVE_LOAD_COMPLETED` within `AUDIT_GAP_THRESHOLD_MINUTES` | Did everything the bridge landed get loaded by the consumer? | 1 |
+| — | WARN bucket: same pattern but with `CLAIM_CHECK_SKIPPED` | Redelivery after the consumer archived the file — expected, review-only | (warn) |
+| 2 | **Stuck** — `MESSAGE_RECEIVED` but no terminal state past `AUDIT_GAP_GRACE_MINUTES` | Is anything looping through `*_FAILED` redeliveries? | 2 |
+| 3 | **Quarantined** — `MESSAGE_QUARANTINED` in the lookback | What awaits manual review in HDFS `errors/`? | 3 (info) |
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `BEELINE_CMD` | (required) | e.g. `beeline -u '<jdbc-url>' --silent=true --outputformat=tsv2` |
-| `AUDIT_HIVE_TABLE_FQN` | `bluepcs.bridge_audit_event` | Audit table |
-| `HDFS_BASE_PATH` | (required) | Landing dir — same variable the run scripts use |
-| `RECON_WINDOW_DAYS` | 1 | Reconcile events with `event_dt` in the last N days |
-| `RECON_GRACE_MINUTES` | 30 | Ignore messages received more recently than this |
-| `RECON_CONSUMER_LAG_MINUTES` | 60 | Landing file older than this ⇒ consumer stalled |
-| `LANDING_RETENTION_DAYS` | 7 | MUST match `hdfs-landing-cleanup.sh` |
-| `CONSUMER_ERROR_PATH` | (optional) | Consumer's error dir, when known |
-| `RECON_TARGET_TABLE` | (optional) | Enables the table-level check (Check D) |
-| `RECON_TARGET_DT_COLUMN` | (with table) | The table's date/partition column |
-| `RECON_TARGET_KEY_COLUMN` | (optional) | Enables row-level anti-join on `transaction_id` |
-| `RECON_TABLE_TOLERANCE` | 0 | Allowed count difference in count mode |
+The event-pair mechanism (check 1) is the primary loaded-confirmation: it is direct
+testimony from the consumer and sidesteps the landing-directory age-archival ambiguity
+(`hdfs-landing-cleanup.sh` moves files to archive by age, so physical location alone cannot
+prove consumer processing beyond `LANDING_RETENTION_DAYS`).
 
-### Checks (all always run; the report shows every outcome)
+### Planned — check 4: target-table verification (configuration-activated)
 
-**A. Terminal state (audit only).** Beeline query: event_ids in the window with
-`MESSAGE_RECEIVED` but none of `PROCESSING_COMPLETED | MESSAGE_QUARANTINED |
-MESSAGE_DISCARDED`, and last activity older than the grace period. Non-empty ⇒ stuck or
-looping messages (report event_id, last event type, last timestamp).
+Confirms rows actually exist in the product tables — the one thing `HIVE_LOAD_COMPLETED`
+(batch-granularity testimony) cannot prove. Two modes, activated by config only:
 
-**B. Landed → loaded (audit + HDFS).** For each completed event_id in the window, classify
-`${HDFS_BASE_PATH}/<eventId>.json` (one `hdfs dfs -ls` per directory, not per file):
+- **Count mode** (`RECON_TARGET_TABLE` + `RECON_TARGET_DT_COLUMN`): rows in the window vs
+  loaded-message count; mismatch beyond a tolerance fails.
+- **Row mode** (+ `RECON_TARGET_KEY_COLUMN`): anti-join audit-completed `transaction_id`s
+  against the table's key column; lists specific missing rows. Requires the target table to
+  carry a lineage key — adding `transaction_id` to the curated table is the recommended
+  durable fix.
 
-| Observation | Classification | Outcome |
-|---|---|---|
-| In landing, mtime older than lag threshold | NOT_LOADED (consumer stalled) | failure |
-| In landing, younger | PENDING | informational |
-| In `CONSUMER_ERROR_PATH` (when configured) | CONSUMER_FAILED — listed for replay | failure |
-| Absent, event age < `LANDING_RETENTION_DAYS` | LOADED (only the consumer moves young files) | success |
-| Absent, older than retention | AMBIGUOUS (consumer or age-sweep) | labeled, never a failure |
+### Demoted — HDFS file-lifecycle classification (optional cross-check)
 
-**C. Quarantine visibility.** List `MESSAGE_QUARANTINED` event_ids in the window —
-bridge-side permanent failures awaiting manual review. Informational; never fails the run.
+An earlier design classified each completed `<eventId>.json` by directory location
+(landing/archive/consumer-error). Superseded as the primary signal by the event-pair check,
+which is unambiguous; the file-lifecycle check remains useful as an audit-independent
+cross-check (it catches audit-stream loss) and for uninstrumented legacy traffic. Implement
+only if audit-loss becomes a real concern; run it inside `LANDING_RETENTION_DAYS`.
 
-**D. Table-level (optional; prints SKIPPED until `RECON_TARGET_TABLE` is set).**
-- Count mode (table only): rows in the window's `RECON_TARGET_DT_COLUMN` vs LOADED count
-  from Check B; mismatch beyond `RECON_TABLE_TOLERANCE` ⇒ failure.
-- Row mode (key column also set): anti-join audit-completed `transaction_id`s against the
-  table's key column; lists the specific missing rows.
+## Known limits (accepted, documented)
 
-### Exit codes (Control-M On-Do routing; highest severity wins: 5 > 1 > 3 > 2 > 4)
+- **Audit is best-effort**: a lost `HIVE_LOAD_COMPLETED` event false-alarms check 1; a lost
+  `PROCESSING_COMPLETED` false-passes it. After incidents, corroborate with MQ dequeue
+  counts (`MSGDEQD`) vs distinct `MESSAGE_RECEIVED` event_ids.
+- **Gap amnesia**: a real gap stops alerting once its rows age past
+  `AUDIT_GAP_LOOKBACK_DAYS`; treat every exit-1 seriously while it fires.
+- Legacy Talend inline messages carry no `eventId` and are invisible to all audit-based
+  checks; they phase out with Talend.
 
-| Code | Meaning |
-|---|---|
-| 0 | Fully reconciled |
-| 1 | Unterminated messages (stuck/looping) |
-| 2 | Landing backlog (consumer not picking up) |
-| 3 | Consumer failures (files in error dir) |
-| 4 | Table check mismatch |
-| 5 | Could not evaluate (beeline/HDFS access failed) |
+## Useful ad-hoc queries
 
-## Deliverable 2 — `docs/RECONCILIATION.md`
+Dedupe view (create once; all queries below should target it):
 
-- The three-layer evidence model and what each layer catches: ack-ordering design guarantee
-  (a message cannot leave MQ without a terminal outcome) → audit terminal states → physical
-  file lifecycle → optional table rows.
-- Dedupe view DDL (`ROW_NUMBER() OVER (PARTITION BY audit_event_id ...) = 1`) and
-  copy-pasteable versions of every query the script runs (incl. daily funnel counts and the
-  stuck-loop query).
-- The archive ambiguity: why reconciliation must run daily / within `LANDING_RETENTION_DAYS`.
-- Prerequisites: audit topic provisioned, `AuditHiveConsumer` running (the script's data
-  source), beeline/JDBC access from the edge node, read ACL on the target table for Check D.
-- Control-M setup: daily job after the audit consumer's last batch; exit-code table;
-  no-remediation rule (consistent with `monitor.sh`).
-- Limitations: audit is best-effort (cross-check MQ dequeue counts after incidents); Check D
-  is count-level unless the target table carries a lineage key — recommend adding
-  `transaction_id` to the curated table as the durable row-level fix.
+```sql
+CREATE VIEW IF NOT EXISTS bluepcs.bridge_audit_event_deduped AS
+SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER (
+      PARTITION BY COALESCE(audit_event_id, CONCAT(kafka_partition, '-', kafka_offset))
+      ORDER BY event_timestamp) rn
+  FROM bluepcs.bridge_audit_event) t
+WHERE rn = 1;
+-- COALESCE matters: raw-fallback rows have NULL audit_event_id and would otherwise
+-- collapse into a single row.
+```
 
-## Deliverable 3 — `DEPLOYMENT_CHECKLIST.md` addition
+Daily funnel:
 
-Extend the Control-M/monitoring section: daily reconciliation job, exit-code routing table,
-pointer to `docs/RECONCILIATION.md`.
+```sql
+SELECT event_dt,
+       count(DISTINCT CASE WHEN event_type='MESSAGE_RECEIVED'     THEN event_id END) AS received,
+       count(DISTINCT CASE WHEN event_type='PROCESSING_COMPLETED' THEN event_id END) AS bridge_done,
+       count(DISTINCT CASE WHEN event_type='HIVE_LOAD_COMPLETED'  THEN event_id END) AS loaded,
+       count(DISTINCT CASE WHEN event_type='MESSAGE_QUARANTINED'  THEN event_id END) AS quarantined
+FROM bluepcs.bridge_audit_event_deduped
+WHERE event_dt >= date_sub(current_date, 7)
+GROUP BY event_dt ORDER BY event_dt;
+```
 
-## Verification
-
-- `bash -n` + shellcheck on the script.
-- `--dry-run` locally: prints queries/commands, exercises env parsing and the summary block
-  without cluster access.
-- Live validation on the edge node against test-env once the audit consumer is running.
-- No Java changes — the Maven test suite is unaffected.
-
-## Dependencies / rollout order
-
-1. Audit topic provisioned + `AuditHiveConsumer` deployed (data source for Checks A–C).
-2. Script + docs land; Control-M daily job created — Checks A–C active immediately.
-3. Target-table details (`RECON_TARGET_TABLE` etc.) filled in later — Check D activates via
-   configuration only, no code change.
+Full lifecycle of one message: filter the deduped view by `event_id` (or `transaction_id`)
+and order by `event_timestamp` — eight events end to end on the happy path.

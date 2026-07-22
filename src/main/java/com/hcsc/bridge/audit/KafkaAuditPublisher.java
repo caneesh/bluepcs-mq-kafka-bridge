@@ -2,6 +2,7 @@ package com.hcsc.bridge.audit;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,10 @@ public class KafkaAuditPublisher implements AuditPublisher {
         this.timeoutSeconds = timeoutSeconds;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
+        // Wire contract: timestamp must be an ISO-8601 STRING. A hand-built ObjectMapper
+        // defaults to WRITE_DATES_AS_TIMESTAMPS (epoch-seconds number), which breaks the
+        // audit Hive consumer's event_dt partitioning and the gap check's cutoff compare.
+        this.objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 
     @Override
