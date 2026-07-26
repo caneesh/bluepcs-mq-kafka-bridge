@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MQ–Kafka Bridge · Developer Guide</title>
+<style>
+  :root {
+    --bg: #fafaf9; --panel: #ffffff; --ink: #1c1917; --muted: #57534e;
+    --line: #e7e5e4; --accent: #0f766e; --accent-ink: #ffffff;
+    --chip-bg: #f0fdfa; --chip-line: #99f6e4; --code-bg: #f5f5f4;
+    --warn-bg: #fffbeb; --warn-line: #fde68a; --dorm: #a8a29e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09; --panel: #1c1917; --ink: #e7e5e4; --muted: #a8a29e;
+      --line: #292524; --accent: #2dd4bf; --accent-ink: #042f2e;
+      --chip-bg: #133432; --chip-line: #134e4a; --code-bg: #292524;
+      --warn-bg: #2a2210; --warn-line: #713f12; --dorm: #57534e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { display: flex; max-width: 1200px; margin: 0 auto; }
+  nav {
+    width: 232px; flex: none; position: sticky; top: 0; align-self: flex-start;
+    height: 100vh; overflow-y: auto; padding: 2.2rem 1rem 2rem 1.4rem;
+    border-right: 1px solid var(--line); font-size: .86rem;
+  }
+  nav .brand { font-weight: 700; letter-spacing: .02em; margin-bottom: .2rem; }
+  nav .sub { color: var(--muted); font-size: .74rem; margin-bottom: 1.4rem; }
+  nav a { display: block; color: var(--muted); text-decoration: none; padding: .22rem 0; }
+  nav a:hover { color: var(--accent); }
+  main { flex: 1; min-width: 0; padding: 2.4rem 2.6rem 5rem; }
+  @media (max-width: 900px) {
+    .wrap { display: block; }
+    nav { position: static; width: auto; height: auto; border-right: 0;
+          border-bottom: 1px solid var(--line); }
+    main { padding: 1.6rem 1.2rem 4rem; }
+  }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 .4rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.25rem; margin: 3rem 0 .8rem; padding-top: .6rem;
+       border-top: 1px solid var(--line); letter-spacing: -.005em; }
+  h2:first-of-type { border-top: 0; margin-top: 1.6rem; }
+  p, li { max-width: 72ch; }
+  .lede { color: var(--muted); font-size: 1.05rem; max-width: 62ch; }
+  a { color: var(--accent); }
+  code, .chip, .pipe {
+    font: .84em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+        padding: .9rem 1.1rem; overflow-x: auto; max-width: 100%; }
+  pre code { background: none; padding: 0; }
+  .chip {
+    display: inline-block; background: var(--chip-bg); border: 1px solid var(--chip-line);
+    border-radius: 6px; padding: .06em .5em; margin: .12em .18em .12em 0;
+    text-decoration: none; color: var(--accent); white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .pipe {
+    display: block; background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: .8rem 1rem; margin: 1rem 0; overflow-x: auto;
+    white-space: nowrap; font-size: .82rem;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: .8rem; margin: 1rem 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: .9rem 1rem .7rem; }
+  .card h3 { margin: 0 0 .25rem; font-size: .95rem; }
+  .card p { margin: 0 0 .5rem; font-size: .84rem; color: var(--muted); }
+  .card.dormant { border-style: dashed; }
+  .card.dormant h3::after { content: " · dormant"; color: var(--dorm);
+                            font-weight: 400; font-size: .78rem; }
+  table { border-collapse: collapse; font-size: .88rem; margin: 1rem 0; }
+  .tablewrap { overflow-x: auto; max-width: 100%; }
+  th, td { text-align: left; padding: .45rem .8rem; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .8rem;
+       text-transform: uppercase; letter-spacing: .04em; }
+  ol.stages { counter-reset: s; list-style: none; padding: 0; margin: 1rem 0; }
+  ol.stages li { counter-increment: s; padding: .5rem 0 .5rem 2.4rem; position: relative;
+                 border-left: 2px solid var(--line); margin-left: .8rem; }
+  ol.stages li::before {
+    content: counter(s); position: absolute; left: -0.95rem; top: .55rem;
+    width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--accent);
+    color: var(--accent-ink); font-size: .78rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rule { background: var(--warn-bg); border: 1px solid var(--warn-line);
+          border-radius: 8px; padding: .55rem .9rem; margin: .5rem 0; font-size: .9rem;
+          max-width: 76ch; }
+  .rule b { display: inline; }
+  footer { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: .8rem; }
+  .anchor { color: var(--line); text-decoration: none; margin-left: .35rem;
+            font-weight: 400; }
+  h2:hover .anchor { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <div class="brand">MQ–Kafka Bridge</div>
+  <div class="sub">Developer Guide</div>
+  <a href="#start">Quick start</a>
+  <a href="#pipeline">The pipeline</a>
+  <a href="#invariants">Invariants</a>
+  <a href="#components">Component index</a>
+  <a href="#config">Configuration</a>
+  <a href="#modes">Run modes &amp; scripts</a>
+  <a href="#ops">Operations · 24×7</a>
+  <a href="#audit">Audit &amp; reconciliation</a>
+  <a href="#consumer">Downstream consumer</a>
+  <a href="#testing">Testing</a>
+  <a href="#howdoi">Where do I…?</a>
+</nav>
+
+<main>
+
+<h1>BluePCS MQ–Kafka Bridge</h1>
+<p class="lede">A Spring Boot service that consumes plan notifications from IBM MQ,
+enriches them via REST, lands the full document in HDFS, and publishes a small
+claim-check notification to Kafka — acknowledging MQ only when all of that succeeded.
+This page is deliberately thin: every topic links to the file that is the real
+documentation.</p>
+
+<span class="pipe">IBM&nbsp;MQ&nbsp;→&nbsp;parse&nbsp;→&nbsp;enrich&nbsp;(REST+OAuth)&nbsp;→&nbsp;HDFS&nbsp;landing&nbsp;(claim-check)&nbsp;→&nbsp;Kafka&nbsp;notify&nbsp;→&nbsp;ack&nbsp;MQ</span>
+
+<h2 id="start">Quick start<a class="anchor" href="#start">#</a></h2>
+<p>Java 11 + Maven. <code>mvn clean package</code> builds and runs the unit tests with no
+external infrastructure; <code>mvn verify</code> additionally runs the integration tests
+(embedded Kafka, local-FS HDFS). The <code>local</code> profile runs the whole app with
+mocks — no MQ, Kafka, HDFS, or credentials needed.</p>
+<p>
+  <a class="chip" data-code href="../README.md">README.md</a>
+  <a class="chip" data-code href="../pom.xml">pom.xml</a>
+  <a class="chip" data-code href="../scripts/run-local.sh">scripts/run-local.sh</a>
+  <a class="chip" data-code href="../DEPLOYMENT_CHECKLIST.md">DEPLOYMENT_CHECKLIST.md</a>
+</p>
+
+<h2 id="pipeline">The pipeline, class by class<a class="anchor" href="#pipeline">#</a></h2>
+<p>One message, one pass. Each stage throws a typed exception the orchestrator maps to an
+audit event and a redelivery/quarantine decision.</p>
+<ol class="stages">
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a>
+      — JMS listener, CLIENT_ACKNOWLEDGE; poison-message guard; acks only on terminal outcomes.</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
+      — drives the stages, owns error mapping and the quarantine fallback.</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a>
+      — validates the planNotification payload; failure ⇒ quarantine, not redelivery.</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
+      — enrichment GET with retry/backoff; bearer token from
+      <a data-code href="../src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a>
+      (STS contract: credential <em>headers</em> + JSON body).</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a>
+      — wraps the raw API response in the output contract the consumer expects.</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
+      — flat landing dir, temp-write → checksum-verify → rename; idempotent by eventId.</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+      — builds the claim-check notification (<code>hdfsPath</code>, <code>checksum</code>,
+      <code>eventId</code>, <code>source</code>, <code>schemaVersion</code>).</li>
+  <li><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a>
+      — synchronous publish, idempotent producer, <code>acks=all</code>; only then is MQ acked.</li>
+</ol>
+
+<h2 id="invariants">Invariants — do not break these<a class="anchor" href="#invariants">#</a></h2>
+<div class="rule"><b>Ack only after success.</b> The MQ message is acknowledged only on
+  PROCESSING_COMPLETED, MESSAGE_QUARANTINED, or MESSAGE_DISCARDED — anything else redelivers.
+  <a data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
+<div class="rule"><b>Deterministic eventId.</b> SHA-256 of the JMS message id (payload hash
+  when the id is null) names the HDFS file, keys both Kafka topics, and is the dedup handle
+  everywhere. <a data-code href="../src/main/java/com/hcsc/bridge/core/EventIdGenerator.java">EventIdGenerator</a></div>
+<div class="rule"><b>Checksum-verify BEFORE rename.</b> Corrupt bytes must never reach the
+  landing path — a renamed-then-failed file would satisfy the idempotency check forever.
+  <a data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a></div>
+<div class="rule"><b>Claim-check + schemaVersion.</b> Kafka carries a pointer, HDFS carries
+  the document; <code>schemaVersion</code> presence is how consumers distinguish bridge
+  messages from legacy Talend — bump it on any breaking change.
+  <a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a></div>
+<div class="rule"><b>At-least-once, everywhere.</b> Redelivery re-runs the whole pipeline
+  with the same eventId; every downstream must tolerate duplicates.</div>
+<div class="rule"><b>Quarantine permanent failures.</b> Unparseable payloads are preserved
+  in HDFS <code>errors/</code> and acked — never looped, never silently dropped.
+  <a data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a></div>
+<div class="rule"><b>Audit never breaks processing.</b> All emit paths are best-effort and
+  swallowed. <a data-code href="../src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
+<div class="rule"><b>Audit timestamp is an ISO-8601 string</b> — a wire contract pinned by
+  test; the Hive partitioning and gap check depend on it.
+  <a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">KafkaAuditPublisherTest</a></div>
+<div class="rule"><b>MQ concurrency stays 1.</b> The HDFS exists-check/write/rename sequence
+  is not atomic; concurrent listeners race and duplicate Kafka events.
+  <a data-code href="../src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a></div>
+
+<h2 id="components">Component index<a class="anchor" href="#components">#</a></h2>
+<div class="grid">
+  <div class="card"><h3>mq/</h3><p>JMS listener, poison guard, discard audit.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
+  <div class="card"><h3>orchestrator/</h3><p>Stage driver, error → outcome mapping.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/orchestrator/ProcessingResult.java">ProcessingResult</a></div>
+  <div class="card"><h3>parser/</h3><p>planNotification JSON → ParsedPayload.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a></div>
+  <div class="card"><h3>api/</h3><p>Enrichment REST client + output wrapper.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a></div>
+  <div class="card"><h3>security/</h3><p>STS token: credential headers + JSON body, cached.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a></div>
+  <div class="card"><h3>hdfs/</h3><p>Safe landing-dir writes; quarantine writes.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/hdfs/HadoopFileOperations.java">HadoopFileOperations</a></div>
+  <div class="card"><h3>kafka/</h3><p>Claim-check notification + publisher.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a></div>
+  <div class="card"><h3>audit/</h3><p>Per-message event trail; kafka or log publisher.</p>
+    <a class="chip" href="./AUDIT.md">AUDIT.md</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
+  <div class="card"><h3>config/</h3><p>Properties, factories, startup validation, run modes.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/KafkaConfiguration.java">KafkaConfiguration</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/HdfsConfiguration.java">HdfsConfiguration</a></div>
+  <div class="card"><h3>health/</h3><p>Actuator indicators incl. listener state.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">MqListenerHealthIndicator</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/KafkaHealthIndicator.java">KafkaHealthIndicator</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/HdfsHealthIndicator.java">HdfsHealthIndicator</a></div>
+  <div class="card"><h3>local/</h3><p>Full mock stack — zero external infra.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/local/LocalFileSystemHdfsOperations.java">LocalFileSystemHdfsOperations</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/local/LocalMarketingPlanApiClient.java">LocalMarketingPlanApiClient</a></div>
+  <div class="card dormant"><h3>ledger/ recovery/ reconciliation/</h3>
+    <p>State-store scaffolding the pipeline never writes to; superseded by
+       audit + idempotency. Off by default.</p>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/ledger/LedgerState.java">LedgerState</a>
+    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/recovery/RecoveryService.java">RecoveryService</a></div>
+</div>
+
+<h2 id="config">Configuration<a class="anchor" href="#config">#</a></h2>
+<div class="tablewrap"><table>
+  <tr><th>Profile</th><th>Use</th><th>File</th></tr>
+  <tr><td><code>local</code></td><td>Dev machine, all mocks</td>
+      <td><a data-code href="../src/main/resources/application-local.yml">application-local.yml</a></td></tr>
+  <tr><td><code>test-env</code></td><td>UAT edge node; passwordless MQ</td>
+      <td><a data-code href="../src/main/resources/application-test-env.yml">application-test-env.yml</a></td></tr>
+  <tr><td><code>prod</code></td><td>Production; fail-fast on missing secrets</td>
+      <td><a data-code href="../src/main/resources/application-prod.yml">application-prod.yml</a></td></tr>
+  <tr><td><code>hbase</code></td><td>Adds the (dormant) HBase ledger</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/ledger/HBaseLedgerRepository.java">HBaseLedgerRepository</a></td></tr>
+</table></div>
+<p>test-env needs exactly four secrets in <code>.env</code>:
+<code>KAFKA_TRUSTSTORE_PASSWORD</code>, <code>OAUTH_CLIENT_ID</code>,
+<code>OAUTH_CLIENT_SECRET</code>, <code>API_PASSWORD</code>. Everything else has working
+defaults carried from the Talend <code>.prm</code>.</p>
+<p>
+  <a class="chip" data-code href="../CONFIGURATION_GUIDE.md">CONFIGURATION_GUIDE.md</a>
+  <a class="chip" data-code href="../.env.template">.env.template</a>
+  <a class="chip" data-code href="../src/main/resources/application.yml">application.yml</a>
+  <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties.java</a>
+</p>
+
+<h2 id="modes">Run modes &amp; scripts<a class="anchor" href="#modes">#</a></h2>
+<div class="tablewrap"><table>
+  <tr><th>Mode / script</th><th>Purpose</th><th>Dig deeper</th></tr>
+  <tr><td>normal run</td><td>Listener OFF by default (safe start); enable with
+      <code>--bridge.mq.listener-enabled=true</code></td>
+      <td><a data-code href="../scripts/run-test-env.sh">run-test-env.sh</a></td></tr>
+  <tr><td>validate-only</td><td>Connectivity + OAuth checks, exit 0/1/2, consumes nothing</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/ValidateOnlyRunner.java">ValidateOnlyRunner</a> ·
+          <a data-code href="../scripts/validate-only.sh">validate-only.sh</a></td></tr>
+  <tr><td>component-test</td><td>Exercise hdfs / api / kafka / mq in isolation against real infra</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/ComponentTestRunner.java">ComponentTestRunner</a> ·
+          <a data-code href="../scripts/component-test.sh">component-test.sh</a></td></tr>
+  <tr><td>monitor</td><td>Read-only Control-M probe: health + landing-dir backlog, exit 0–5</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/MonitorRunner.java">MonitorRunner</a> ·
+          <a data-code href="../scripts/monitor.sh">monitor.sh</a></td></tr>
+  <tr><td>audit gap check</td><td>Hive audit table: load gaps, stuck messages, quarantines; exit 0–4</td>
+      <td><a data-code href="../scripts/audit-gap-check.sh">audit-gap-check.sh</a></td></tr>
+  <tr><td>landing cleanup</td><td>Age-based landing→archive→delete sweep (retention = consumer replay window)</td>
+      <td><a data-code href="../scripts/hdfs-landing-cleanup.sh">hdfs-landing-cleanup.sh</a></td></tr>
+  <tr><td>keep-alive</td><td>Control-M keep-alive for edge nodes without sudo/systemd</td>
+      <td><a data-code href="../scripts/bridge-keepalive.sh">bridge-keepalive.sh</a></td></tr>
+  <tr><td>smoke test</td><td>Start app, verify health, exit</td>
+      <td><a data-code href="../scripts/smoke-test.sh">smoke-test.sh</a></td></tr>
+</table></div>
+
+<h2 id="ops">Operations · 24×7<a class="anchor" href="#ops">#</a></h2>
+<p>Three self-healing layers: systemd restarts the JVM (with OOM crash-fast flags), a
+health-driven watchdog timer restarts a wedged-but-alive bridge, and a scheduled Kerberos
+relogin keeps the HDFS TGT fresh. Dynatrace OneAgent covers JVM/process telemetry; the
+Control-M monitor adds what it can't see — listener-enabled state and landing-dir backlog.
+The definitive external signal is MQ-side queue depth (<code>CURDEPTH</code>).</p>
+<p>
+  <a class="chip" data-code href="../deploy/mq-kafka-bridge.service">mq-kafka-bridge.service</a>
+  <a class="chip" data-code href="../deploy/mq-kafka-bridge-watchdog.sh">watchdog.sh</a>
+  <a class="chip" data-code href="../deploy/mq-kafka-bridge-watchdog.timer">watchdog.timer</a>
+  <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/KerberosTicketRenewer.java">KerberosTicketRenewer</a>
+  <a class="chip" data-code href="../DEPLOYMENT_CHECKLIST.md">DEPLOYMENT_CHECKLIST.md § Running 24/7</a>
+</p>
+
+<h2 id="audit">Audit &amp; reconciliation<a class="anchor" href="#audit">#</a></h2>
+<p>Every message leaves an event trail on the audit topic, keyed by eventId — six bridge
+events plus two consumer events (<code>CLAIM_CHECK_RESOLVED</code>,
+<code>HIVE_LOAD_COMPLETED</code>, the true terminal state) on the happy path. The
+<a data-code href="../audit-hive-consumer/README.md">audit-hive-consumer</a> Spark job lands
+them in Hive; <a data-code href="../scripts/audit-gap-check.sh">audit-gap-check.sh</a> alarms
+on gaps, stuck messages, and quarantines. Best-effort by design — read the guarantees
+section before trusting it for anything transactional.</p>
+<p>
+  <a class="chip" href="./AUDIT.md">AUDIT.md</a>
+  <a class="chip" href="./RECONCILIATION_PLAN.md">RECONCILIATION_PLAN.md</a>
+  <a class="chip" data-code href="../audit-hive-consumer/hive/bridge_audit_event.ddl">bridge_audit_event.ddl</a>
+  <a class="chip" data-code href="../docs/consumer/ConsumerAuditEmitter.scala">ConsumerAuditEmitter.scala</a>
+</p>
+
+<h2 id="consumer">Downstream consumer artifacts<a class="anchor" href="#consumer">#</a></h2>
+<p>The DStream job (separate codebase) integrates two drop-ins from this repo:
+<a data-code href="../docs/consumer/BridgeMessageResolver.scala">BridgeMessageResolver</a>
+resolves claim-check notifications back into the legacy inline shape (detection order:
+<code>schemaVersion</code> present ⇒ bridge; absent ⇒ legacy Talend; missing HDFS file ⇒
+already-processed duplicate, skip), and
+<a data-code href="../docs/consumer/ConsumerAuditEmitter.scala">ConsumerAuditEmitter</a>
+emits the consumer-stage audit events. Consumers must dedupe on <code>eventId</code>.</p>
+
+<h2 id="testing">Testing<a class="anchor" href="#testing">#</a></h2>
+<p>Unit tests run under surefire (<code>mvn test</code>, no infra); <code>*IT</code> classes
+run under failsafe (<code>mvn verify</code>) with an embedded Kafka broker and local-FS HDFS.
+Reusable fakes live in
+<a data-code href="../src/test/java/com/hcsc/bridge/mock/FakeMqMessageGenerator.java">test/mock/</a>.
+When a change touches a cross-system contract, pin the wire format —
+<a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">the
+timestamp pinning test</a> exists because nothing pinned it and an epoch-vs-ISO mismatch
+slipped through.</p>
+
+<h2 id="howdoi">Where do I…?<a class="anchor" href="#howdoi">#</a></h2>
+<div class="tablewrap"><table>
+  <tr><th>Task</th><th>Touch these</th></tr>
+  <tr><td>Add a config property</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties</a> ·
+          <a data-code href="../src/main/resources/application.yml">application.yml</a> ·
+          profile ymls · <a data-code href="../config/application-prod-template.yml">config/ templates</a> ·
+          <a data-code href="../src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a> if required</td></tr>
+  <tr><td>Change the notification schema</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+          (bump <code>SCHEMA_VERSION</code>) ·
+          <a data-code href="../docs/consumer/BridgeMessageResolver.scala">BridgeMessageResolver</a> ·
+          <a data-code href="../src/test/java/com/hcsc/bridge/integration/KafkaPublisherIT.java">KafkaPublisherIT</a></td></tr>
+  <tr><td>Add an audit event type</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a> ·
+          <a href="./AUDIT.md">AUDIT.md catalog</a> · gap-check queries if terminal</td></tr>
+  <tr><td>Add a health check</td>
+      <td>Copy the pattern in
+          <a data-code href="../src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">health/</a>;
+          remember <code>@Profile("!local")</code> and the smoke test's UP requirement</td></tr>
+  <tr><td>Change enrichment request/response</td>
+      <td><a data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a> ·
+          <a data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a> ·
+          <a data-code href="../src/test/java/com/hcsc/bridge/api/RestMarketingPlanApiClientTest.java">its MockWebServer tests</a></td></tr>
+  <tr><td>Debug a message in test/prod</td>
+      <td>Find its eventId in the audit trail (<a href="./AUDIT.md">AUDIT.md</a> · consuming
+          section) → HDFS file <code>&lt;landing&gt;/&lt;eventId&gt;.json</code> → quarantine
+          <code>errors/</code> if parse failed</td></tr>
+  <tr><td>Run against real infra safely</td>
+      <td><a data-code href="../scripts/validate-only.sh">validate-only.sh</a> →
+          <a data-code href="../scripts/component-test.sh">component-test.sh</a> per component →
+          start with listener OFF →
+          <a data-code href="../DEPLOYMENT_CHECKLIST.md">checklist step 8</a></td></tr>
+</table></div>
+
+<footer>
+  Generated 2026-07-22 from the code on <code>main</code>. The Markdown docs
+  (<a href="./AUDIT.md">AUDIT</a>, <a href="./RECONCILIATION_PLAN.md">RECONCILIATION_PLAN</a>,
+  <a data-code href="../CONFIGURATION_GUIDE.md">CONFIGURATION_GUIDE</a>,
+  <a data-code href="../DEPLOYMENT_CHECKLIST.md">DEPLOYMENT_CHECKLIST</a>) are the deep-dive
+  layer; the source files are the truth.
+</footer>
+
+</main>
+</div>
+
+<script>
+  // Optional: set to e.g. "https://github.com/caneesh/bluepcs-mq-kafka-bridge/blob/main/"
+  // to make every code link open the repo's web UI instead of the local file.
+  var REPO_BLOB_BASE = "";
+  if (REPO_BLOB_BASE) {
+    document.querySelectorAll("a[data-code]").forEach(function (a) {
+      var rel = a.getAttribute("href").replace(/^(\.\.\/|\.\/)/, "");
+      a.setAttribute("href", REPO_BLOB_BASE + rel);
+    });
+  }
+</script>
+</body>
+</html>
