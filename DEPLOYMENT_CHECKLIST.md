@@ -356,12 +356,47 @@ agent's cleanup); unhealthy 3 runs in a row → kill + fresh start. Exit 1 only 
 attempt fails — route that to an alert. Output markers `KEEPALIVE: STARTED` /
 `KEEPALIVE: START-FAIL` are stable for On-Do text matching.
 
+**Control-M job definition:**
+
+| Field | Value |
+|-------|-------|
+| Job type | OS / Command |
+| Host / node | The edge-node agent — MUST be the host the bridge runs on (health URL is `localhost`) |
+| Run As | The service account that owns the deployment (reads `.env` and the keytab, writes `logs/` and `bridge.pid`) |
+| Command | `/full/path/to/bluepcs-bridge/scripts/bridge-keepalive.sh` (profile comes from `BRIDGE_PROFILE` in `.env`, so the same definition works in test and prod; or pin it: `... prod`) |
+| Scheduling | Cyclic, every ~5 minutes, 24/7 — no time window, no calendar restriction |
+| Rerun/recovery | None — do NOT add auto-rerun or a restart action; the script is the remediation |
+
+**On-Do / alerting rules:**
+
+| Trigger | Action |
+|---------|--------|
+| Return code ≠ 0 | Job red + alert/page — a start was attempted and the process did not come up (check `logs/bridge-console.log`) |
+| Sysout contains `KEEPALIVE: START-FAIL` | Same as above (belt-and-braces text match) |
+| Sysout contains `KEEPALIVE: STARTED` | Notify (not page) — the bridge was down or wedged and got (re)started; worth knowing it bounced |
+| Anything else (exit 0, no markers) | No action — healthy, or failure 1/3–2/3 not yet at the restart threshold |
+
+**Setup checklist:**
+
+- [ ] Prerequisites on the edge node already done (Steps 3–7 above): jar in `target/`,
+      `.env` populated, `chmod +x scripts/*.sh`, `validate-only.sh` passes
 - [ ] Job is cyclic 24/7 (no time window), on the edge-node agent, Run As the service account
 - [ ] No auto-rerun-with-restart On-Do — the script already remediates
+- [ ] First run: force the job once from Control-M and check sysout — expect
+      `KEEPALIVE: STARTED - pid ...` (first run starts the bridge), then `Bridge healthy`
+      on the next cycle. This also proves `HEALTH_URL` is reachable from the job's
+      environment — if the agent ran on a different host, every cycle would look
+      unhealthy and kill/restart a good process every ~15 minutes
+- [ ] Restart threshold understood: unhealthy must persist 3 consecutive cycles
+      (~15 min at a 5-min interval) before a kill+restart — tune `MAX_FAILURES` /
+      `HEALTH_URL` / `CURL_TIMEOUT_SECONDS` in `.env` if needed
 - [ ] To stop the bridge intentionally: hold the Control-M job FIRST, then kill the process
       (unlike the systemd watchdog, the script cannot tell "stopped on purpose" from "dead")
+- [ ] After a host reboot the bridge stays down until the next cycle starts it — expect up
+      to one interval of downtime (systemd would start it on boot)
 - [ ] DECOMMISSION this job when the systemd units are installed — two supervisors fight
-- [ ] Console log lands in `logs/bridge-console.log`; pid in `bridge.pid` (project root)
+- [ ] Console log lands in `logs/bridge-console.log`; pid in `bridge.pid`; failure counter
+      in `.keepalive-failures` (project root — persists across job runs by design)
 
 This replaces systemd layers 1 and 1b (weaker: up to one cycle of restart latency, no
 start-limit backoff, no start-on-boot until the first cycle after reboot). The read-only
