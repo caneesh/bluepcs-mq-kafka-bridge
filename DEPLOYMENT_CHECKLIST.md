@@ -371,9 +371,10 @@ attempt fails — route that to an alert. Output markers `KEEPALIVE: STARTED` /
 
 | Trigger | Action |
 |---------|--------|
-| Return code ≠ 0 | Job red + alert/page — a start was attempted and the process did not come up (check `logs/bridge-console.log`) |
+| Return code ≠ 0 | Job red + alert/page — a start was attempted and the process did not come up, or a foreign process holds the health port (check `logs/bridge-console.log` and the job sysout) |
 | Sysout contains `KEEPALIVE: START-FAIL` | Same as above (belt-and-braces text match) |
 | Sysout contains `KEEPALIVE: STARTED` | Notify (not page) — the bridge was down or wedged and got (re)started; worth knowing it bounced |
+| Sysout contains `KEEPALIVE: ADOPTED` | Notify (not page) — a running bridge was found with a stale/missing pid file and the pid file was re-pointed; the bridge itself was fine, but someone/something disturbed `bridge.pid` |
 | Anything else (exit 0, no markers) | No action — healthy, or failure 1/3–2/3 not yet at the restart threshold |
 
 **Setup checklist:**

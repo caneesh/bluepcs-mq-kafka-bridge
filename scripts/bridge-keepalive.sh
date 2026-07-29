@@ -8,15 +8,24 @@
 #
 # Each run does ONE of:
 #   - bridge healthy                          -> exit 0, no action
+#   - pid file stale/lost but a bridge
+#     process is running                      -> adopt it (re-point pid file),
+#                                                then health-check as normal
 #   - bridge process dead                     -> start it (detached), exit 0
 #   - bridge alive but unhealthy N runs in a
 #     row (default 3)                         -> kill it, start fresh, exit 0
+#   - health URL answers but no bridge
+#     process found (foreign process on the
+#     port)                                   -> exit 1, do NOT start a duplicate
 #   - start attempted but process not up      -> exit 1 (turn this red in
 #                                                Control-M and alert)
 #
 # Output markers for Control-M On-Do text matching:
 #   "KEEPALIVE: STARTED"    - bridge was (re)started this run
-#   "KEEPALIVE: START-FAIL" - start attempt failed
+#   "KEEPALIVE: ADOPTED"    - running bridge found with stale/missing pid file;
+#                             pid file re-pointed, no restart (notify, not page)
+#   "KEEPALIVE: START-FAIL" - start attempt failed, or refused to start over a
+#                             foreign process holding the health port
 #
 # DECOMMISSION this job once the systemd units (deploy/*.service) are
 # installed — two supervisors restarting the same process will fight.
@@ -108,7 +117,28 @@ start_bridge() {
     fi
 }
 
-pid=$(bridge_pid) || { echo "Bridge process not running; starting it"; start_bridge; }
+if ! pid=$(bridge_pid); then
+    # Pid file missing/stale (manual start, deleted file, or overwritten by a
+    # previous failed duplicate-start). Before launching — which would only die
+    # on a port conflict — look for a bridge that is already running and adopt
+    # it by re-pointing the pid file at it.
+    pid=$(pgrep -f 'mq-kafka-bridge-[^ ]*\.jar' | head -1 || true)
+    if [ -n "$pid" ]; then
+        echo "$pid" > "$PID_FILE"
+        echo "KEEPALIVE: ADOPTED - running bridge found (pid ${pid}), pid file re-pointed"
+    else
+        # No bridge process — but if something ELSE answers on the health port,
+        # a start is doomed (bind failure) and would mask the real problem.
+        http_code=$(curl -s -o /dev/null -m "$CURL_TIMEOUT_SECONDS" -w "%{http_code}" "$HEALTH_URL" || echo "000")
+        if [ "$http_code" != "000" ]; then
+            echo "KEEPALIVE: START-FAIL - no mq-kafka-bridge process, but ${HEALTH_URL} answered HTTP ${http_code};"
+            echo "  a foreign process holds the port - refusing to start a duplicate. Check: ss -tlnp | grep 8080"
+            exit 1
+        fi
+        echo "Bridge process not running; starting it"
+        start_bridge
+    fi
+fi
 
 http_code=$(curl -s -o /dev/null -m "$CURL_TIMEOUT_SECONDS" -w "%{http_code}" "$HEALTH_URL" || echo "000")
 
