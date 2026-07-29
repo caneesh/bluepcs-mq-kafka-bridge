@@ -3,7 +3,7 @@
 # Component Test Script
 # =============================================================================
 # Exercises exactly ONE part of the bridge against real infrastructure and
-# exits pass/fail. Intended for office-network bring-up testing.
+# exits pass/fail. Intended for environment bring-up testing.
 #
 # Usage: ./component-test.sh <mq|api|kafka|hdfs> [args] [profile]
 #   profile defaults to test-env

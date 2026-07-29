@@ -5,8 +5,8 @@ events to the Hive audit table `bluepcs.bridge_audit_event` — the queryable en
 trail (MQ → bridge → Kafka → Hive product load) described in
 [`../docs/AUDIT.md`](../docs/AUDIT.md).
 
-Standalone Maven project — **not** part of the bridge's build. The bridge's office
-build/transfer process is unaffected by this directory.
+Standalone Maven project — **not** part of the bridge's build. The bridge's
+build process is unaffected by this directory.
 
 ## Build
 
@@ -15,11 +15,11 @@ cd audit-hive-consumer
 mvn clean package          # -> target/audit-hive-consumer-1.0.0.jar (shaded)
 ```
 
-**Before building for the office cluster**: set `scala.version`/`scala.binary.version`/
+**Before building for the cluster**: set `scala.version`/`scala.binary.version`/
 `spark.version` in `pom.xml` to exactly what the existing `BluepcsPMMPLusConsumer` job
 builds against, then rebuild. A Scala binary mismatch (2.11 vs 2.12) fails at *runtime*,
-not compile time. If the office build uses the offline-repository strategy, run
-`mvn -f audit-hive-consumer/pom.xml dependency:go-offline` at home first — this project's
+not compile time. If building offline (`mvn -o`), run
+`mvn -f audit-hive-consumer/pom.xml dependency:go-offline` first — this project's
 dependency tree (Spark, Scala) is large and disjoint from the bridge's.
 
 ## Deploy

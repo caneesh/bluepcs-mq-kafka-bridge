@@ -1,31 +1,6 @@
 # MQ-Kafka Bridge Deployment Checklist
 
-## Transferring Code to the Office Network
-
-The office environment is reached via: push to git → download → OneDrive →
-copy to the office machine. Two cautions before uploading:
-
-- [ ] Do not zip the raw working directory — a local `.env` with real
-      credentials would ride along. Transfer via `git archive`, a fresh
-      clone, or delete `.env` from the copy first.
-- [ ] Be aware the `.git` history travels with a clone and contains
-      everything ever committed.
-
-### Dependency Strategy (decide BEFORE transferring)
-
-Building requires Maven to resolve Spring Boot, Hadoop, HBase and Kafka
-artifacts. Pick one:
-
-1. **Internal mirror**: the office network has a Nexus/Artifactory mirror —
-   configure it in `~/.m2/settings.xml` on the office machine.
-2. **Offline repository**: at home run `mvn dependency:go-offline`, zip
-   `~/.m2/repository`, carry it alongside the code, and build with
-   `mvn -o clean package` (offline mode).
-3. **Carry the jar**: build at home (`mvn clean package`) and transfer
-   `target/mq-kafka-bridge-*.jar` itself. The Spring Boot fat jar is
-   self-contained; the office machine then only needs a JDK, no Maven.
-
-## Building and First Run on the Office Machine
+## Building and First Run
 
 ### Step 1: Verify tooling
 
@@ -49,9 +24,9 @@ Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
 The application must RUN on a cluster edge node — the keytab
 (`/etc/security/keytabs/...`), the Kafka truststore
 (`/prod/gold/integration/conf/...`), the log directory, and network access to
-MQ/Kafka/HDFS only exist there. Building can happen anywhere (office
-workstation with JDK 11 + Maven, or the edge node itself if it has them); only
-the fat jar needs to reach the edge node.
+MQ/Kafka/HDFS only exist there. Building can happen anywhere with JDK 11 +
+Maven (including the edge node itself if it has them); only the fat jar needs
+to reach the edge node.
 
 Recreate this layout on the edge node — the scripts locate the jar and `.env`
 relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
@@ -68,8 +43,8 @@ relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
 - [ ] `scripts/` copied and executable: `chmod +x scripts/*.sh`
 - [ ] Running as the service account (not a personal login) — it must be able
       to read the keytab: `ls -l /etc/security/keytabs/e4193139.keytab`
-- [ ] `.env` created on the edge node itself (next step) — never carried
-      through OneDrive with real values
+- [ ] `.env` created on the edge node itself (next step) — never transferred
+      between machines with real values
 - [ ] `.env` locked down: `chmod 600 .env`
 
 On a shared edge node where others can become the same service account,
@@ -628,7 +603,7 @@ cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
   Size it to exceed the longest expected consumer outage.
 - The `errors/` quarantine directory is NEVER auto-cleaned — a quarantined file is the
   only copy of an unparseable message; review and delete manually.
-- Cron entry (on the office box, after `hdfs`/`kinit` are on PATH):
+- Cron entry (on the edge node, after `hdfs`/`kinit` are on PATH):
   `15 2 * * * /path/to/scripts/hdfs-landing-cleanup.sh >> /var/log/bluepcs/hdfs-cleanup.log 2>&1`
 - Use `--dry-run` first to see what a sweep would do without touching anything.
 - PREREQUISITE CHECK with the HDFS area owner: confirm no Hive external table points

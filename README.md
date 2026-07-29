@@ -108,7 +108,7 @@ Exit codes:
 
 Exercises exactly ONE part of the bridge (mq, api, kafka, or hdfs) against real
 infrastructure and exits `0`=PASS / `1`=FAIL / `2`=bad mode/args. Intended for
-office bring-up: `./scripts/component-test.sh <mq|api|kafka|hdfs> [args] [profile]`.
+environment bring-up: `./scripts/component-test.sh <mq|api|kafka|hdfs> [args] [profile]`.
 See DEPLOYMENT_CHECKLIST.md ("Component-by-Component Testing") for the recommended order.
 
 ### Listener Control

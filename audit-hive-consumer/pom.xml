@@ -4,13 +4,13 @@
   the Hive audit table (bluepcs.bridge_audit_event).
 
   STANDALONE build - deliberately NOT a module of the bridge pom, so the
-  bridge's offline-repo office build is unaffected. Build from this directory:
+  bridge's build is unaffected. Build from this directory:
 
       mvn clean package        ->  target/audit-hive-consumer-1.0.0.jar
 
   !! MUST MATCH THE CLUSTER !!
   The spark/scala versions below are defaults (Spark 2.4.x / Scala 2.11 - the
-  classic HDP combo). Before the office build, set them to EXACTLY what the
+  classic HDP combo). Before building for the cluster, set them to EXACTLY what the
   existing BluepcsPMMPLusConsumer job builds against (check its pom/build.sbt);
   a Scala minor-version mismatch (2.11 vs 2.12) fails at runtime, not compile.
 ========================================================================== -->

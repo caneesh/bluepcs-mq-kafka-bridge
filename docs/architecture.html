@@ -333,7 +333,7 @@ still in flight — which then usually deliver anyway, guaranteeing duplicates a
   <line class="flow" x1="830" y1="184" x2="684" y2="236" marker-end="url(#a3)" stroke-dasharray="4 3"/>
 </svg>
 </div>
-<p>The jar builds anywhere (office transfer flow in the checklist); only the fat jar,
+<p>The jar builds anywhere; only the fat jar,
 scripts, and a hand-created <code>.env</code> live on the edge node. Kerberos: HDFS via
 keytab login + scheduled relogin; Kafka via GSSAPI/JAAS; the STS is credential-header based,
 not Kerberos.</p>
@@ -383,7 +383,7 @@ not Kerberos.</p>
       <td><a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">KafkaAuditPublisherTest</a></td></tr>
   <tr><td>Ledger/recovery left dormant</td><td>Superseded by idempotency + quarantine + audit; kept only as scaffolding, off by default</td>
       <td><a data-code href="../src/main/java/com/hcsc/bridge/ledger/LedgerState.java">LedgerState</a></td></tr>
-  <tr><td>audit-hive-consumer outside the root pom</td><td>Protects the offline office build from the Spark dependency tree</td>
+  <tr><td>audit-hive-consumer outside the root pom</td><td>Keeps the bridge build free of the Spark dependency tree</td>
       <td><a data-code href="../audit-hive-consumer/pom.xml">audit-hive-consumer/pom.xml</a></td></tr>
 </table></div>
 

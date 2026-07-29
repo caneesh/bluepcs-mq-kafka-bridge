@@ -40,7 +40,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Bring-up test harness for office-network deployments. When {@code bridge.component-test}
+ * Bring-up test harness for new-environment deployments. When {@code bridge.component-test}
  * names a mode, this runner exercises exactly ONE part of the bridge against real
  * infrastructure, logs a delimited PASS/FAIL report, and exits the JVM with an exit code:
  * {@code 0} = pass, {@code 1} = fail, {@code 2} = bad mode/args.

@@ -24,7 +24,7 @@ app refuses to start without it.
 | You run with | Defaults come from | Intended for |
 |---|---|---|
 | `--spring.profiles.active=local` | `application-local.yml` | your laptop, all mocks, no real infra |
-| `--spring.profiles.active=test-env` | `application-test-env.yml` | the office TEST environment (values from the old Talend `.prm`) |
+| `--spring.profiles.active=test-env` | `application-test-env.yml` | the TEST environment (values from the old Talend `.prm`) |
 | `--spring.profiles.active=prod` | `application-prod.yml` | production |
 
 **Where to put your values:** the `.env` file in the project root. Copy the
@@ -170,7 +170,7 @@ HDFS path) to the topic, over SASL_SSL with Kerberos (GSSAPI).
 | `KAFKA_SECURITY_PROTOCOL` | `SASL_SSL` | don't change unless the brokers change |
 | `KAFKA_SASL_MECHANISM` | `GSSAPI` | Kerberos |
 | `KAFKA_KERBEROS_SERVICE_NAME` | `kafka` | broker service principal name |
-| `KAFKA_TRUSTSTORE_LOCATION` | `/prod/gold/integration/conf/product/common/kafka_truststore_test.jks` | must EXIST on the office machine |
+| `KAFKA_TRUSTSTORE_LOCATION` | `/prod/gold/integration/conf/product/common/kafka_truststore_test.jks` | must EXIST on the edge node |
 | `KAFKA_TRUSTSTORE_PASSWORD` | **required, no default** | see step 2 |
 | `KAFKA_JAAS_CONFIG_PATH` | *(unset)* | path to a JAAS file for Kerberos login, if the cluster requires one |
 
@@ -217,11 +217,11 @@ locations; the bridge never moves or deletes landed files.
 |---|---|---|
 | `HDFS_NAMENODE` | `hdfs://TSTODPHA` | the test HDFS load balancer (prod: `hdfs://PRDODPHA`); a plain DNS name, NameNode default port 8020 |
 | `HDFS_BASE_PATH` | `/test/oort/product/bluepcs/hive/csv` | the flat landing directory — every wrapper lands as `{eventId}.json` directly under it (see checklist Step 6) |
-| `HDFS_KERBEROS_ENABLED` | `true` | leave on for the office cluster |
+| `HDFS_KERBEROS_ENABLED` | `true` | leave on for the cluster |
 | `HDFS_KERBEROS_PRINCIPAL` | `e4193139@HSCTEST.NET` | the service account principal |
 | `HDFS_KERBEROS_KEYTAB` | `/etc/security/keytabs/e4193139.keytab` | must EXIST and be readable; check `klist -kt <keytab>` |
 | `HDFS_NAMENODE_PRINCIPAL` | `nn/_HOST@HSCTEST.NET` | cluster-side principal pattern |
-| `HADOOP_CONF_DIR` | *(unset — not needed in the office environment)* | only if cluster-specific settings ever need to be loaded from `core-site.xml`/`hdfs-site.xml` |
+| `HADOOP_CONF_DIR` | *(unset — not normally needed)* | only if cluster-specific settings ever need to be loaded from `core-site.xml`/`hdfs-site.xml` |
 
 **Verify** (writes, checksums, and deletes a scratch file — leaves nothing):
 
@@ -250,7 +250,7 @@ the LB isn't forwarding port 8020.
 
 ---
 
-## 8. Complete .env example for the office test environment
+## 8. Complete .env example for the test environment
 
 ```bash
 # --- Required secrets ---
