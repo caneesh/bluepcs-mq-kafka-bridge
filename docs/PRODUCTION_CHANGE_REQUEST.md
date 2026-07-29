@@ -14,16 +14,17 @@
 
 Deploy the BluePCS MQ–Kafka bridge, a Java service that reliably moves BluePCS
 product/plan change events from IBM MQ into the Data Lake and notifies the
-downstream Product Gold load via Kafka.
+downstream Product Gold load via Kafka, replacing the legacy Talend job that
+performs this transfer today.
 
 ## Description
 
 **1. What are we doing?**
 
-Deploying a new bridge service that consumes BluePCS product change events from
-IBM MQ, enriches them via the Marketing Plan API, lands the payload as JSON in
-the Data Lake (HDFS), and publishes a claim-check notification to Kafka for the
-downstream Product Gold load.
+Replacing the legacy Talend job with a new bridge service that consumes BluePCS
+product change events from IBM MQ, enriches them via the Marketing Plan API,
+lands the payload as JSON in the Data Lake (HDFS), and publishes a claim-check
+notification to Kafka for the downstream Product Gold load.
 
 **2. How are we doing?**
 
@@ -34,9 +35,9 @@ trail.
 
 **3. Why are we doing?**
 
-To provide reliable, near-real-time delivery of BluePCS product data into the
-Data Lake with no message loss, end-to-end traceability, and automated
-monitoring/alerting.
+To retire the legacy Talend-based transfer and provide reliable, near-real-time
+delivery of BluePCS product data into the Data Lake with no message loss,
+end-to-end traceability, and automated monitoring/alerting.
 
 **4. Who is the end user?**
 
