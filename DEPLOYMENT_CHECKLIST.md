@@ -328,10 +328,13 @@ job every ~5 minutes** on the edge-node agent, Run As the service account:
                                  # or pass it explicitly: ./scripts/bridge-keepalive.sh prod
 ```
 
-Each run: healthy → no-op; process dead → start it detached (`setsid nohup`, survives the
-agent's cleanup); unhealthy 3 runs in a row → kill + fresh start. Exit 1 only when a start
-attempt fails — route that to an alert. Output markers `KEEPALIVE: STARTED` /
-`KEEPALIVE: START-FAIL` are stable for On-Do text matching.
+Each run: healthy → no-op; stale/missing pid file with a bridge still running → adopt it;
+process dead → start it detached (`setsid nohup`, survives the agent's cleanup); unhealthy
+3 runs in a row → kill + fresh start. Exit 1 means human attention: a start attempt failed,
+a foreign process holds the health port, multiple bridge processes are running, or the old
+process survived `kill -9` — route all of those to an alert. Output markers
+`KEEPALIVE: STARTED` / `KEEPALIVE: ADOPTED` / `KEEPALIVE: START-FAIL` are stable for On-Do
+text matching (see the table below for page-vs-notify).
 
 **Control-M job definition:**
 
