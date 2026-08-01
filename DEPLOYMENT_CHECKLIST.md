@@ -63,7 +63,8 @@ cp .env.template .env
 #   OAUTH_CLIENT_ID            — STS client id (ClientID header)
 #   OAUTH_CLIENT_SECRET        — STS client secret (ClientSecret header)
 #   API_PASSWORD               — STS user password (token request JSON body)
-# MQ_PASSWORD is NOT needed for test-env (prod only).
+# MQ_PASSWORD is NOT needed for test-env; in prod set it only if the queue
+# manager requires MQCSP password auth (it may authenticate by channel auth too).
 ```
 
 Everything else has working test-env defaults carried over from the Talend
@@ -173,7 +174,8 @@ export MQ_QUEUE_MANAGER=QMGR1
 export MQ_CHANNEL=APP.SVRCONN
 export MQ_QUEUE=BRIDGE.INPUT.QUEUE
 export MQ_USERNAME=mquser
-export MQ_PASSWORD=<secret>
+# Optional — only if the queue manager requires MQCSP password auth:
+# export MQ_PASSWORD=<secret>
 
 # Kafka Configuration (Required)
 export KAFKA_BOOTSTRAP_SERVERS=kafka1:9093,kafka2:9093,kafka3:9093

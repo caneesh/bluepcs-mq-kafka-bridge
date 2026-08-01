@@ -4,9 +4,13 @@
 # Copy this file to application-prod.yml and set environment variables.
 #
 # REQUIRED ENVIRONMENT VARIABLES:
-#   MQ_PASSWORD           - IBM MQ password
 #   KAFKA_TRUSTSTORE_PASSWORD - Kafka SSL truststore password
 #   OAUTH_CLIENT_SECRET   - OAuth2 client secret
+#
+# OPTIONAL:
+#   MQ_PASSWORD           - set only if the queue manager requires MQCSP
+#                           password auth; it may authenticate by user id /
+#                           channel auth alone (as the test QM does)
 #
 # RECOMMENDED TO SET VIA ENVIRONMENT:
 #   MQ_HOST, MQ_PORT, MQ_QUEUE_MANAGER, MQ_CHANNEL, MQ_QUEUE, MQ_USERNAME
@@ -32,7 +36,8 @@ bridge:
     channel: ${MQ_CHANNEL}
     queue: ${MQ_QUEUE}
     username: ${MQ_USERNAME}
-    password: ${MQ_PASSWORD}
+    # set MQ_PASSWORD only if the queue manager requires MQCSP auth
+    password: ${MQ_PASSWORD:}
     # IMPORTANT: Set to true to start consuming messages
     listener-enabled: ${MQ_LISTENER_ENABLED:false}
     # Must stay at 1: the HDFS exists-check/write/rename sequence is not atomic, so

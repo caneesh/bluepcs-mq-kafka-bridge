@@ -64,7 +64,9 @@ API_PASSWORD=<value>
 ```
 
 `MQ_PASSWORD` is **not** needed for test-env — the test queue manager
-authenticates by user id / channel auth. (It IS required for prod.)
+authenticates by user id / channel auth. The prod queue manager may work the
+same way: set `MQ_PASSWORD` only if it requires MQCSP password auth
+(`MQRC_NOT_AUTHORIZED (2035)` on connect is the tell).
 
 If the app starts without a placeholder-resolution error, this step is done.
 

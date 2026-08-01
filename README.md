@@ -65,9 +65,11 @@ java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=test-env
 
 ```bash
 # Set required secrets
-export MQ_PASSWORD=<secret>
 export KAFKA_TRUSTSTORE_PASSWORD=<secret>
 export OAUTH_CLIENT_SECRET=<secret>
+# Only if the queue manager requires MQCSP password auth (it may authenticate
+# by user id / channel auth alone, like test):
+# export MQ_PASSWORD=<secret>
 
 # Run with listener disabled (safe start)
 java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=prod
@@ -127,7 +129,7 @@ The MQ listener is **disabled by default** for safety. Enable explicitly:
 |----------|-------------|
 | `KAFKA_TRUSTSTORE_PASSWORD` | Kafka SSL truststore password |
 | `OAUTH_CLIENT_SECRET` | OAuth2 client secret |
-| `MQ_PASSWORD` | IBM MQ password — prod only; the test queue manager authenticates without one |
+| `MQ_PASSWORD` | IBM MQ password — optional in all environments; set only if the queue manager requires MQCSP auth (both test and prod may authenticate by user id / channel auth) |
 
 ### Key Properties
 

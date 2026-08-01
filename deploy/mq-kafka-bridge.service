@@ -28,7 +28,8 @@ User=bluepcsapp
 WorkingDirectory=/prod/gold/integration/product/bluepcs-bridge
 
 # All secrets (KAFKA_TRUSTSTORE_PASSWORD, OAUTH_CLIENT_ID/SECRET, API_PASSWORD,
-# MQ_PASSWORD for prod, ...) live in the gitignored .env file, mode 600.
+# MQ_PASSWORD if the QM requires MQCSP auth, ...) live in the gitignored .env
+# file, mode 600.
 EnvironmentFile=/prod/gold/integration/product/bluepcs-bridge/.env
 
 # listener-enabled=true is what makes this a 24/7 consumer. Without it the app

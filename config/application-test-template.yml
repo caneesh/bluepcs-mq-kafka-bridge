@@ -14,7 +14,8 @@ bridge:
     channel: ${MQ_CHANNEL}
     queue: ${MQ_QUEUE}
     username: ${MQ_USERNAME}
-    password: ${MQ_PASSWORD}
+    # set MQ_PASSWORD only if the queue manager requires MQCSP auth
+    password: ${MQ_PASSWORD:}
     listener-enabled: ${MQ_LISTENER_ENABLED:false}
     concurrency: 1
     receive-timeout: 5000
