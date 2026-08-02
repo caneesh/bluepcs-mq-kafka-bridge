@@ -92,7 +92,10 @@ public class HdfsSafePayloadWriter {
 
             boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
             if (!renamed) {
-                throw new HdfsWriteException("Failed to rename temp file to target", targetPath, messageId);
+                // rename() returning false covers several distinct causes — probe so the
+                // failure is diagnosable from the log alone
+                throw new HdfsWriteException("Failed to rename temp file to target ("
+                        + describeRenameFailure(tempPath, targetPath) + ")", targetPath, messageId);
             }
 
             logger.info("Successfully wrote payload {} to HDFS: {} ({} bytes)",
@@ -106,6 +109,22 @@ public class HdfsSafePayloadWriter {
         } catch (IOException e) {
             cleanupTempFile(tempPath);
             throw new HdfsWriteException("Failed to write payload to HDFS", targetPath, messageId, e);
+        } catch (RuntimeException e) {
+            // Hadoop client code can surface unchecked exceptions (wrapped
+            // AccessControlException, IPC/Kerberos failures) between create and rename —
+            // without this the temp file would be orphaned in the landing directory.
+            cleanupTempFile(tempPath);
+            throw e;
+        }
+    }
+
+    /** Best-effort diagnosis of a rename() that returned false. */
+    private String describeRenameFailure(String tempPath, String targetPath) {
+        try {
+            return "source exists=" + hdfsFileOperations.exists(tempPath)
+                    + ", target exists=" + hdfsFileOperations.exists(targetPath);
+        } catch (Exception probeFailure) {
+            return "probe failed: " + probeFailure.getMessage();
         }
     }
 
@@ -153,12 +172,14 @@ public class HdfsSafePayloadWriter {
     }
 
     private void cleanupTempFile(String tempPath) {
+        // Catches Exception, not just IOException: an unchecked failure here must never
+        // replace the original write exception the caller is about to throw.
         try {
             if (hdfsFileOperations.exists(tempPath)) {
                 hdfsFileOperations.delete(tempPath);
                 logger.debug("Cleaned up temp file: {}", tempPath);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             logger.warn("Failed to cleanup temp file: {}", tempPath, e);
         }
     }

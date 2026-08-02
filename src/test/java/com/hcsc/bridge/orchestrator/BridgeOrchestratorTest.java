@@ -37,6 +37,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -274,6 +275,50 @@ class BridgeOrchestratorTest {
                     .thenThrow(new EnrichmentException("API Error", "ENT-001", 500));
             doNothing().when(auditPublisher).publishAsync(any());
 
+            ProcessingResult result = orchestrator.process(mqMessage);
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.getErrorCode()).isEqualTo("ENRICHMENT_ERROR");
+        }
+
+        @Test
+        @DisplayName("should quarantine on non-retryable (4xx) enrichment error")
+        void shouldQuarantineOnNonRetryableEnrichmentError() {
+            MqMessage mqMessage = createMqMessage("MSG-ENR-002");
+            ParsedPayload parsedPayload = createParsedPayload("MSG-ENR-002", "TXN-ENR-002");
+
+            when(eventIdGenerator.generateEventId("MSG-ENR-002")).thenReturn("event-id-enr-002");
+            when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
+            // 404: a plan identifier that will never resolve — redelivery can never succeed
+            when(apiClient.enrich(parsedPayload))
+                    .thenThrow(new EnrichmentException("Plan not found", "ENT-002", 404));
+            when(hdfsWriter.writeQuarantine(eq("event-id-enr-002"), anyString(), eq("MSG-ENR-002")))
+                    .thenReturn(HdfsWriteResult.success("/errors/event-id-enr-002.json", "cs", 10));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(mqMessage);
+
+            assertThat(result.isQuarantined()).isTrue();
+            assertThat(result.getErrorCode()).isEqualTo("ENRICHMENT_ERROR");
+            assertThat(result.getHdfsPath()).isEqualTo("/errors/event-id-enr-002.json");
+            verify(kafkaPublisher, never()).publish(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("should fall back to failure when quarantine of a non-retryable enrichment error fails")
+        void shouldFailWhenEnrichmentQuarantineWriteFails() {
+            MqMessage mqMessage = createMqMessage("MSG-ENR-003");
+            ParsedPayload parsedPayload = createParsedPayload("MSG-ENR-003", "TXN-ENR-003");
+
+            when(eventIdGenerator.generateEventId("MSG-ENR-003")).thenReturn("event-id-enr-003");
+            when(messageParser.parse(mqMessage)).thenReturn(parsedPayload);
+            when(apiClient.enrich(parsedPayload))
+                    .thenThrow(new EnrichmentException("Plan not found", "ENT-003", 404));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenThrow(new HdfsWriteException("HDFS down", "/errors/x", "MSG-ENR-003"));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            // Safety invariant: no ack unless the payload was durably preserved
             ProcessingResult result = orchestrator.process(mqMessage);
 
             assertThat(result.isFailed()).isTrue();

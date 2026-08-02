@@ -61,7 +61,10 @@ public class KafkaEnvelopePublisher {
             Thread.currentThread().interrupt();
             throw new KafkaPublishException("Interrupted while publishing to Kafka", key, topic, e);
         } catch (ExecutionException e) {
-            throw new KafkaPublishException("Failed to publish to Kafka", key, topic, e.getCause());
+            // getCause() is the real producer failure, but fall back to the
+            // ExecutionException itself rather than throwing with no cause at all
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new KafkaPublishException("Failed to publish to Kafka", key, topic, cause);
         } catch (TimeoutException e) {
             throw new KafkaPublishException("Timeout publishing to Kafka", key, topic, e);
         } catch (Exception e) {

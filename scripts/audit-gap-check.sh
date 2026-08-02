@@ -90,8 +90,11 @@ GROUP BY event_id
 HAVING max(CASE WHEN event_type = 'PROCESSING_COMPLETED' THEN 1 ELSE 0 END) = 1
    AND max(CASE WHEN event_type = 'HIVE_LOAD_COMPLETED'  THEN 1 ELSE 0 END) = 0
    AND max(CASE WHEN event_type = 'PROCESSING_COMPLETED' THEN event_timestamp END) < '${GAP_CUTOFF}'
+ORDER BY was_skipped ASC, bridge_completed_at ASC
 LIMIT ${AUDIT_GAP_RESULT_LIMIT}
 "
+# ORDER BY was_skipped ASC: hard gaps (0) sort before WARN-bucket skips (1), so a
+# mass-redelivery skip storm can never push real gaps past the LIMIT and false-PASS.
 
 # Check 2: stuck — consumed but never terminal, and quiet past the grace period
 QUERY_STUCK="

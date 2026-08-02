@@ -233,6 +233,26 @@ class JsonMessageParserTest {
         }
 
         @Test
+        @DisplayName("parse errors must never echo payload content (PHI) into exception messages")
+        void parseErrorsMustNotEchoPayload() {
+            // Jackson's INCLUDE_SOURCE_IN_LOCATION would embed the raw document in the
+            // exception message; payloads may contain PHI, so it must be disabled.
+            String sentinel = "MEMBER-SSN-123-45-6789";
+            String payload = "{\"planNotification\": {\"member\": \"" + sentinel + "\" ";  // truncated JSON
+            MqMessage message = createMessage("MSG-PHI-001", payload);
+
+            assertThatThrownBy(() -> parser.parse(message))
+                    .isInstanceOf(MessageParseException.class)
+                    .satisfies(e -> {
+                        Throwable cause = e.getCause();
+                        assertThat(e.getMessage()).doesNotContain(sentinel);
+                        if (cause != null) {
+                            assertThat(cause.getMessage()).doesNotContain(sentinel);
+                        }
+                    });
+        }
+
+        @Test
         @DisplayName("should include messageId and rawPayload in the exception")
         void shouldIncludeContextInException() {
             String payload = "{\"somethingElse\": {}}";

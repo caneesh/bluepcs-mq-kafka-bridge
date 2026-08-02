@@ -89,10 +89,11 @@ public class MonitorRunner implements ApplicationRunner {
     }
 
     private boolean isTestEnvironment() {
-        String[] activeProfiles = environment.getActiveProfiles();
-        return Arrays.asList(activeProfiles).contains("test") ||
-               System.getProperty("spring.test.context") != null ||
-               applicationContext.getEnvironment().getProperty("spring.profiles.active", "").contains("test");
+        // Guards Surefire tests (@ActiveProfiles("test")) from System.exit. EXACT
+        // match only: a substring check ("test-env".contains("test")) would also
+        // match the real test deployment profile and silently skip every check
+        // while monitor.sh reports PASSED.
+        return Arrays.asList(environment.getActiveProfiles()).contains("test");
     }
 
     @Override
@@ -125,16 +126,18 @@ public class MonitorRunner implements ApplicationRunner {
     int runChecks() {
         int healthCode;
         int backlogCode;
+        // Full stack on exit-4 paths: for an NPE, getMessage() alone prints ": null" and
+        // the engineer routing the alert has nothing to go on.
         try {
             healthCode = checkHealth();
         } catch (Exception e) {
-            logger.error("MONITOR: health check could not be evaluated: {}", e.getMessage());
+            logger.error("MONITOR: health check could not be evaluated", e);
             healthCode = EXIT_MONITOR_ERROR;
         }
         try {
             backlogCode = checkBacklog();
         } catch (Exception e) {
-            logger.error("MONITOR: backlog check could not be evaluated: {}", e.getMessage());
+            logger.error("MONITOR: backlog check could not be evaluated", e);
             backlogCode = EXIT_MONITOR_ERROR;
         }
 

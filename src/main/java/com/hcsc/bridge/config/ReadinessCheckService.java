@@ -59,7 +59,14 @@ public class ReadinessCheckService {
     private final RestTemplate restTemplate;
 
     public ReadinessCheckService() {
-        this.restTemplate = new RestTemplate();
+        // Explicit timeouts: a default RestTemplate has NONE, and an STS that accepts the
+        // TCP connection but never responds would hang validate-only mode forever — the
+        // one check here that could block, while all socket checks use 5s.
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(10_000);
+        this.restTemplate = new RestTemplate(factory);
     }
 
     public ReadinessReport runAllChecks() {
@@ -115,11 +122,13 @@ public class ReadinessCheckService {
         String[] servers = kafkaBootstrapServers.split(",");
         List<String> failures = new ArrayList<>();
         for (String server : servers) {
-            String[] parts = server.trim().split(":");
-            String host = parts[0];
-            int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 9092;
-
+            // Parse inside the per-server try: a malformed entry ("host:9093x") must
+            // count as an unreachable broker (clean [FAIL]), not escape as a
+            // NumberFormatException that turns the whole run into RESULT: EXCEPTION.
             try (java.net.Socket socket = new java.net.Socket()) {
+                String[] parts = server.trim().split(":");
+                String host = parts[0];
+                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 9092;
                 socket.connect(new java.net.InetSocketAddress(host, port), 5000);
 
                 if (!failures.isEmpty()) {
@@ -129,7 +138,7 @@ public class ReadinessCheckService {
                 logger.info("[PASS] {}: {}", name, message);
                 return CheckResult.pass(name, message);
             } catch (Exception e) {
-                failures.add(String.format("%s:%d (%s)", host, port, e.getMessage()));
+                failures.add(String.format("%s (%s)", server.trim(), e.getMessage()));
             }
         }
 

@@ -3,6 +3,9 @@ package com.hcsc.bridge.mq;
 import com.hcsc.bridge.audit.AuditEvent;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
+import com.hcsc.bridge.core.EventIdGenerator;
+import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
+import com.hcsc.bridge.model.HdfsWriteResult;
 import com.hcsc.bridge.orchestrator.BridgeOrchestrator;
 import com.hcsc.bridge.orchestrator.ProcessingResult;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +44,12 @@ class MqMessageListenerTest {
     private AuditPublisher auditPublisher;
 
     @Mock
+    private HdfsSafePayloadWriter payloadWriter;
+
+    @Mock
+    private EventIdGenerator eventIdGenerator;
+
+    @Mock
     private TextMessage textMessage;
 
     @Mock
@@ -50,7 +59,7 @@ class MqMessageListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new MqMessageListener(orchestrator, auditPublisher);
+        listener = new MqMessageListener(orchestrator, auditPublisher, payloadWriter, eventIdGenerator);
     }
 
     @Nested
@@ -374,11 +383,19 @@ class MqMessageListenerTest {
             when(textMessage.getIntProperty(DELIVERY_COUNT)).thenReturn(deliveryCount);
         }
 
+        private void stubQuarantineSuccess(String eventId) {
+            org.mockito.Mockito.lenient().when(eventIdGenerator.generateEventId(any(String.class)))
+                    .thenReturn(eventId);
+            org.mockito.Mockito.lenient().when(payloadWriter.writeQuarantine(any(), any(), any()))
+                    .thenReturn(HdfsWriteResult.success("/errors/" + eventId + ".json", "cs", 10));
+        }
+
         @Test
         @DisplayName("should discard and acknowledge when delivery count exceeds max attempts")
         void shouldDiscardWhenDeliveryCountExceedsMax() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
             stubTextMessage("MSG-POISON-001", 4);
+            stubQuarantineSuccess("evt-poison-001");
 
             listener.onMessage(textMessage);
 
@@ -387,10 +404,78 @@ class MqMessageListenerTest {
         }
 
         @Test
+        @DisplayName("should preserve the discarded payload in HDFS quarantine, not in logs")
+        void shouldQuarantineDiscardedPayload() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-Q1", 4);
+            stubQuarantineSuccess("evt-poison-q1");
+
+            listener.onMessage(textMessage);
+
+            verify(payloadWriter).writeQuarantine("evt-poison-q1", "{\"bad\":\"payload\"}", "MSG-POISON-Q1");
+            verify(textMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should still discard and acknowledge when the quarantine write fails")
+        void shouldStillDiscardWhenQuarantineWriteFails() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-Q2", 4);
+            org.mockito.Mockito.lenient().when(eventIdGenerator.generateEventId(any(String.class)))
+                    .thenReturn("evt-poison-q2");
+            when(payloadWriter.writeQuarantine(any(), any(), any()))
+                    .thenThrow(new RuntimeException("HDFS down"));
+
+            // The discard must complete anyway — an unbounded redelivery loop is worse
+            // than falling back to the masked log copy.
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
+            verify(orchestrator, never()).process(any());
+        }
+
+        @Test
+        @DisplayName("should discard an unreadable-body message once the guard trips")
+        void shouldDiscardUnreadableBodyWhenGuardTrips() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-POISON-UNREADABLE");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.propertyExists(DELIVERY_COUNT)).thenReturn(true);
+            when(textMessage.getIntProperty(DELIVERY_COUNT)).thenReturn(4);
+            // Classic CCSID/format conversion failure: getText() throws on EVERY delivery
+            when(textMessage.getText()).thenThrow(new JMSException("MQJMS1061: conversion error"));
+
+            listener.onMessage(textMessage);
+
+            verify(textMessage).acknowledge();
+            verify(orchestrator, never()).process(any());
+            ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+            verify(auditPublisher).publishAsync(captor.capture());
+            assertThat(captor.getValue().getEventType()).isEqualTo(AuditEventType.MESSAGE_DISCARDED);
+        }
+
+        @Test
+        @DisplayName("should redeliver an unreadable-body message while the guard has not tripped")
+        void shouldRedeliverUnreadableBodyBeforeGuardTrips() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-POISON-UNREADABLE-2");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.propertyExists(DELIVERY_COUNT)).thenReturn(true);
+            when(textMessage.getIntProperty(DELIVERY_COUNT)).thenReturn(2);
+            when(textMessage.getText()).thenThrow(new JMSException("MQJMS1061: conversion error"));
+
+            assertThatThrownBy(() -> listener.onMessage(textMessage))
+                    .isInstanceOf(MqProcessingException.class);
+
+            verify(textMessage, never()).acknowledge();
+        }
+
+        @Test
         @DisplayName("should publish MESSAGE_DISCARDED audit event on discard")
         void shouldPublishAuditEventOnDiscard() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
             stubTextMessage("MSG-POISON-002", 4);
+            stubQuarantineSuccess("evt-poison-002");
 
             listener.onMessage(textMessage);
 
@@ -458,6 +543,7 @@ class MqMessageListenerTest {
         void shouldAcknowledgeDiscardWhenAuditPublishFails() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
             stubTextMessage("MSG-POISON-006", 4);
+            stubQuarantineSuccess("evt-poison-006");
             doThrow(new RuntimeException("Audit down")).when(auditPublisher).publishAsync(any());
 
             listener.onMessage(textMessage);
@@ -470,11 +556,58 @@ class MqMessageListenerTest {
         void shouldNotThrowWhenPoisonDiscardAcknowledgeFails() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
             stubTextMessage("MSG-POISON-007", 4);
+            stubQuarantineSuccess("evt-poison-007");
             doThrow(new JMSException("Acknowledge failed")).when(textMessage).acknowledge();
 
             listener.onMessage(textMessage);
 
             verify(orchestrator, never()).process(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("redelivery backoff")
+    class RedeliveryBackoff {
+
+        private void stubRedelivered(String messageId, int deliveryCount) throws JMSException {
+            when(textMessage.getJMSMessageID()).thenReturn(messageId);
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("{}");
+            when(textMessage.propertyExists("JMSXDeliveryCount")).thenReturn(true);
+            when(textMessage.getIntProperty("JMSXDeliveryCount")).thenReturn(deliveryCount);
+            when(textMessage.getJMSDestination()).thenReturn(null);
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.success("evt-backoff", "/path", "1"));
+            doNothing().when(textMessage).acknowledge();
+        }
+
+        @Test
+        @DisplayName("should delay a redelivered message by (count-1)*backoff, capped")
+        void shouldDelayRedeliveredMessage() throws JMSException {
+            ReflectionTestUtils.setField(listener, "redeliveryBackoffMs", 50L);
+            ReflectionTestUtils.setField(listener, "redeliveryBackoffMaxMs", 80L);
+            stubRedelivered("MSG-BACKOFF-1", 3); // (3-1)*50 = 100 -> capped at 80
+
+            long start = System.nanoTime();
+            listener.onMessage(textMessage);
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+            assertThat(elapsedMs).isGreaterThanOrEqualTo(75L);
+            verify(orchestrator).process(any());
+        }
+
+        @Test
+        @DisplayName("should not delay a first delivery")
+        void shouldNotDelayFirstDelivery() throws JMSException {
+            ReflectionTestUtils.setField(listener, "redeliveryBackoffMs", 5_000L);
+            ReflectionTestUtils.setField(listener, "redeliveryBackoffMaxMs", 30_000L);
+            stubRedelivered("MSG-BACKOFF-2", 1);
+
+            long start = System.nanoTime();
+            listener.onMessage(textMessage);
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+
+            assertThat(elapsedMs).isLessThan(2_000L);
         }
     }
 

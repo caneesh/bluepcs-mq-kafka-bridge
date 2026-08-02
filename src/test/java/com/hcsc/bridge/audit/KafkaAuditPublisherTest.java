@@ -32,7 +32,8 @@ class KafkaAuditPublisherTest {
 
     @BeforeEach
     void setUp() {
-        publisher = new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 5);
+        // Cooldown disabled (0) so failure tests exercise every send, not the suppression
+        publisher = new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 5, 0L);
     }
 
     @Nested
@@ -163,6 +164,26 @@ class KafkaAuditPublisherTest {
 
             // Audit must never break message processing, even without the Safe wrapper
             publisher.publishAsync(event);
+        }
+
+        @Test
+        @DisplayName("should enter cooldown after a send failure and skip sends during it")
+        void shouldSuppressSendsDuringCooldown() {
+            // Broker outage: send() blocks up to max.block.ms before throwing — without a
+            // cooldown, every audit event stalls the MQ listener thread that long.
+            KafkaAuditPublisher cooldownPublisher =
+                    new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 5, 60_000L);
+            when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                    .thenThrow(new IllegalStateException("metadata timeout"));
+
+            cooldownPublisher.publishAsync(createTestEvent("event-cd-1", "b-cd-1",
+                    "MSG-CD-1", AuditEventType.MESSAGE_RECEIVED));
+            cooldownPublisher.publishAsync(createTestEvent("event-cd-2", "b-cd-2",
+                    "MSG-CD-2", AuditEventType.MESSAGE_RECEIVED));
+
+            // Only the first event reached send(); the second was dropped by the cooldown
+            verify(kafkaTemplate, org.mockito.Mockito.times(1))
+                    .send(anyString(), anyString(), anyString());
         }
     }
 

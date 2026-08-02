@@ -112,7 +112,17 @@ public class MqConfiguration {
         factory.setSessionAcknowledgeMode(Session.CLIENT_ACKNOWLEDGE);
         factory.setConcurrency(String.valueOf(concurrency));
         factory.setReceiveTimeout(receiveTimeout);
-        factory.setErrorHandler(t -> logger.error("JMS listener error", t));
+        // The listener already logs each MqProcessingException with full context before
+        // rethrowing — repeating it here with a stack pointing at the listener (not the
+        // root cause) just doubles the noise per failure. Reserve ERROR+stack for
+        // exception types that did NOT come through that path.
+        factory.setErrorHandler(t -> {
+            if (t instanceof com.hcsc.bridge.mq.MqProcessingException) {
+                logger.warn("JMS listener error (already logged with context): {}", t.getMessage());
+            } else {
+                logger.error("JMS listener error", t);
+            }
+        });
 
         // Disable auto-start if listener is disabled or in validate-only mode
         boolean shouldStart = listenerEnabled && !validateOnly;

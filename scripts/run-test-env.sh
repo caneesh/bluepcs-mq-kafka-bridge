@@ -6,6 +6,9 @@
 # project root if present, then verifies the required secrets are set.
 #
 # Usage: ./run-test-env.sh [--validate-only] [--listener-enabled] [--port PORT]
+#
+# Exit codes: the JVM's exit code, plus 3 = required secrets missing (set by
+# this script before the JVM starts).
 # =============================================================================
 
 set -e

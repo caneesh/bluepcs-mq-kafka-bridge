@@ -39,10 +39,10 @@ public class ValidateOnlyRunner implements ApplicationRunner {
     }
 
     private boolean isTestEnvironment() {
-        String[] activeProfiles = environment.getActiveProfiles();
-        return Arrays.asList(activeProfiles).contains("test") ||
-               System.getProperty("spring.test.context") != null ||
-               applicationContext.getEnvironment().getProperty("spring.profiles.active", "").contains("test");
+        // Guards Surefire tests (@ActiveProfiles("test")) from System.exit. EXACT
+        // match only: a substring check would also match the real "test-env"
+        // deployment profile and silently skip validation there.
+        return Arrays.asList(environment.getActiveProfiles()).contains("test");
     }
 
     @Override

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Keeps Spring Boot's default console/file logging intact (base.xml), and adds ONE
+  thing: a dedicated appender for the "audit" logger used by LoggingAuditPublisher
+  when bridge.audit.publisher=log (the bring-up fallback while the Kafka audit
+  topic does not exist).
+
+  Without this, audit JSON lines interleave with application logs in
+  bridge-application.log and rotate away with them (10MB x 7 by default) — the
+  "preserved" audit trail would be gone after a day of INFO churn. Here they get
+  their own file with generous retention, as pure JSON lines (the pattern adds
+  nothing but a newline) so reconciliation tooling can parse the file directly.
+-->
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/base.xml"/>
+
+  <!-- Audit JSON-lines stream: alongside the main log file (LOG_FILE is set by
+       Spring Boot from logging.file.name) -->
+  <appender name="AUDIT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_FILE}-audit.jsonl</file>
+    <encoder>
+      <pattern>%msg%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_FILE}-audit.%d{yyyy-MM-dd}.%i.jsonl</fileNamePattern>
+      <maxFileSize>50MB</maxFileSize>
+      <!-- Generous: this is the fallback audit trail, not a debug log -->
+      <maxHistory>90</maxHistory>
+      <totalSizeCap>5GB</totalSizeCap>
+    </rollingPolicy>
+  </appender>
+
+  <!-- additivity=false: audit lines must NOT also flood the app log/console -->
+  <logger name="audit" level="INFO" additivity="false">
+    <appender-ref ref="AUDIT_FILE"/>
+  </logger>
+</configuration>

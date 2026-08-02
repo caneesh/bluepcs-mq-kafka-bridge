@@ -32,7 +32,11 @@ public class KerberosTicketRenewer {
         void relogin() throws IOException;
     }
 
+    /** After this many consecutive failures the log level escalates WARN -> ERROR. */
+    static final int ESCALATION_THRESHOLD = 3;
+
     private final ReloginAction reloginAction;
+    private int consecutiveFailures = 0;
 
     @Autowired
     public KerberosTicketRenewer() {
@@ -47,12 +51,25 @@ public class KerberosTicketRenewer {
     public void renewTicket() {
         try {
             reloginAction.relogin();
+            if (consecutiveFailures > 0) {
+                logger.info("Kerberos TGT relogin recovered after {} failed attempt(s)", consecutiveFailures);
+            }
+            consecutiveFailures = 0;
             logger.debug("Kerberos TGT check/relogin completed");
         } catch (Exception e) {
             // Never propagate: a failed renewal must not kill the scheduler thread.
-            // The next scheduled attempt retries; persistent failures surface as HDFS
-            // auth errors and the health watchdog/monitoring take over from there.
-            logger.warn("Kerberos TGT relogin failed (will retry on next interval): {}", e.getMessage());
+            // The next scheduled attempt retries. Full stack always (Kerberos failures
+            // are undiagnosable from the message alone), and escalate to ERROR once the
+            // failure is persistent — a broken keytab must trip log-level alerting
+            // BEFORE the TGT lapses and HDFS writes start failing.
+            consecutiveFailures++;
+            if (consecutiveFailures >= ESCALATION_THRESHOLD) {
+                logger.error("Kerberos TGT relogin failed {} consecutive times — HDFS auth will "
+                        + "break when the current ticket lapses", consecutiveFailures, e);
+            } else {
+                logger.warn("Kerberos TGT relogin failed (attempt {}, will retry on next interval)",
+                        consecutiveFailures, e);
+            }
         }
     }
 }

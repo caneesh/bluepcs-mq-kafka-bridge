@@ -18,6 +18,10 @@ import org.springframework.stereotype.Component;
 public class LoggingAuditPublisher implements AuditPublisher {
 
     private static final Logger auditLogger = LoggerFactory.getLogger("audit");
+    // Failures go to the class logger, NOT the audit logger: the audit stream must stay
+    // pure JSON lines (it is parsed by reconciliation tooling), and its dedicated
+    // appender (logback-spring.xml) should never carry stack traces.
+    private static final Logger logger = LoggerFactory.getLogger(LoggingAuditPublisher.class);
     private final ObjectMapper objectMapper;
 
     public LoggingAuditPublisher() {
@@ -34,7 +38,7 @@ public class LoggingAuditPublisher implements AuditPublisher {
             String json = objectMapper.writeValueAsString(event);
             auditLogger.info("{}", json);
         } catch (Exception e) {
-            auditLogger.error("Failed to serialize audit event: {}", event, e);
+            logger.error("Failed to serialize audit event: {}", event, e);
         }
     }
 

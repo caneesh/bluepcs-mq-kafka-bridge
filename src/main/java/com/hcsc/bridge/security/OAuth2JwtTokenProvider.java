@@ -3,6 +3,7 @@ package com.hcsc.bridge.security;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hcsc.bridge.core.SecretMaskingUtil;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -196,7 +197,12 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
             String responseBody = response.body() != null ? response.body().string() : "";
 
             if (!response.isSuccessful()) {
-                logger.error("Token refresh failed with status {}: {}", response.code(), responseBody);
+                // Truncate + mask: STS/gateway error pages can be multi-KB HTML and a
+                // misbehaving gateway may echo request material (credential headers) back
+                String safeBody = responseBody.length() > 300
+                        ? responseBody.substring(0, 300) + "...(truncated)" : responseBody;
+                logger.error("Token refresh failed with status {}: {}", response.code(),
+                        SecretMaskingUtil.maskSecrets(safeBody));
                 throw new TokenRefreshException("Token refresh failed with status: " + response.code());
             }
 

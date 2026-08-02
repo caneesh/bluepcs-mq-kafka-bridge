@@ -2,7 +2,9 @@ package com.hcsc.bridge.parser;
 
 import com.hcsc.bridge.model.MqMessage;
 import com.hcsc.bridge.model.ParsedPayload;
+import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,7 +42,12 @@ public class JsonMessageParser implements MessageParser {
     private final ObjectMapper objectMapper;
 
     public JsonMessageParser() {
-        this.objectMapper = new ObjectMapper();
+        // INCLUDE_SOURCE_IN_LOCATION (default ON in Jackson 2.13) embeds up to ~500 chars
+        // of the raw document in every JsonProcessingException message. Payloads may
+        // contain PHI, so parse errors must never echo the source into logs/exceptions.
+        this.objectMapper = new ObjectMapper(JsonFactory.builder()
+                .disable(StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION)
+                .build());
         this.objectMapper.registerModule(new JavaTimeModule());
     }
 
@@ -87,7 +94,9 @@ public class JsonMessageParser implements MessageParser {
             );
 
         } catch (JsonProcessingException e) {
-            logger.error("Invalid JSON in message {}: {}", messageId, e.getMessage());
+            // WARN, not ERROR: the orchestrator logs the terminal outcome (quarantine)
+            // at the appropriate level — this line adds parse detail, not a second alarm.
+            logger.warn("Invalid JSON in message {}: {}", messageId, e.getOriginalMessage());
             throw new MessageParseException("Invalid JSON format", messageId, payload, e);
         }
     }

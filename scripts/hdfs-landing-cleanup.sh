@@ -102,12 +102,51 @@ run_or_echo() {
 
 # Emits "epoch<TAB>path" for plain files (no directories) directly in $1.
 # hdfs dfs -ls columns: perms repl owner group size date(yyyy-MM-dd) time(HH:mm) path
+# A FAILED listing (expired ticket, namenode down, ACL loss) must abort the run
+# with the real error — silently treating it as an empty directory would print
+# "scanned 0, archived 0 ... Done" forever while retention quietly stops. The
+# function runs in a process-substitution subshell, so it signals failure via a
+# marker file that the parent checks after each pass.
+LS_ERR_FILE=$(mktemp)
+trap 'rm -f "$LS_ERR_FILE" "${LS_ERR_FILE}.failed"' EXIT
+
 list_files_with_epoch() {
-    hdfs dfs -ls "$1" 2>/dev/null | awk '$1 ~ /^-/ { print $6" "$7"\t"$8 }' \
+    local listing
+    if ! listing=$(hdfs dfs -ls "$1" 2>"$LS_ERR_FILE"); then
+        touch "${LS_ERR_FILE}.failed"
+        return 0
+    fi
+    printf '%s\n' "$listing" | awk '$1 ~ /^-/ { print $6" "$7"\t"$8 }' \
     | while IFS=$'\t' read -r datetime path; do
         epoch=$(date -d "$datetime" +%s 2>/dev/null) || continue
         printf '%s\t%s\n' "$epoch" "$path"
     done
+}
+
+abort_if_listing_failed() {
+    if [ -f "${LS_ERR_FILE}.failed" ]; then
+        echo "ERROR: HDFS listing of $1 failed — aborting (nothing was silently skipped):" >&2
+        cat "$LS_ERR_FILE" >&2
+        exit 2
+    fi
+}
+
+# Per-file failures (e.g. an archive name collision) are counted and reported at
+# the end instead of aborting the whole sweep mid-pass under set -e.
+op_failures=0
+move_or_count() {
+    run_or_echo hdfs dfs -mv "$1" "$2" || {
+        echo "WARN: failed to archive: $1" >&2
+        op_failures=$((op_failures + 1))
+        return 0
+    }
+}
+remove_or_count() {
+    run_or_echo hdfs dfs -rm "$1" || {
+        echo "WARN: failed to delete: $1" >&2
+        op_failures=$((op_failures + 1))
+        return 0
+    }
 }
 
 run_or_echo hdfs dfs -mkdir -p "$ARCHIVE"
@@ -124,10 +163,11 @@ while IFS=$'\t' read -r epoch path; do
     esac
     scanned=$((scanned + 1))
     if [ "$epoch" -lt "$LANDING_CUTOFF" ]; then
-        run_or_echo hdfs dfs -mv "$path" "$ARCHIVE/"
+        move_or_count "$path" "$ARCHIVE/"
         archived=$((archived + 1))
     fi
 done < <(list_files_with_epoch "$LANDING")
+abort_if_listing_failed "$LANDING"
 echo "Landing pass: scanned ${scanned} json file(s), archived ${archived}"
 
 # ---------------------------------------------------------------------------
@@ -141,10 +181,11 @@ while IFS=$'\t' read -r epoch path; do
         *) continue ;;
     esac
     if [ "$epoch" -lt "$TMP_CUTOFF" ]; then
-        run_or_echo hdfs dfs -rm "$path"
+        remove_or_count "$path"
         tmp_deleted=$((tmp_deleted + 1))
     fi
 done < <(list_files_with_epoch "$LANDING")
+abort_if_listing_failed "$LANDING"
 echo "Tmp pass: deleted ${tmp_deleted} orphaned .tmp file(s)"
 
 # ---------------------------------------------------------------------------
@@ -158,11 +199,16 @@ while IFS=$'\t' read -r epoch path; do
         *) continue ;;
     esac
     if [ "$epoch" -lt "$ARCHIVE_CUTOFF" ]; then
-        run_or_echo hdfs dfs -rm "$path"
+        remove_or_count "$path"
         purged=$((purged + 1))
     fi
 done < <(list_files_with_epoch "$ARCHIVE")
+abort_if_listing_failed "$ARCHIVE"
 echo "Archive pass: deleted ${purged} file(s)"
 
 echo ""
-echo "Done: archived=${archived}, tmp_deleted=${tmp_deleted}, purged=${purged}, dry_run=${DRY_RUN}"
+echo "Done: archived=${archived}, tmp_deleted=${tmp_deleted}, purged=${purged}, op_failures=${op_failures}, dry_run=${DRY_RUN}"
+if [ "$op_failures" -gt 0 ]; then
+    echo "WARNING: ${op_failures} file operation(s) failed — see WARN lines above"
+    exit 1
+fi

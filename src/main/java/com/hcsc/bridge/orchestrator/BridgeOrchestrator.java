@@ -119,7 +119,7 @@ public class BridgeOrchestrator {
         } catch (MessageParseException e) {
             return handleParseFailure(ctx, mqMessage, e);
         } catch (EnrichmentException e) {
-            return handleEnrichmentFailure(ctx, e);
+            return handleEnrichmentFailure(ctx, mqMessage, e);
         } catch (HdfsWriteException e) {
             return handleHdfsFailure(ctx, e);
         } catch (KafkaPublishException e) {
@@ -206,8 +206,38 @@ public class BridgeOrchestrator {
         }
     }
 
-    private ProcessingResult handleEnrichmentFailure(ProcessingContext ctx, EnrichmentException e) {
-        logger.error("Enrichment failure for eventId {}: {}", ctx.getEventId(), e.getMessage());
+    /**
+     * Retryable enrichment failures (5xx, timeouts, token trouble) return FAILURE so MQ
+     * redelivers. Non-retryable ones (4xx — e.g. a plan identifier that will never resolve)
+     * are PERMANENT: redelivery repeats the identical 4xx and, with concurrency=1, the
+     * unacknowledged message head-of-line-blocks the whole queue. Those take the same
+     * quarantine-then-ack path as parse failures, with the same safety invariant: ack only
+     * if the raw payload was durably preserved.
+     */
+    private ProcessingResult handleEnrichmentFailure(ProcessingContext ctx, MqMessage mqMessage,
+                                                     EnrichmentException e) {
+        if (!e.isRetryable()) {
+            logger.error("Non-retryable enrichment failure for eventId {}: {} — quarantining",
+                    ctx.getEventId(), e.getMessage());
+            try {
+                HdfsWriteResult quarantineResult = hdfsWriter.writeQuarantine(
+                        ctx.getEventId(), mqMessage.getPayload(), ctx.getOriginalMqMessageId());
+                logger.warn("Quarantined message with permanent enrichment failure: eventId={}, path={}",
+                        ctx.getEventId(), quarantineResult.getHdfsPath());
+                publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
+                        "Non-retryable enrichment failure; raw payload quarantined to "
+                                + quarantineResult.getHdfsPath(), e.getMessage());
+                return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
+                        "ENRICHMENT_ERROR", e.getMessage());
+            } catch (RuntimeException quarantineFailure) {
+                logger.error("Quarantine write failed for eventId {} — message will stay on the "
+                        + "queue for redelivery", ctx.getEventId(), quarantineFailure);
+                // fall through to the FAILURE path below
+            }
+        } else {
+            logger.error("Enrichment failure for eventId {} (retryable): {}",
+                    ctx.getEventId(), e.getMessage());
+        }
         publishAudit(ctx, null,
                 AuditEventType.ENRICHMENT_FAILED, "Enrichment failure", e.getMessage());
         return ProcessingResult.failure(ctx.getEventId(), "ENRICHMENT_ERROR", e.getMessage());

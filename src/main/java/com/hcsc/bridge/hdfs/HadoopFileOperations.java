@@ -66,7 +66,12 @@ public class HadoopFileOperations implements HdfsFileOperations {
 
     @Override
     public void delete(String path) throws IOException {
-        fileSystem.delete(new Path(path), false);
+        // HDFS delete() returns false without throwing (e.g. permission change, path
+        // vanished) — surface it, or callers log "cleaned up" while the file remains.
+        boolean deleted = fileSystem.delete(new Path(path), false);
+        if (!deleted && fileSystem.exists(new Path(path))) {
+            logger.warn("HDFS delete returned false and the path still exists: {}", path);
+        }
     }
 
     @Override

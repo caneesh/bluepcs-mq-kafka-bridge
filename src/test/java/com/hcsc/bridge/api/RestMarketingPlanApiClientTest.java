@@ -157,8 +157,11 @@ class RestMarketingPlanApiClientTest {
         }
 
         @Test
-        @DisplayName("should throw non-retryable exception on 401")
-        void shouldThrowOnUnauthorized() {
+        @DisplayName("should refresh the token once on 401 and fail non-retryably if it repeats")
+        void shouldRefreshOnceThenFailOnRepeated401() {
+            // A cached-but-revoked token gets exactly one forced refresh; a second 401
+            // with the fresh token is a real auth problem and must not loop.
+            mockServer.enqueue(new MockResponse().setResponseCode(401));
             mockServer.enqueue(new MockResponse().setResponseCode(401));
 
             client = createClient();
@@ -170,6 +173,25 @@ class RestMarketingPlanApiClientTest {
                         assertThat(ex.getStatusCode()).isEqualTo(401);
                         assertThat(ex.isRetryable()).isFalse();
                     });
+
+            org.mockito.Mockito.verify(jwtTokenProvider).refreshToken();
+            assertThat(mockServer.getRequestCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("should recover when a 401 is fixed by a token refresh")
+        void shouldRecoverAfterTokenRefreshOn401() {
+            mockServer.enqueue(new MockResponse().setResponseCode(401));
+            mockServer.enqueue(new MockResponse()
+                    .setBody(planResponseBody("MP-REFRESHED"))
+                    .setHeader("Content-Type", "application/json"));
+
+            client = createClient();
+
+            MarketingPlanApiClient.EnrichmentResult result = client.enrich(createPayload("ENT-006B"));
+
+            assertThat(result.getMarketingPlanId()).isEqualTo("MP-REFRESHED");
+            org.mockito.Mockito.verify(jwtTokenProvider).refreshToken();
         }
     }
 

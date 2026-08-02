@@ -97,9 +97,14 @@ bridge:
     concurrency: ${MQ_CONCURRENCY:1}
     receive-timeout: ${MQ_RECEIVE_TIMEOUT:5000}
     log-payload: ${MQ_LOG_PAYLOAD:false}
-    # Poison-message guard: discard (log + audit + ack) after this many delivery attempts.
+    # Poison-message guard: quarantine to HDFS + audit + ack after this many delivery attempts.
     # 0 = disabled; prefer queue-manager backout (BOTHRESH/BOQNAME) which preserves the message.
     max-delivery-attempts: ${MQ_MAX_DELIVERY_ATTEMPTS:0}
+    # Redelivery throttle: sleep (deliveryCount-1) * backoff-ms (capped) before reprocessing a
+    # redelivered message, so a persistently failing message cannot spin at broker speed and
+    # flood logs/the audit topic. 0 disables.
+    redelivery-backoff-ms: ${MQ_REDELIVERY_BACKOFF_MS:1000}
+    redelivery-backoff-max-ms: ${MQ_REDELIVERY_BACKOFF_MAX_MS:30000}
     ssl:
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
       truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}

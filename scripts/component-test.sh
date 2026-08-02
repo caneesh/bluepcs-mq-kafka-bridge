@@ -18,6 +18,7 @@
 #   0 - PASS
 #   1 - FAIL
 #   2 - Bad mode/args
+#   3 - Missing prerequisites (secrets / JAR) — set by this script, not the JVM
 # =============================================================================
 
 set -e

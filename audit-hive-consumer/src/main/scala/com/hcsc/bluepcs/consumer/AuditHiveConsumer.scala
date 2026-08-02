@@ -108,6 +108,11 @@ object AuditHiveConsumer {
     val hiveTable        = cfg("hive.table", "bluepcs.bridge_audit_event")
     val batchSeconds     = cfg("batch.seconds", "300").toLong
 
+    // SIGTERM (yarn kill, deploy restart) finishes the in-flight batch before
+    // stopping — without this a batch can complete its Hive write and die before
+    // the offset commit, guaranteeing a full-batch duplicate wave on restart.
+    conf.setIfMissing("spark.streaming.stopGracefullyOnShutdown", "true")
+
     val spark = SparkSession.builder()
       .config(conf)
       .appName("BluepcsAuditHiveConsumer")
@@ -156,8 +161,22 @@ object AuditHiveConsumer {
         logger.info("@@@ AUDIT->HIVE batch written: {} events to {} ({})",
           Long.box(total), hiveTable, offsetRanges.mkString(", "))
 
-        // Commit only after the Hive write succeeded -> at-least-once.
-        stream.asInstanceOf[CanCommitOffsets].commitAsync(offsetRanges)
+        // Commit only after the Hive write succeeded -> at-least-once. The callback
+        // surfaces persistent commit failures (revoked ACL, rebalance storm) with the
+        // @@@ marker the runbook greps for — without it they hide in generic
+        // kafka-client logging while the group's offsets go stale.
+        stream.asInstanceOf[CanCommitOffsets].commitAsync(offsetRanges,
+          new org.apache.kafka.clients.consumer.OffsetCommitCallback {
+            override def onComplete(
+                offsets: java.util.Map[org.apache.kafka.common.TopicPartition,
+                                       org.apache.kafka.clients.consumer.OffsetAndMetadata],
+                exception: Exception): Unit = {
+              if (exception != null) {
+                logger.error("@@@ AUDIT OFFSET COMMIT FAILED — Hive already has this batch; " +
+                  "a restart from stale offsets will duplicate it: {}", exception.toString)
+              }
+            }
+          })
       }
     }
 

@@ -11,6 +11,7 @@
 #   0 - All validation checks passed
 #   1 - One or more validation checks failed
 #   2 - Validation exception occurred
+#   3 - JAR file not found (run 'mvn package' first)
 # =============================================================================
 
 set -e
@@ -105,12 +106,16 @@ elif [ -z "${KAFKA_SASL_JAAS_CONFIG}" ]; then
     echo "         config/test-env.env.template and CONFIGURATION_GUIDE.md."
 fi
 
+# set +e: under set -e a non-zero java exit would kill the script HERE and the
+# RESULT summary below would never print (the exit code itself still propagated,
+# but the scheduler sysout lost the human-readable verdict).
+set +e
 java ${JAAS_OPT} -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --bridge.validate-only=true \
     --bridge.mq.listener-enabled=false
-
 EXIT_CODE=$?
+set -e
 
 echo ""
 echo "============================================"

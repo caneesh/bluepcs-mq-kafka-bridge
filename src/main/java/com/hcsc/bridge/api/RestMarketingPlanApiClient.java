@@ -2,6 +2,7 @@ package com.hcsc.bridge.api;
 
 import com.hcsc.bridge.model.ParsedPayload;
 import com.hcsc.bridge.security.JwtTokenProvider;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.HttpUrl;
@@ -78,12 +79,33 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
     public EnrichmentResult enrich(ParsedPayload payload) throws EnrichmentException {
         String entityId = payload.getEntityId();
         EnrichmentException lastException = null;
+        boolean tokenRefreshed = false;
 
         for (int attempt = 1; attempt <= retryAttempts; attempt++) {
             try {
                 return attemptEnrich(payload, entityId, attempt);
             } catch (EnrichmentException e) {
                 lastException = e;
+                // A locally-"valid" cached token can still be rejected (revoked, rotated,
+                // clock skew, overstated expires_in). Without invalidation every message
+                // 401s against the same cached token until natural expiry — force exactly
+                // one fresh-token attempt before treating the auth failure as permanent.
+                boolean authFailure = e.getStatusCode() == 401 || e.getStatusCode() == 403;
+                if (authFailure && !tokenRefreshed && attempt < retryAttempts) {
+                    logger.warn("Auth failure {} on attempt {}/{} for entityId {}; refreshing "
+                                    + "token and retrying once",
+                            e.getStatusCode(), attempt, retryAttempts, entityId);
+                    try {
+                        jwtTokenProvider.refreshToken();
+                        tokenRefreshed = true;
+                        continue;
+                    } catch (RuntimeException refreshFailure) {
+                        logger.warn("Token refresh after {} failed for entityId {}: {}",
+                                e.getStatusCode(), entityId, refreshFailure.getMessage());
+                        throw new EnrichmentException("Auth failure and token refresh failed: "
+                                + refreshFailure.getMessage(), entityId, refreshFailure, true);
+                    }
+                }
                 if (!e.isRetryable() || attempt >= retryAttempts) {
                     throw e;
                 }
@@ -154,7 +176,8 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                         false
                 );
             } else if (statusCode >= 500) {
-                logger.error("Server error {} for entityId: {} — response: {}",
+                // WARN per attempt — the orchestrator emits the single terminal ERROR
+                logger.warn("Server error {} for entityId: {} — response: {}",
                         statusCode, entityId, safeErrorBody(response));
                 throw new EnrichmentException(
                         "API server error: " + statusCode,
@@ -170,10 +193,10 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 );
             }
         } catch (SocketTimeoutException e) {
-            logger.error("Timeout enriching entityId: {}", entityId);
+            logger.warn("Timeout enriching entityId: {} (attempt {})", entityId, attempt);
             throw new EnrichmentException("Request timed out", entityId, e, true);
         } catch (IOException e) {
-            logger.error("IO error enriching entityId: {}", entityId, e);
+            logger.warn("IO error enriching entityId: {} (attempt {}): {}", entityId, attempt, e.toString());
             throw new EnrichmentException("Failed to call enrichment API", entityId, e, true);
         }
     }
@@ -232,8 +255,13 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
             logger.debug("Enrichment successful for entityId: {}", entityId);
             return new EnrichmentResult(marketingPlanId, null, new HashMap<>(), root);
 
-        } catch (IOException e) {
+        } catch (JsonProcessingException e) {
+            // Malformed JSON in a 2xx body is permanent — retrying gets the same bytes
             throw new EnrichmentException("Failed to parse response", entityId, e, false);
+        } catch (IOException e) {
+            // A stream error reading a 2xx body (connection reset mid-body) is the same
+            // transient network fault class as a reset before the headers — retryable
+            throw new EnrichmentException("Failed to read response body", entityId, e, true);
         }
     }
 }

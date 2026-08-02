@@ -25,14 +25,26 @@ public class KafkaAuditPublisher implements AuditPublisher {
     private final String auditTopic;
     private final ObjectMapper objectMapper;
     private final int timeoutSeconds;
+    private final long failureCooldownMs;
+
+    /**
+     * Outage cooldown (same pattern as the consumer-side ConsumerAuditEmitter): while the
+     * broker is unreachable, send() blocks the CALLING thread up to max.block.ms on
+     * metadata before failing. With 3-4 audit events per message that multiplies MQ
+     * processing latency by minutes per message. After a failure, drop audit events for a
+     * cooldown window instead — audit is explicitly best-effort.
+     */
+    private volatile long suppressUntil = 0L;
 
     public KafkaAuditPublisher(
             KafkaTemplate<String, String> kafkaTemplate,
             @Value("${bridge.kafka.audit-topic:bridge-audit}") String auditTopic,
-            @Value("${bridge.kafka.audit-timeout-seconds:5}") int timeoutSeconds) {
+            @Value("${bridge.kafka.audit-timeout-seconds:5}") int timeoutSeconds,
+            @Value("${bridge.audit.failure-cooldown-ms:60000}") long failureCooldownMs) {
         this.kafkaTemplate = kafkaTemplate;
         this.auditTopic = auditTopic;
         this.timeoutSeconds = timeoutSeconds;
+        this.failureCooldownMs = failureCooldownMs;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
         // Wire contract: timestamp must be an ISO-8601 STRING. A hand-built ObjectMapper
@@ -43,6 +55,9 @@ public class KafkaAuditPublisher implements AuditPublisher {
 
     @Override
     public void publish(AuditEvent event) {
+        if (inCooldown(event)) {
+            return;
+        }
         try {
             String key = event.getEventId() != null ? event.getEventId() : event.getAuditEventId();
             String json = objectMapper.writeValueAsString(event);
@@ -57,12 +72,16 @@ public class KafkaAuditPublisher implements AuditPublisher {
             Thread.currentThread().interrupt();
             logger.error("Interrupted publishing audit event: {}", event.getAuditEventId());
         } catch (ExecutionException | TimeoutException e) {
+            startCooldown(e);
             logger.error("Failed to publish audit event: {}", event.getAuditEventId(), e);
         }
     }
 
     @Override
     public void publishAsync(AuditEvent event) {
+        if (inCooldown(event)) {
+            return;
+        }
         try {
             String key = event.getEventId() != null ? event.getEventId() : event.getAuditEventId();
             String json = objectMapper.writeValueAsString(event);
@@ -70,13 +89,38 @@ public class KafkaAuditPublisher implements AuditPublisher {
             kafkaTemplate.send(auditTopic, key, json)
                     .addCallback(
                             result -> logger.debug("Async audit published: {}", event.getAuditEventId()),
-                            ex -> logger.error("Async audit failed: {}", event.getAuditEventId(), ex)
+                            ex -> {
+                                startCooldown(ex);
+                                logger.error("Async audit failed: {}", event.getAuditEventId(), ex);
+                            }
                     );
         } catch (Exception e) {
             // send() can also throw synchronously (buffer full, closed producer, metadata
             // timeout after max.block.ms). Audit must never break message processing —
             // don't rely solely on the SafeAuditPublisher wrapper for that guarantee.
+            startCooldown(e);
             logger.error("Failed to publish async audit event: {}", event.getAuditEventId(), e);
+        }
+    }
+
+    private boolean inCooldown(AuditEvent event) {
+        if (failureCooldownMs > 0 && System.currentTimeMillis() < suppressUntil) {
+            logger.debug("Audit publish suppressed during cooldown: {}", event.getAuditEventId());
+            return true;
+        }
+        return false;
+    }
+
+    private void startCooldown(Throwable cause) {
+        if (failureCooldownMs <= 0) {
+            return;
+        }
+        boolean wasActive = System.currentTimeMillis() < suppressUntil;
+        suppressUntil = System.currentTimeMillis() + failureCooldownMs;
+        if (!wasActive) {
+            logger.warn("Audit publishing entering {} ms cooldown after failure ({}); audit events "
+                            + "will be DROPPED during the cooldown (audit is best-effort)",
+                    failureCooldownMs, cause.toString());
         }
     }
 }

@@ -172,4 +172,19 @@ class MonitorRunnerTest {
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
     }
+
+    // Regression: the guard once used substring matching ("test-env".contains("test")),
+    // which silently disabled monitor mode in the real test environment — monitor.sh's
+    // default profile. Only the exact Surefire profile "test" may skip.
+    @Test
+    @DisplayName("test-environment guard must NOT trigger for the test-env deployment profile")
+    void testEnvironmentGuardIsExactMatch() {
+        when(environment.getActiveProfiles()).thenReturn(new String[]{"test-env"});
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(runner, "isTestEnvironment"))
+                .isFalse();
+
+        when(environment.getActiveProfiles()).thenReturn(new String[]{"test"});
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(runner, "isTestEnvironment"))
+                .isTrue();
+    }
 }

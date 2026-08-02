@@ -114,6 +114,60 @@ class SecretMaskingUtilTest {
         assertTrue(result.contains("********"));
     }
 
+    // The bridge's payloads are JSON — the quoted-key form is the one that matters
+    // in production. These pin the wire format the prose patterns can never match.
+
+    @Test
+    void maskSecrets_shouldMaskJsonQuotedPassword() {
+        String result = SecretMaskingUtil.maskSecrets("{\"user\":\"bob\",\"password\":\"hunter2\"}");
+        assertFalse(result.contains("hunter2"));
+        assertEquals("{\"user\":\"bob\",\"password\":\"********\"}", result);
+    }
+
+    @Test
+    void maskSecrets_shouldMaskJsonPasswordWithSpaces() {
+        String result = SecretMaskingUtil.maskSecrets("{ \"password\" : \"hunter2\" }");
+        assertFalse(result.contains("hunter2"));
+    }
+
+    @Test
+    void maskSecrets_shouldMaskJsonTokenFields() {
+        String result = SecretMaskingUtil.maskSecrets(
+                "{\"accessToken\":\"eyJhbGciOiJSUzI1NiJ9.payload.sig\",\"refresh_token\":\"rt-123\"}");
+        assertFalse(result.contains("eyJhbGciOiJSUzI1NiJ9"));
+        assertFalse(result.contains("rt-123"));
+    }
+
+    @Test
+    void maskSecrets_shouldMaskJsonSecretAndApiKey() {
+        String result = SecretMaskingUtil.maskSecrets(
+                "{\"clientSecret\":\"s3cr3t\",\"api_key\":\"ak-42\",\"apiKey\":\"ak-43\"}");
+        assertFalse(result.contains("s3cr3t"));
+        assertFalse(result.contains("ak-42"));
+        assertFalse(result.contains("ak-43"));
+    }
+
+    @Test
+    void maskSecrets_shouldMaskJsonUnquotedSecretValue() {
+        String result = SecretMaskingUtil.maskSecrets("{\"apiKey\": 12345, \"count\": 7}");
+        assertFalse(result.contains("12345"));
+        assertTrue(result.contains("\"count\": 7"));
+    }
+
+    @Test
+    void maskSecrets_shouldMaskAuthorizationBearerHeader() {
+        String result = SecretMaskingUtil.maskSecrets(
+                "Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.abc.def");
+        assertFalse(result.contains("eyJhbGciOiJSUzI1NiJ9"));
+        assertTrue(result.contains("********"));
+    }
+
+    @Test
+    void maskSecrets_shouldPreserveNonSecretJsonFields() {
+        String input = "{\"transactionId\":\"tx-1\",\"planId\":\"p-9\",\"effectiveDate\":\"2026/01/01\"}";
+        assertEquals(input, SecretMaskingUtil.maskSecrets(input));
+    }
+
     @Test
     void maskSecrets_shouldHandleNullAndEmpty() {
         assertNull(SecretMaskingUtil.maskSecrets(null));

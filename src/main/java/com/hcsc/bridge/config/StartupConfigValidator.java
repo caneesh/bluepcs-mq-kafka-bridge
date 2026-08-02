@@ -53,6 +53,15 @@ public class StartupConfigValidator {
     @Value("${bridge.kafka.truststore-password:}")
     private String kafkaTruststorePassword;
 
+    @Value("${bridge.kafka.timeout-seconds:190}")
+    private long kafkaPublisherTimeoutSeconds;
+
+    @Value("${bridge.kafka.max-block-ms:60000}")
+    private long kafkaMaxBlockMs;
+
+    @Value("${bridge.kafka.delivery-timeout-ms:120000}")
+    private long kafkaDeliveryTimeoutMs;
+
     @Value("${bridge.hdfs.namenode:}")
     private String hdfsNamenode;
 
@@ -190,6 +199,22 @@ public class StartupConfigValidator {
             } else {
                 logger.info("[KAFKA] Truststore Password: ********");
             }
+        }
+
+        // Timeout coherence: the publisher's future.get() wait must exceed the producer's
+        // own budget (metadata max.block + delivery.timeout), or the publisher gives up on
+        // records still in flight — which then usually deliver anyway, guaranteeing
+        // duplicate-looking redeliveries exactly during broker incidents.
+        long producerBudgetMs = kafkaMaxBlockMs + kafkaDeliveryTimeoutMs;
+        if (kafkaPublisherTimeoutSeconds * 1000 < producerBudgetMs) {
+            warnings.add(String.format(
+                    "[KAFKA] bridge.kafka.timeout-seconds (%ds) is less than max-block-ms + "
+                            + "delivery-timeout-ms (%dms) - the publisher can time out on "
+                            + "records that later deliver, causing duplicates on redelivery",
+                    kafkaPublisherTimeoutSeconds, producerBudgetMs));
+        } else {
+            logger.info("[KAFKA] Publisher wait {}s >= producer budget {}ms (coherent)",
+                    kafkaPublisherTimeoutSeconds, producerBudgetMs);
         }
     }
 

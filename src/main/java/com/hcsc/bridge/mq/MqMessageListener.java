@@ -3,7 +3,10 @@ package com.hcsc.bridge.mq;
 import com.hcsc.bridge.audit.AuditEvent;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
+import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.core.SecretMaskingUtil;
+import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
+import com.hcsc.bridge.model.HdfsWriteResult;
 import com.hcsc.bridge.model.MqMessage;
 import com.hcsc.bridge.orchestrator.BridgeOrchestrator;
 import com.hcsc.bridge.orchestrator.ProcessingResult;
@@ -31,24 +34,40 @@ public class MqMessageListener {
 
     private final BridgeOrchestrator orchestrator;
     private final AuditPublisher auditPublisher;
+    private final HdfsSafePayloadWriter payloadWriter;
+    private final EventIdGenerator eventIdGenerator;
 
     @Value("${bridge.mq.log-payload:false}")
     private boolean logPayload;
 
     /**
-     * Poison-message guard: if a message's JMSXDeliveryCount exceeds this value, the message is
-     * logged in full (masked), audited as MESSAGE_DISCARDED, and acknowledged to unblock the queue.
-     * 0 (the default) disables the guard — rely on the queue manager's backout threshold
-     * (BOTHRESH/BOQNAME) instead, which preserves the message on a backout queue.
-     * Only enable this when broker-side backout is not available: discarded payloads survive
-     * only in application logs and the audit topic.
+     * Poison-message guard: if a message's JMSXDeliveryCount exceeds this value, the payload is
+     * quarantined to HDFS, audited as MESSAGE_DISCARDED, and the message is acknowledged to
+     * unblock the queue. 0 (the default) disables the guard — rely on the queue manager's
+     * backout threshold (BOTHRESH/BOQNAME) instead, which preserves the message on a backout
+     * queue. Only enable this when broker-side backout is not available.
      */
     @Value("${bridge.mq.max-delivery-attempts:0}")
     private int maxDeliveryAttempts;
 
-    public MqMessageListener(BridgeOrchestrator orchestrator, AuditPublisher auditPublisher) {
+    /**
+     * Redelivery throttle: sleep (deliveryCount-1) * this many ms (capped below) before
+     * processing a redelivered message. Without it a persistent failure (HDFS outage, permanent
+     * enrichment 4xx with the guard disabled) spins the same message at tens of attempts per
+     * second, flooding logs and the audit topic. 0 disables.
+     */
+    @Value("${bridge.mq.redelivery-backoff-ms:1000}")
+    private long redeliveryBackoffMs;
+
+    @Value("${bridge.mq.redelivery-backoff-max-ms:30000}")
+    private long redeliveryBackoffMaxMs;
+
+    public MqMessageListener(BridgeOrchestrator orchestrator, AuditPublisher auditPublisher,
+                             HdfsSafePayloadWriter payloadWriter, EventIdGenerator eventIdGenerator) {
         this.orchestrator = orchestrator;
         this.auditPublisher = auditPublisher;
+        this.payloadWriter = payloadWriter;
+        this.eventIdGenerator = eventIdGenerator;
     }
 
     @JmsListener(destination = "${bridge.mq.queue:BRIDGE.INPUT.QUEUE}")
@@ -66,16 +85,34 @@ public class MqMessageListener {
             }
 
             TextMessage textMessage = (TextMessage) message;
+            // Headers/properties first: the poison guard must be evaluable even when the
+            // BODY cannot be read (getText() below can throw on every delivery).
             messageId = textMessage.getJMSMessageID();
             String correlationId = textMessage.getJMSCorrelationID();
-            String payload = textMessage.getText();
             int deliveryCount = getDeliveryCount(message);
             String queueName = extractQueueName(message);
+            boolean poison = maxDeliveryAttempts > 0 && deliveryCount > maxDeliveryAttempts;
+
+            String payload;
+            try {
+                payload = textMessage.getText();
+            } catch (JMSException bodyReadFailure) {
+                // Typically a CCSID/format conversion error — it throws on EVERY delivery,
+                // so if the guard is armed and tripped this is the only place it can act;
+                // rethrowing here forever would bypass the guard entirely.
+                if (poison) {
+                    logger.error("Message body unreadable on delivery {} (max {}): messageId={} — discarding",
+                            deliveryCount, maxDeliveryAttempts, messageId, bodyReadFailure);
+                    discardPoisonMessage(message, messageId, correlationId, null, queueName, deliveryCount);
+                    return;
+                }
+                throw bodyReadFailure;
+            }
 
             logger.info("=== INCOMING MQ MESSAGE ===");
             logger.info("  JMSMessageID: {}", messageId);
-            logger.info("  JMSCorrelationID: {}", correlationId);
-            logger.info("  Queue: {}", queueName);
+            logger.info("  JMSCorrelationID: {}", sanitizeForLog(correlationId));
+            logger.info("  Queue: {}", sanitizeForLog(queueName));
             logger.info("  Payload size: {} bytes", payload != null ? payload.length() : 0);
             if (deliveryCount > 1) {
                 logger.warn("  Redelivery: JMSXDeliveryCount={}", deliveryCount);
@@ -91,10 +128,12 @@ public class MqMessageListener {
             }
             logger.info("===========================");
 
-            if (maxDeliveryAttempts > 0 && deliveryCount > maxDeliveryAttempts) {
+            if (poison) {
                 discardPoisonMessage(message, messageId, correlationId, payload, queueName, deliveryCount);
                 return;
             }
+
+            throttleRedelivery(deliveryCount, messageId);
 
             MqMessage mqMessage = new MqMessage(
                     messageId,
@@ -150,18 +189,20 @@ public class MqMessageListener {
     }
 
     /**
-     * Discards a message that has exceeded {@code bridge.mq.max-delivery-attempts}: logs the full
-     * masked payload (this is the last copy before it is lost from MQ), publishes a
-     * MESSAGE_DISCARDED audit event, and acknowledges. Every step here is best-effort — the
-     * acknowledge MUST be reached, otherwise the poison message keeps blocking the queue.
+     * Discards a message that has exceeded {@code bridge.mq.max-delivery-attempts}: preserves the
+     * payload in the HDFS quarantine directory (durable, access-controlled — payloads may contain
+     * PHI and must not land in application logs), publishes a MESSAGE_DISCARDED audit event, and
+     * acknowledges. Every step here is best-effort — the acknowledge MUST be reached, otherwise
+     * the poison message keeps blocking the queue.
      */
     private void discardPoisonMessage(Message message, String messageId, String correlationId,
                                       String payload, String queueName, int deliveryCount) {
-        String maskedPayload = payload != null ? SecretMaskingUtil.maskSecrets(payload) : "<null>";
+        String preservedAt = quarantineDiscardedPayload(messageId, payload);
         logger.error("POISON MESSAGE: discarding after {} delivery attempts "
                         + "(bridge.mq.max-delivery-attempts={}): messageId={}, correlationId={}, queue={}. "
-                        + "Last copy of masked payload before discard:\n{}",
-                deliveryCount, maxDeliveryAttempts, messageId, correlationId, queueName, maskedPayload);
+                        + "Payload preserved at: {}",
+                deliveryCount, maxDeliveryAttempts, messageId, sanitizeForLog(correlationId),
+                sanitizeForLog(queueName), preservedAt);
 
         try {
             auditPublisher.publishAsync(AuditEvent.builder()
@@ -179,12 +220,64 @@ public class MqMessageListener {
                     .errorMessage("Exceeded max delivery attempts")
                     .build());
         } catch (RuntimeException e) {
-            // Never let audit failure prevent the acknowledge below — the payload is already
-            // preserved in the log line above.
+            // Never let audit failure prevent the acknowledge below.
             logger.error("Failed to publish MESSAGE_DISCARDED audit event for messageId={}", messageId, e);
         }
 
         acknowledgeQuietly(message, "poison-message discard (messageId=" + messageId + ")");
+    }
+
+    /**
+     * Preserves a to-be-discarded payload in the HDFS quarantine directory and returns its path.
+     * Falls back to a masked, truncated log dump only when the quarantine write fails — losing
+     * the payload entirely would be worse than a bounded, masked log line.
+     */
+    private String quarantineDiscardedPayload(String messageId, String payload) {
+        if (payload == null) {
+            return "<no payload - body unreadable>";
+        }
+        try {
+            String eventId = eventIdGenerator.generateEventId(
+                    messageId != null && !messageId.isEmpty() ? messageId : payload);
+            HdfsWriteResult result = payloadWriter.writeQuarantine(eventId, payload, messageId);
+            return result.getHdfsPath();
+        } catch (RuntimeException e) {
+            logger.error("Quarantine write failed for poison message {}; falling back to log preservation",
+                    messageId, e);
+            String masked = SecretMaskingUtil.maskSecrets(payload);
+            if (masked.length() > MAX_LOGGED_PAYLOAD_CHARS) {
+                masked = masked.substring(0, MAX_LOGGED_PAYLOAD_CHARS)
+                        + "... (truncated, " + payload.length() + " chars total)";
+            }
+            logger.error("Last (masked, truncated) copy of discarded payload for messageId={}:\n{}",
+                    messageId, masked);
+            return "<quarantine write failed - see log>";
+        }
+    }
+
+    /**
+     * Backoff for redelivered messages — see {@code redeliveryBackoffMs}. Sleeping on the listener
+     * thread is deliberate: with concurrency=1 the point is to slow the redelivery spin of a
+     * persistently failing message, trading queue latency for not melting logs/audit.
+     */
+    private void throttleRedelivery(int deliveryCount, String messageId) {
+        if (redeliveryBackoffMs <= 0 || deliveryCount <= 1) {
+            return;
+        }
+        long delay = Math.min((deliveryCount - 1) * redeliveryBackoffMs, redeliveryBackoffMaxMs);
+        logger.info("Redelivery {} of message {}; backing off {} ms before processing",
+                deliveryCount, messageId, delay);
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Redelivery backoff interrupted for message {}; continuing", messageId);
+        }
+    }
+
+    /** Strips CR/LF from message-derived values so a crafted header cannot forge log lines. */
+    private static String sanitizeForLog(String value) {
+        return value == null ? null : value.replaceAll("[\\r\\n]", "_");
     }
 
     /**
@@ -226,7 +319,11 @@ public class MqMessageListener {
                 return message.getIntProperty(JMSX_DELIVERY_COUNT);
             }
         } catch (JMSException e) {
-            logger.debug("Could not read {} from message", JMSX_DELIVERY_COUNT, e);
+            // WARN, not DEBUG: if this fails persistently the poison guard is silently
+            // inoperative, and the on-call engineer needs to see why a known-poison
+            // message is not being discarded.
+            logger.warn("Could not read {} from message; poison guard sees delivery count 1",
+                    JMSX_DELIVERY_COUNT, e);
         }
         return 1;
     }
