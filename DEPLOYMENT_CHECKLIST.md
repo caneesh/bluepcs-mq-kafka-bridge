@@ -100,11 +100,10 @@ landed files).
 - [ ] Note for consumers: if a file is moved away and MQ ever redelivers
       the same message (e.g. recovery), the bridge will re-land and
       re-notify it — consumers should dedupe on `eventId`
-- [ ] Prod base path verified against the prod `.prm`:
-      `application-prod.yml` currently defaults `HDFS_BASE_PATH` to
-      `/test/oort/product/bluepcs/hive/csv` — a *test*-looking path in the
-      prod profile. Confirm the real prod value and override via
-      `HDFS_BASE_PATH` if it differs.
+- [ ] Prod base path verified against the prod `.prm`: `application-prod.yml`
+      defaults `HDFS_BASE_PATH` to `/prod/work/product/bluepcs/hive/raw`
+      (`uv_work_HDFS_Path`) and the archive to its `archive/` subdirectory
+      (`uv_archive_HDFS_Path`).
 
 ### Step 7: Validate connectivity (no messages consumed)
 

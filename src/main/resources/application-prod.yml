@@ -3,13 +3,15 @@
 #
 # MANDATORY ENVIRONMENT VARIABLES - Deployment team must set:
 # - KAFKA_TRUSTSTORE_PASSWORD: Kafka SSL truststore password
+# - OAUTH_CLIENT_ID: OAuth2 client id (uv_clientID - secret, no default here)
 # - OAUTH_CLIENT_SECRET: OAuth2 client secret for API authentication
 # - API_PASSWORD: Marketing Plan API password
 # - HDFS_KERBEROS_KEYTAB: Path to Kerberos keytab (if different from default)
 #
 # OPTIONAL:
-# - MQ_PASSWORD: set only if the queue manager requires MQCSP password auth;
-#   like test, the prod QM may authenticate by user id / channel auth alone
+# - MQ_PASSWORD: set only if the queue manager requires MQCSP password auth.
+#   The prod .prm carries uv_MQ_Password, so the prod QM likely DOES require
+#   it - expect to set this (unlike test)
 
 bridge:
   # ============================================================================
@@ -17,12 +19,12 @@ bridge:
   # Source: cv_MQ_* properties from Talend
   # ============================================================================
   mq:
-    host: ${MQ_HOST:penuslika02.app.hscint.net}
-    port: ${MQ_PORT:1412}
-    queue-manager: ${MQ_QUEUE_MANAGER:MQGP1}
-    channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
-    queue: ${MQ_QUEUE:QDP.BPCS.MALESODA.PROD.BLOB}
-    username: ${MQ_USERNAME:bluepcsapp}
+    host: ${MQ_HOST:pwausxhdapp02.app.hcscint.net}
+    port: ${MQ_PORT:3112}
+    queue-manager: ${MQ_QUEUE_MANAGER:MQHDPP2}
+    channel: ${MQ_CHANNEL:DDA.APP.SVRCONN}
+    queue: ${MQ_QUEUE:GRP.BPCS.MULE2DDA.PROD.SUBQ}
+    username: ${MQ_USERNAME:hdpapp}
     # set MQ_PASSWORD only if the queue manager requires MQCSP auth
     password: ${MQ_PASSWORD:}
     # Must stay at 1: the HDFS exists-check/write/rename sequence is not atomic, so
@@ -41,23 +43,25 @@ bridge:
   # Source: cv_kfk_* properties from Talend
   # ============================================================================
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:penuslika02.app.hscint.net:9093,penuslika03.app.hscint.net:9093,penuslika04.app.hscint.net:9093,penuslika05.app.hscint.net:9093,parentlika05.app.hscint.net:9093}
-    topic: ${KAFKA_TOPIC:QDA_PRODUCT_PMM_PRODUCT_GOLD_PRO}
-    audit-topic: ${KAFKA_AUDIT_TOPIC:QDA_PRODUCT_BRIDGE_AUDIT}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:pwauslclkap02.app.hcscint.net:9093,pwauslclkap03.app.hcscint.net:9093,pwauslclkap04.app.hcscint.net:9093,pwauslclkap05.app.hcscint.net:9093,paznslclkap03.app.hcscint.net:9093,paznslclkap04.app.hcscint.net:9093,paznslclkap05.app.hcscint.net:9093,paznslclkap06.app.hcscint.net:9093,pazsslclkap01.app.hcscint.net:9093,pazsslclkap02.app.hcscint.net:9093,pazsslclkap03.app.hcscint.net:9093,pazsslclkap04.app.hcscint.net:9093}
+    topic: ${KAFKA_TOPIC:DAS_PRODUCT_PMM_PRODUCT_GOLD}
+    # Audit topic is bridge-specific (not in the Talend .prm) - name follows the
+    # DAS_ convention of the main topic; confirm with the Kafka team at creation
+    audit-topic: ${KAFKA_AUDIT_TOPIC:DAS_PRODUCT_BRIDGE_AUDIT}
     security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
     sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
     sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
-    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:/datalakedm/prod/gold/integration/conf/product/prod_kfka_jaas_sasl_jaas.conf}
-    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:ep-kafka}
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:/datalakedata/prod/gold/integration/conf/product/common/prod_kafka_jaas_confluent.conf}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:cp-kafka}
     # SSL/TLS settings
-    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedm/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore_prod_0826.jks}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/datalakedata/prod/gold/integration/conf/product/confluent_kafka/kafka.truststore-prod_2025.jks}
     truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
     truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
     keystore-location: ${KAFKA_KEYSTORE_LOCATION:}
     keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
     key-password: ${KAFKA_KEY_PASSWORD:}
     # Producer settings
-    request-size: ${KAFKA_REQUEST_SIZE:4194400}
+    request-size: ${KAFKA_REQUEST_SIZE:8388608}
     delivery-timeout-ms: 120000
     request-timeout-ms: 30000
     max-block-ms: 60000
@@ -70,24 +74,24 @@ bridge:
   hdfs:
     # PRDODPHA is the prod HDFS load balancer (DNS name, NameNode default port 8020)
     namenode: ${HDFS_NAMENODE:hdfs://PRDODPHA}
-    base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
-    archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}
+    base-path: ${HDFS_BASE_PATH:/prod/work/product/bluepcs/hive/raw}
+    archive-path: ${HDFS_ARCHIVE_PATH:/prod/work/product/bluepcs/hive/raw/archive}
     replication: ${HDFS_REPLICATION:3}
     temp-suffix: .tmp
     # Kerberos authentication
     kerberos:
       enabled: ${HDFS_KERBEROS_ENABLED:true}
-      principal: ${HDFS_KERBEROS_PRINCIPAL:e4193139@HSCINT.NET}
-      keytab: ${HDFS_KERBEROS_KEYTAB:/etc/security/keytabs/e4193139.keytab}
-      namenode-principal: ${HDFS_NAMENODE_PRINCIPAL:nn/_HOST@HSCINT.NET}
-      resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:yarn/_HOST@HSCINT.NET}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:a6193139@ADHCSCINT.NET}
+      keytab: ${HDFS_KERBEROS_KEYTAB:/etc/security/keytabs/a6193139.keytab}
+      namenode-principal: ${HDFS_NAMENODE_PRINCIPAL:nn/_HOST@ADHCSCINT.NET}
+      resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:rm/_HOST@ADHCSCINT.NET}
 
   # ============================================================================
   # HBase Configuration (opt-in via 'hbase' profile)
   # Source: cv_hv_* properties from Talend
   # ============================================================================
   hbase:
-    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:penuslika02.app.hscint.net,penuslika03.app.hscint.net,penuslika04.app.hscint.net}
+    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:pwausl4slmn01.app.hcscint.net,pwausl4slmn02.app.hcscint.net,pwausl4slmn03.app.hcscint.net}
     zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
     znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
     ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
@@ -97,7 +101,7 @@ bridge:
   # Source: cv_planitfeb_api_url, cv_security_token_* from Talend
   # ============================================================================
   api:
-    base-url: ${API_BASE_URL:https://api-gateway-v2-wv.hscint.net/xps_product_catalog/v3/plans}
+    base-url: ${API_BASE_URL:https://api-gateway-ssl-svc.hcscint.net/eps_product_catalog/v2/plans}
     timeout-seconds: ${API_TIMEOUT_SECONDS:30}
     retry-attempts: ${API_RETRY_ATTEMPTS:3}
     retry-delay-ms: ${API_RETRY_DELAY_MS:1000}
@@ -107,11 +111,12 @@ bridge:
   # Source: cv_security_token_*, cv_clientSecret, cv_serviceaccount from Talend
   # ============================================================================
   security:
-    token-url: ${OAUTH_TOKEN_URL:https://f5-app-gw-api-wv.hscint.net/sts/v6/jwt_clustered_token_internal}
-    client-id: ${OAUTH_CLIENT_ID:pendatum.profile}
+    token-url: ${OAUTH_TOKEN_URL:https://p-sso-sg-prd-svc.hcscint.net/sts/v5/jwt_clientcred_token_internal}
+    # uv_clientID is redacted in the .prm - a secret with no default, like the client secret
+    client-id: ${OAUTH_CLIENT_ID}
     client-secret: ${OAUTH_CLIENT_SECRET}
-    scope: ${OAUTH_SCOPE:}
-    username: ${API_USERNAME:e4193139}
+    scope: ${OAUTH_SCOPE:openid permissions profile}
+    username: ${API_USERNAME:a6193139}
     password: ${API_PASSWORD:}
 
   # ============================================================================
@@ -126,7 +131,7 @@ bridge:
     publisher: ${AUDIT_PUBLISHER:kafka}
 
   logging:
-    directory: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}
+    directory: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}
 
   # ============================================================================
   # Recovery Configuration
@@ -163,7 +168,7 @@ logging:
     org.apache.hbase: WARN
     com.ibm.mq: WARN
   file:
-    name: ${LOG_DIRECTORY:/datalakedm/prod/gold/integration/logs/product/bluepcs/talend}/bridge-application.log
+    name: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}/bridge-application.log
 
 # ============================================================================
 # Actuator Configuration
