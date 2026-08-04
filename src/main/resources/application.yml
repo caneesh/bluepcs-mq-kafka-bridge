@@ -7,6 +7,9 @@ spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
 
+  # LOCAL PROFILE ONLY: feeds Spring Boot's auto-configured KafkaTemplate, which the
+  # local profile relies on (the custom KafkaConfiguration beans are @Profile("!local")
+  # and replace the auto-config everywhere else, making this block inert there).
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -29,21 +32,22 @@ bridge:
     delivery-timeout-ms: ${KAFKA_DELIVERY_TIMEOUT_MS:120000}
     request-timeout-ms: ${KAFKA_REQUEST_TIMEOUT_MS:30000}
     max-block-ms: ${KAFKA_MAX_BLOCK_MS:60000}
-    # Security - must be provided by deployment team for SASL/SSL
-    security:
-      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
-    sasl:
-      mechanism: ${KAFKA_SASL_MECHANISM:}
-      jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
-      kerberos:
-        service-name: ${KAFKA_SASL_KERBEROS_SERVICE_NAME:}
-    ssl:
-      truststore-location: ${KAFKA_SSL_TRUSTSTORE_LOCATION:}
-      truststore-password: ${KAFKA_SSL_TRUSTSTORE_PASSWORD:}
-      truststore-type: ${KAFKA_SSL_TRUSTSTORE_TYPE:JKS}
-      keystore-location: ${KAFKA_SSL_KEYSTORE_LOCATION:}
-      keystore-password: ${KAFKA_SSL_KEYSTORE_PASSWORD:}
-      key-password: ${KAFKA_SSL_KEY_PASSWORD:}
+    # Security — FLAT keys: this is the shape BridgeProperties/KafkaConfiguration and
+    # StartupConfigValidator actually bind (nested bridge.kafka.security.*/sasl.*/ssl.*
+    # keys bind to NOTHING and previously sat here as dead config). Env var names match
+    # the prod/test-env profiles and templates. Defaults align with BridgeProperties so
+    # the validator and the runtime can never disagree on the effective protocol.
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+    truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
+    keystore-location: ${KAFKA_KEYSTORE_LOCATION:}
+    keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
+    key-password: ${KAFKA_KEY_PASSWORD:}
 
   # HDFS Configuration
   hdfs:

@@ -44,7 +44,9 @@ public class StartupConfigValidator {
     @Value("${bridge.kafka.topic:}")
     private String kafkaTopic;
 
-    @Value("${bridge.kafka.security-protocol:PLAINTEXT}")
+    // Default matches BridgeProperties.securityProtocol — a divergence here would let
+    // validation judge a different protocol than the one the producer is built with
+    @Value("${bridge.kafka.security-protocol:SASL_SSL}")
     private String kafkaSecurityProtocol;
 
     @Value("${bridge.kafka.truststore-location:}")
