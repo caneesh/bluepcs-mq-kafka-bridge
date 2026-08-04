@@ -106,6 +106,15 @@ public class LocalFileSystemHdfsOperations implements HdfsFileOperations {
     }
 
     @Override
+    public String readUtf8(String path) throws IOException {
+        Path fullPath = resolvePath(path);
+        if (!Files.exists(fullPath)) {
+            throw new IOException("File not found: " + path);
+        }
+        return new String(Files.readAllBytes(fullPath), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Override
     public void mkdirs(String path) throws IOException {
         Path fullPath = resolvePath(path);
         Files.createDirectories(fullPath);

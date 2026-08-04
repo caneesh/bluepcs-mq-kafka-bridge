@@ -104,6 +104,9 @@ public class StartupConfigValidator {
     @Value("${bridge.monitor.enabled:false}")
     private boolean monitorEnabled;
 
+    @Value("${bridge.replay:}")
+    private String replayMode;
+
     @PostConstruct
     public void validateConfiguration() {
         logger.info("=== STARTUP CONFIGURATION VALIDATION ===");
@@ -190,7 +193,8 @@ public class StartupConfigValidator {
      * component-test, monitor) never consume by design and are exempt.
      */
     void validateListenerGate(List<String> errors, List<String> warnings) {
-        boolean diagnosticMode = validateOnly || monitorEnabled || !isBlank(componentTestMode);
+        boolean diagnosticMode = validateOnly || monitorEnabled
+                || !isBlank(componentTestMode) || !isBlank(replayMode);
         if (diagnosticMode) {
             return;
         }

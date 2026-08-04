@@ -614,7 +614,8 @@ cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
   consumer's `BridgeMessageResolver` (see `docs/consumer/BridgeMessageResolver.scala`).
   Size it to exceed the longest expected consumer outage.
 - The `errors/` quarantine directory is NEVER auto-cleaned — a quarantined file is the
-  only copy of an unparseable message; review and delete manually.
+  only copy of an unparseable message; review it, then replay or delete it (see
+  "Quarantine review and replay" below).
 - Cron entry (on the edge node, after `hdfs`/`kinit` are on PATH):
   `15 2 * * * /path/to/scripts/hdfs-landing-cleanup.sh >> /var/log/bluepcs/hdfs-cleanup.log 2>&1`
 - Use `--dry-run` first to see what a sweep would do without touching anything.
@@ -634,6 +635,32 @@ cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
 - Duplicate Kafka publishes are acceptable (downstream deduplicates by event_id)
 - HDFS writes are idempotent (file already exists = skip) — including quarantine writes
 - Event ID is deterministic (SHA-256 of JMS Message ID)
+
+### Quarantine review and replay
+
+A quarantined message was ACKed off the queue — its payload survives only as
+`<error-path>/<eventId>.json`. `scripts/quarantine-replay.sh` is the way back:
+
+```bash
+./scripts/quarantine-replay.sh list                                # what is quarantined
+./scripts/quarantine-replay.sh /prod/.../errors/<eventId>.json     # re-put to the input queue
+```
+
+Runbook:
+
+1. A `MESSAGE_QUARANTINED` (or `MESSAGE_DISCARDED`) audit event / monitor alert names the
+   eventId. Inspect the file (`hdfs dfs -cat`) and the bridge log around that eventId to
+   understand WHY it quarantined.
+2. Fix the cause first (parser fix, upstream data fix). Replaying an unchanged unparseable
+   message just quarantines it again under a new eventId.
+3. Replay. The payload is re-put verbatim as a NEW message: new JMSMessageID, new eventId,
+   processed by the running bridge as a brand-new event. Quarantined messages never reached
+   Kafka, so replay cannot create downstream duplicates by itself.
+4. Each successfully replayed file is moved to `<error-path>/replayed/` so a re-run cannot
+   double-replay. If the log says a file was replayed but could NOT be moved, move it
+   manually before any re-run.
+5. Files judged genuinely unwanted (test junk, malformed garbage) can be deleted manually
+   after review — nothing else references them.
 
 ### Poison Messages
 

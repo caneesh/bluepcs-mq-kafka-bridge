@@ -79,6 +79,19 @@ public class HadoopFileOperations implements HdfsFileOperations {
         return calculateLocalChecksum(path);
     }
 
+    @Override
+    public String readUtf8(String path) throws IOException {
+        try (var inputStream = fileSystem.open(new Path(path));
+             var out = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
+            }
+            return out.toString(java.nio.charset.StandardCharsets.UTF_8.name());
+        }
+    }
+
     private String calculateLocalChecksum(String path) throws IOException {
         try (var inputStream = fileSystem.open(new Path(path))) {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");

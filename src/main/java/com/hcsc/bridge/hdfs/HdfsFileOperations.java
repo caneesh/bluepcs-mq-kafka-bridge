@@ -17,6 +17,12 @@ public interface HdfsFileOperations {
 
     String getFileChecksum(String path) throws IOException;
 
+    /**
+     * Reads the full content of {@code path} as UTF-8 text. Intended for the quarantine
+     * replay tool — quarantined payloads are single MQ messages, small by definition.
+     */
+    String readUtf8(String path) throws IOException;
+
     void mkdirs(String path) throws IOException;
 
     /**
