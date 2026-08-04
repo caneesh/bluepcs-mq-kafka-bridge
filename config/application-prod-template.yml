@@ -172,7 +172,9 @@ logging:
 management:
   endpoint:
     health:
-      show-details: when_authorized
+      # 'always' is required: the Control-M monitor reads the mqListener details to
+      # verify the bridge is consuming; when_authorized (no Spring Security) hides them
+      show-details: always
   endpoints:
     web:
       exposure:

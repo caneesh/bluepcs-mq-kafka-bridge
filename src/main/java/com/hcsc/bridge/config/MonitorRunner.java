@@ -192,15 +192,25 @@ public class MonitorRunner implements ApplicationRunner {
             return EXIT_HEALTH_DOWN;
         }
 
+        // Never report PASSED on an unverifiable check: with
+        // management.endpoint.health.show-details hidden (e.g. when_authorized with no
+        // Spring Security on the classpath) the response is a bare {"status":"UP"} and
+        // the listener state is unobservable — silently skipping the check here is how
+        // "UP but consuming nothing" goes unnoticed.
         JsonNode listenerDetails = health.path("components").path("mqListener").path("details");
-        if (!listenerDetails.isMissingNode()
-                && listenerDetails.has("listenerEnabled")
-                && !listenerDetails.path("listenerEnabled").asBoolean(true)) {
+        if (listenerDetails.isMissingNode() || !listenerDetails.has("listenerEnabled")) {
+            logger.error("MONITOR: health response carries no mqListener details — cannot verify "
+                    + "the listener is consuming. Check management.endpoint.health.show-details "
+                    + "(must be 'always' for this deployment) and that the mqListener health "
+                    + "indicator is active");
+            return EXIT_MONITOR_ERROR;
+        }
+        if (!listenerDetails.path("listenerEnabled").asBoolean(true)) {
             logger.error("MONITOR: bridge is UP but the MQ listener is disabled — NOT consuming messages");
             return EXIT_NOT_CONSUMING;
         }
 
-        logger.info("MONITOR: health check passed (status UP)");
+        logger.info("MONITOR: health check passed (status UP, listener enabled)");
         return EXIT_OK;
     }
 

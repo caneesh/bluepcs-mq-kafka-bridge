@@ -146,19 +146,22 @@ class MonitorRunnerTest {
     }
 
     @Test
-    @DisplayName("should tolerate a health payload without the mqListener component")
-    void shouldTolerateMissingListenerComponent() throws IOException {
+    @DisplayName("should exit 4 when the health payload hides the mqListener details")
+    void shouldFailWhenListenerDetailsHidden() throws IOException {
+        // A bare {"status":"UP"} (show-details hidden) makes the not-consuming check
+        // unverifiable — that must be exit 4, never a silent PASS.
         enqueueHealth("{\"status\":\"UP\"}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
 
-        assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
+        assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_MONITOR_ERROR);
     }
 
     @Test
     @DisplayName("should skip the backlog check when no landing path is configured")
     void shouldSkipBacklogWithoutLandingPath() {
         ReflectionTestUtils.setField(runner, "landingPath", "");
-        enqueueHealth("{\"status\":\"UP\"}");
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":"
+                + "{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true}}}}");
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
     }
@@ -167,7 +170,8 @@ class MonitorRunnerTest {
     @DisplayName("should allow stale files up to backlog-max-files")
     void shouldRespectMaxFilesThreshold() throws IOException {
         ReflectionTestUtils.setField(runner, "backlogMaxFiles", 2);
-        enqueueHealth("{\"status\":\"UP\"}");
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":"
+                + "{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile(), staleFile()));
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
