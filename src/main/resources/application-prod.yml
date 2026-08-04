@@ -125,7 +125,10 @@ bridge:
     client-secret: ${OAUTH_CLIENT_SECRET}
     scope: ${OAUTH_SCOPE:openid permissions profile}
     username: ${API_USERNAME:a6193139}
-    password: ${API_PASSWORD:}
+    # No default: the header lists API_PASSWORD as MANDATORY, and an empty-string
+    # fallback would post {"password":""} at the prod STS on every validate-only run
+    # (repeated failed logons against the service account)
+    password: ${API_PASSWORD}
 
   # ============================================================================
   # Audit and Logging Configuration
@@ -177,6 +180,12 @@ logging:
     com.ibm.mq: WARN
   file:
     name: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}/bridge-application.log
+  logback:
+    rollingpolicy:
+      # Boot defaults (10MB x 7 archives) keep less than a week of forensic window;
+      # match the audit stream's 30-day order of magnitude, capped by total size
+      max-history: 30
+      total-size-cap: 2GB
 
 # ============================================================================
 # Actuator Configuration

@@ -44,6 +44,9 @@ public class MqConfiguration {
     @Value("${bridge.mq.password:}")
     private String password;
 
+    @Value("${bridge.mq.ssl.enabled:false}")
+    private boolean sslEnabled;
+
     @Value("${bridge.mq.ssl.cipher-suite:}")
     private String sslCipherSuite;
 
@@ -85,14 +88,20 @@ public class MqConfiguration {
             }
         }
 
-        if (sslCipherSuite != null && !sslCipherSuite.isEmpty()) {
+        // SSL is driven by the explicit enabled flag OR (backwards-compat) a configured
+        // cipher suite. A dedicated SSLSocketFactory keeps the MQ truststore scoped to
+        // this connection — the previous javax.net.ssl.* SYSTEM properties silently
+        // repointed the STS/API HTTPS clients at the MQ truststore, breaking their TLS
+        // unless the CAs happened to be merged.
+        boolean sslConfigured = sslEnabled || (sslCipherSuite != null && !sslCipherSuite.isEmpty());
+        if (sslConfigured) {
+            if (sslCipherSuite == null || sslCipherSuite.isEmpty()) {
+                throw new IllegalStateException("bridge.mq.ssl.enabled=true requires "
+                        + "bridge.mq.ssl.cipher-suite (must match the SVRCONN channel's SSLCIPH)");
+            }
             factory.setSSLCipherSuite(sslCipherSuite);
-
             if (truststoreLocation != null && !truststoreLocation.isEmpty()) {
-                System.setProperty("javax.net.ssl.trustStore", truststoreLocation);
-                if (truststorePassword != null && !truststorePassword.isEmpty()) {
-                    System.setProperty("javax.net.ssl.trustStorePassword", truststorePassword);
-                }
+                factory.setSSLSocketFactory(buildSslSocketFactory());
             }
         }
 
@@ -103,6 +112,25 @@ public class MqConfiguration {
         // caching, but let the listener container own the consumer lifecycle (Spring recommendation).
         cachingFactory.setCacheConsumers(false);
         return cachingFactory;
+    }
+
+    /**
+     * Trust manager from the configured MQ truststore, wrapped in a TLS 1.2 context.
+     * Scoped to the MQ connection factory only — never installed JVM-wide.
+     */
+    private javax.net.ssl.SSLSocketFactory buildSslSocketFactory() throws Exception {
+        java.security.KeyStore trustStore =
+                java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType());
+        try (java.io.FileInputStream in = new java.io.FileInputStream(truststoreLocation)) {
+            trustStore.load(in, truststorePassword != null && !truststorePassword.isEmpty()
+                    ? truststorePassword.toCharArray() : null);
+        }
+        javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory
+                .getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(trustStore);
+        javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2");
+        sslContext.init(null, tmf.getTrustManagers(), null);
+        return sslContext.getSocketFactory();
     }
 
     @Bean

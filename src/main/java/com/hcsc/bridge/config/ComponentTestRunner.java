@@ -135,7 +135,7 @@ public class ComponentTestRunner implements ApplicationRunner {
 
         logger.info("Exiting with code: {}", exitCode);
         if (isTestEnvironment()) {
-            logger.debug("Component-test mode skipping System.exit in test environment (exit code {})", exitCode);
+            logger.warn("Component-test mode suppressed System.exit (exit code {}): the active 'test' profile is the Surefire exit-guard. Deployments use 'test-env', not 'test'.", exitCode);
             return;
         }
         SpringApplication.exit(applicationContext, () -> exitCode);

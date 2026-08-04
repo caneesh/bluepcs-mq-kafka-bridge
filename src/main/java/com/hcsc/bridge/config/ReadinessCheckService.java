@@ -107,9 +107,9 @@ public class ReadinessCheckService {
         }
 
         try {
-            java.net.Socket socket = new java.net.Socket();
-            socket.connect(new java.net.InetSocketAddress(mqHost, mqPort), 5000);
-            socket.close();
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(mqHost, mqPort), 5000);
+            }
             String message = String.format("MQ reachable at %s:%d", mqHost, mqPort);
             logger.info("[PASS] {}: {}", name, message);
             return CheckResult.pass(name, message);

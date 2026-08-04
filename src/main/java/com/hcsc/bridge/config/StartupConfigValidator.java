@@ -38,6 +38,12 @@ public class StartupConfigValidator {
     @Value("${bridge.mq.password:}")
     private String mqPassword;
 
+    @Value("${bridge.mq.ssl.enabled:false}")
+    private boolean mqSslEnabled;
+
+    @Value("${bridge.mq.ssl.cipher-suite:}")
+    private String mqSslCipherSuite;
+
     @Value("${bridge.kafka.bootstrap-servers:}")
     private String kafkaBootstrapServers;
 
@@ -186,6 +192,17 @@ public class StartupConfigValidator {
             warnings.add("[MQ] bridge.mq.username set without a password - connecting without MQCSP password authentication");
         } else if (!isBlank(mqPassword)) {
             logger.info("[MQ] Password: ********");
+        }
+
+        // SSL coherence: enabled without a cipher fails at connection-factory creation
+        // with an opaque error; a cipher without the flag works (legacy trigger) but is
+        // implicit — surface both at validation time.
+        if (mqSslEnabled && isBlank(mqSslCipherSuite)) {
+            errors.add("[MQ] bridge.mq.ssl.enabled=true requires bridge.mq.ssl.cipher-suite "
+                    + "(must match the SVRCONN channel's SSLCIPH)");
+        } else if (!mqSslEnabled && !isBlank(mqSslCipherSuite)) {
+            warnings.add("[MQ] bridge.mq.ssl.cipher-suite is set without bridge.mq.ssl.enabled=true "
+                    + "- SSL is still configured (legacy trigger); set enabled=true to be explicit");
         }
     }
 

@@ -53,7 +53,7 @@ public class ValidateOnlyRunner implements ApplicationRunner {
         }
 
         if (isTestEnvironment()) {
-            logger.debug("Validate-only mode skipped in test environment");
+            logger.warn("Validate-only mode requested but suppressed: the active 'test' profile is the Surefire exit-guard. Deployments use 'test-env', not 'test'.");
             return;
         }
 

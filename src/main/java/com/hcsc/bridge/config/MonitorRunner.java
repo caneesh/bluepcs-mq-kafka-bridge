@@ -104,7 +104,7 @@ public class MonitorRunner implements ApplicationRunner {
         }
 
         if (isTestEnvironment()) {
-            logger.debug("Monitor mode skipped in test environment");
+            logger.warn("Monitor mode requested but suppressed: the active 'test' profile is the Surefire exit-guard. Deployments use 'test-env', not 'test'.");
             return;
         }
 

@@ -141,6 +141,11 @@ start_bridge() {
         echo "         Kafka SASL/GSSAPI has no login config and publishing/health will fail."
     fi
 
+    # Cap console-log growth: keep exactly one previous generation. This stream
+    # duplicates the rolling application log (which owns long-term retention);
+    # this file only needs enough history to diagnose the LAST failed start.
+    [ -f "$APP_LOG" ] && mv -f "$APP_LOG" "${APP_LOG}.1"
+
     # setsid + nohup + full fd redirection so the JVM survives this script
     # (and the Control-M agent's process cleanup) exiting
     setsid nohup java \
