@@ -1,5 +1,24 @@
 # MQ-Kafka Bridge Deployment Checklist
 
+Applies to both environments; environment-specific values at a glance:
+
+| | **test-env** | **prod** |
+|---|---|---|
+| Spring profile | `test-env` | `prod` |
+| Env template | `config/test-env.env.template` | `config/prod.env.template` |
+| Queue manager / queue | `MQGPT1` / `QDP.BPCS.MALESODA.UAT.BLOB` | `MQHDPP2` / `GRP.BPCS.MULE2DDA.PROD.SUBQ` |
+| Kafka topic | `MOCK01_PMM_PRODUCT_COLA_TEST` | `DAS_PRODUCT_PMM_PRODUCT_GOLD` |
+| HDFS base path | `/test/oort/product/bluepcs/hive/csv` | `/prod/work/product/bluepcs/hive/raw` |
+| Service keytab | `e4193139` (`@HSCINT.NET`) | `a6193139` (`@ADHCSCINT.NET`) |
+| Required secrets | 4 (see Step 4) | 5 — same 4 + `MQ_PASSWORD` (prod QM uses MQCSP auth per the `.prm`) |
+| `BRIDGE_PROFILE` in `.env` | optional (default) | **required** — `BRIDGE_PROFILE=prod`, or keepalive/monitor run test-env |
+| Listener go-live gate | off | **on** — prod refuses a listener-disabled start unless explicitly waived |
+| 24/7 supervision | optional | systemd unit (+watchdog) or Control-M keepalive — see "Running 24/7" |
+
+Profile defaults live in `application-test-env.yml` / `application-prod.yml`
+(both generated from their Talend `.prm`); the `.env` only needs secrets and
+deliberate overrides.
+
 ## Building and First Run
 
 ### Step 1: Verify tooling
@@ -42,7 +61,9 @@ relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
 - [ ] Jar copied to `~/bluepcs-bridge/target/`
 - [ ] `scripts/` copied and executable: `chmod +x scripts/*.sh`
 - [ ] Running as the service account (not a personal login) — it must be able
-      to read the keytab: `ls -l /etc/security/keytabs/e4193139.keytab`
+      to read the environment's keytab:
+      `ls -l /etc/security/keytabs/e4193139.keytab` (test-env) /
+      `ls -l /etc/security/keytabs/a6193139.keytab` (prod)
 - [ ] `.env` created on the edge node itself (next step) — never transferred
       between machines with real values
 - [ ] `.env` locked down: `chmod 600 .env`
@@ -57,21 +78,26 @@ Follow [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) — it walks through
 every component's properties step by step. The short version:
 
 ```bash
-cp .env.template .env
-# test-env requires exactly four values (guide §2):
+# test-env:
+cp .env.template .env            # or config/test-env.env.template
+# prod:
+cp config/prod.env.template .env # already carries BRIDGE_PROFILE=prod
+
+# Both environments require (guide §2):
 #   KAFKA_TRUSTSTORE_PASSWORD  — from the Kafka team / Talend cv_kfk_* context
-#   OAUTH_CLIENT_ID            — STS client id (ClientID header)
+#   OAUTH_CLIENT_ID            — STS client id (ClientID header; a secret in prod)
 #   OAUTH_CLIENT_SECRET        — STS client secret (ClientSecret header)
 #   API_PASSWORD               — STS user password (token request JSON body)
-# MQ_PASSWORD is NOT needed for test-env; in prod set it only if the queue
-# manager requires MQCSP password auth (it may authenticate by channel auth too).
+# MQ_PASSWORD: NOT needed for test-env (channel auth). The prod .prm carries
+# uv_MQ_Password, so expect to set it for prod (MQCSP auth).
 ```
 
-Everything else has working test-env defaults carried over from the Talend
-`.prm`; override a variable in `.env` only when a component test (below)
-fails and the guide's per-component section says which value to fix:
+Everything else has working defaults in the environment's profile yml, carried
+over from its Talend `.prm`; override a variable in `.env` only when a
+component test (below) fails and the guide's per-component section says which
+value to fix:
 
-- [ ] Guide §2 — the two required secrets set in `.env`
+- [ ] Guide §2 — the required secrets set in `.env`
 - [ ] Guide §3 — MQ values reviewed (defaults usually correct)
 - [ ] Guide §4 — API base URL + OAuth values reviewed
 - [ ] Guide §5 — Kafka truststore location exists; JAAS/keytab decided
@@ -84,8 +110,12 @@ required secrets are missing.
 ### Step 5: Verify supporting files
 
 - [ ] Kafka truststore exists at the configured `KAFKA_TRUSTSTORE_LOCATION`
+      (prod: `.../confluent_kafka/kafka.truststore-prod_2025.jks`)
 - [ ] Kerberos keytab exists; verify with `klist -kt <keytab>`
+      (test-env: `e4193139.keytab`; prod: `a6193139.keytab`)
 - [ ] Log directory exists and is writable
+- [ ] Prod only: JAAS file exists at the configured `KAFKA_JAAS_CONFIG_PATH`
+      (`.../common/prod_kafka_jaas_confluent.conf`)
 
 ### Step 6: Verify the HDFS layout matches what downstream expects
 
@@ -109,7 +139,11 @@ landed files).
 
 ```bash
 ./scripts/validate-only.sh test-env    # exit 0 = ready
+./scripts/validate-only.sh prod        # prod deploy gate
 ```
+
+ALWAYS pass the profile explicitly — unlike the other scripts, this one
+defaults to `prod` when called with no argument.
 
 This checks MQ/Kafka/HDFS reachability and acquires a real OAuth token.
 An SSL handshake error mentioning certificate/hostname means a broker
@@ -141,10 +175,25 @@ error text.
 
 ### Step 8: Start safely, then enable consumption
 
+test-env:
+
 ```bash
 ./scripts/run-test-env.sh                      # listener OFF by default
 curl localhost:8080/actuator/health            # confirm healthy
 ./scripts/run-test-env.sh --listener-enabled   # start consuming
+```
+
+prod (manual bring-up; the go-live gate requires the explicit waiver for a
+listener-disabled start):
+
+```bash
+java -jar target/mq-kafka-bridge-*.jar \
+  --spring.profiles.active=prod \
+  --bridge.mq.listener-enabled=false \
+  --bridge.mq.require-listener-enabled=false   # deliberate safe-start only
+curl localhost:8080/actuator/health
+# then stop it and hand over to the 24/7 supervisor (systemd / keepalive),
+# which starts it with --bridge.mq.listener-enabled=true
 ```
 
 ### Step 9: Verify the first message end-to-end
@@ -163,41 +212,23 @@ curl localhost:8080/actuator/health            # confirm healthy
 
 ### 1. Environment Variables
 
-Set all required environment variables before starting the application:
+Do NOT hand-craft exports — start from the environment's template, which
+carries the real values from its Talend `.prm`:
 
 ```bash
-# MQ Configuration (Required)
-export MQ_HOST=your-mq-host.example.com
-export MQ_PORT=1414
-export MQ_QUEUE_MANAGER=QMGR1
-export MQ_CHANNEL=APP.SVRCONN
-export MQ_QUEUE=BRIDGE.INPUT.QUEUE
-export MQ_USERNAME=mquser
-# Optional — only if the queue manager requires MQCSP password auth:
-# export MQ_PASSWORD=<secret>
-
-# Kafka Configuration (Required)
-export KAFKA_BOOTSTRAP_SERVERS=kafka1:9093,kafka2:9093,kafka3:9093
-export KAFKA_TOPIC=bridge-events
-export KAFKA_SECURITY_PROTOCOL=SASL_SSL
-export KAFKA_SASL_MECHANISM=GSSAPI
-export KAFKA_KERBEROS_SERVICE_NAME=kafka
-export KAFKA_TRUSTSTORE_LOCATION=/path/to/kafka.truststore.jks
-export KAFKA_TRUSTSTORE_PASSWORD=<secret>
-
-# HDFS Configuration (Required)
-export HDFS_NAMENODE=hdfs://namenode:8020
-export HDFS_BASE_PATH=/data/bridge/payloads
-export HDFS_KERBEROS_ENABLED=true
-export HDFS_KERBEROS_PRINCIPAL=bridgeuser@REALM.COM
-export HDFS_KERBEROS_KEYTAB=/etc/security/keytabs/bridgeuser.keytab
-
-# API Configuration (Required)
-export API_BASE_URL=https://api.example.com/v1
-export OAUTH_TOKEN_URL=https://auth.example.com/oauth/token
-export OAUTH_CLIENT_ID=bridge-client
-export OAUTH_CLIENT_SECRET=<secret>
+# test-env:
+cp config/test-env.env.template .env   # fill in the 4 secrets
+# prod:
+cp config/prod.env.template .env       # fill in the 5 secrets (incl. MQ_PASSWORD)
+chmod 600 .env
 ```
+
+The profile ymls (`application-test-env.yml` / `application-prod.yml`) carry
+the same values as defaults, so the `.env` only *needs* the secrets — but
+keeping the full template in `.env` documents the deployment's effective
+config in one place. The profiles fail fast at startup if a required secret
+(`KAFKA_TRUSTSTORE_PASSWORD`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`,
+`API_PASSWORD`) is missing.
 
 ### 2. File System Prerequisites
 
@@ -285,7 +316,9 @@ Nothing in the app restarts the JVM if it dies (OOM, node reboot, accidental kil
 provided unit so the OS does:
 
 ```bash
-# adjust paths/user/profile inside the unit first
+# adjust paths/user/profile inside the unit first — the unit SHIPS with
+# --spring.profiles.active=test-env; for prod change it to prod (the
+# --bridge.mq.listener-enabled=true line stays, satisfying the go-live gate)
 sudo cp deploy/mq-kafka-bridge.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now mq-kafka-bridge
@@ -630,8 +663,14 @@ cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
   event is published, and the MQ message IS acknowledged — a bad message cannot block the
   queue. The message is only acked if the quarantine write succeeded; if HDFS is down the
   message stays on the queue and redelivery retries the quarantine.
-- **Transient failure (enrichment/HDFS/Kafka):** MQ message NOT acknowledged → MQ will
-  redeliver until the dependency recovers
+- **Permanent enrichment failure (HTTP 400/404/422):** the plan lookup can never succeed
+  for this message — quarantined + acknowledged like a parse failure, replayable via
+  `scripts/quarantine-replay.sh` after the data/parser problem is fixed.
+- **Transient failure (enrichment 401/403/408/429/5xx/timeouts, HDFS, Kafka):** MQ message
+  NOT acknowledged → MQ will redeliver until the dependency recovers. Auth outages and
+  rate limiting deliberately back messages up on the queue instead of quarantining them
+  (a 401 is the gateway's problem, not the message's); the bridge forces one token
+  refresh per message before giving the attempt up as retryable.
 - Duplicate Kafka publishes are acceptable (downstream deduplicates by event_id)
 - HDFS writes are idempotent (file already exists = skip) — including quarantine writes
 - Event ID is deterministic (SHA-256 of JMS Message ID)
