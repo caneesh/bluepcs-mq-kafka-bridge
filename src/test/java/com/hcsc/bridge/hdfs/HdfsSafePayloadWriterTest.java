@@ -174,19 +174,19 @@ class HdfsSafePayloadWriterTest {
     class ExistingFileHandling {
 
         @Test
-        @DisplayName("should skip write when file already exists")
+        @DisplayName("should skip write when file already exists with matching checksum")
         void shouldSkipWriteWhenFileExists() throws IOException {
             EnrichedPayload payload = createEnrichedPayload("MSG-DUP-001", "TXN-DUP-001", "event-id-dup-001");
-            String existingChecksum = "existing-checksum-hash";
+            String matchingChecksum = calculateChecksum(WRAPPER_CONTENT.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
-            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn(existingChecksum);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn(matchingChecksum);
 
             HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.isAlreadyExists()).isTrue();
             assertThat(result.isNewWrite()).isFalse();
-            assertThat(result.getChecksum()).isEqualTo(existingChecksum);
+            assertThat(result.getChecksum()).isEqualTo(matchingChecksum);
             assertThat(result.getBytesWritten()).isZero();
 
             verify(hdfsFileOperations, never()).create(anyString());
@@ -199,12 +199,46 @@ class HdfsSafePayloadWriterTest {
             EnrichedPayload payload = createEnrichedPayload("MSG-DUP-002", "TXN-DUP-002", "event-id-dup-002");
 
             when(hdfsFileOperations.exists(anyString())).thenReturn(true);
-            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("checksum");
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn(
+                    calculateChecksum(WRAPPER_CONTENT.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
             HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
 
             assertThat(result.getHdfsPath()).contains(BASE_PATH);
             assertThat(result.getHdfsPath()).contains("event-id-dup-002");
+        }
+
+        @Test
+        @DisplayName("should refuse an existing file whose checksum does not match the expected content")
+        void shouldThrowOnExistingFileChecksumMismatch() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-003", "TXN-DUP-003", "event-id-dup-003");
+
+            when(hdfsFileOperations.exists(anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("stale-or-foreign-checksum");
+
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
+                    .isInstanceOf(HdfsWriteException.class)
+                    .hasMessageContaining("Existing file checksum mismatch")
+                    .hasMessageContaining("stale-or-foreign-checksum");
+
+            // Never overwrite the mismatching target, never advertise it as valid
+            verify(hdfsFileOperations, never()).create(anyString());
+            verify(hdfsFileOperations, never()).rename(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("should fail (not accept) when the existing file's checksum cannot be read")
+        void shouldThrowWhenExistingChecksumUnreadable() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-DUP-004", "TXN-DUP-004", "event-id-dup-004");
+
+            when(hdfsFileOperations.exists(anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString()))
+                    .thenThrow(new IOException("checksum RPC failed"));
+
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
+                    .isInstanceOf(HdfsWriteException.class);
+
+            verify(hdfsFileOperations, never()).create(anyString());
         }
     }
 
@@ -428,7 +462,8 @@ class HdfsSafePayloadWriterTest {
         @DisplayName("should be idempotent: existing quarantine file is not rewritten")
         void shouldSkipExistingQuarantineFile() throws IOException {
             when(hdfsFileOperations.exists(BASE_PATH + "/errors/event-id-q4.json")).thenReturn(true);
-            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn("existing-checksum");
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenReturn(
+                    calculateChecksum("not json".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
             HdfsWriteResult result = writer.writeQuarantine("event-id-q4", "not json", "MSG-Q4");
 

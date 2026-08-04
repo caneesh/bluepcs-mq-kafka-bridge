@@ -66,17 +66,15 @@ public class HdfsSafePayloadWriter {
 
         logger.debug("Writing payload {} to HDFS: {}", messageId, targetPath);
 
+        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+        String checksum = calculateChecksum(contentBytes);
+
         try {
             if (hdfsFileOperations.exists(targetPath)) {
-                logger.info("File already exists for message {}: {}", messageId, targetPath);
-                String existingChecksum = hdfsFileOperations.getFileChecksum(targetPath);
-                return HdfsWriteResult.alreadyExists(targetPath, existingChecksum);
+                return verifyExistingTarget(targetPath, checksum, messageId);
             }
 
             ensureParentDirectoryExists(targetPath);
-
-            byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
-            String checksum = calculateChecksum(contentBytes);
 
             writeToTempFile(tempPath, contentBytes, messageId);
 
@@ -116,6 +114,34 @@ public class HdfsSafePayloadWriter {
             cleanupTempFile(tempPath);
             throw e;
         }
+    }
+
+    /**
+     * An existing target is only an idempotent redelivery if it holds the SAME bytes this
+     * message would write. Accepting it blindly would let a stale, truncated, or foreign
+     * file under the deterministic eventId name be advertised to Kafka as valid — and
+     * permanently, because the message then gets acked. On mismatch, refuse without
+     * overwriting: the message stays on the queue and the file needs manual review.
+     *
+     * <p>NOTE: this assumes the wrapper bytes are stable across redeliveries, i.e. the
+     * enrichment API returns identical content for the same plan/effective-date within
+     * the redelivery window. If the API response carries volatile fields (timestamps,
+     * request ids), redelivery after a partial failure would mismatch here and wedge the
+     * message — verify response stability in UAT before relying on redelivery.
+     */
+    private HdfsWriteResult verifyExistingTarget(String targetPath, String expectedChecksum,
+                                                 String messageId) throws IOException {
+        String existingChecksum = hdfsFileOperations.getFileChecksum(targetPath);
+        if (!expectedChecksum.equals(existingChecksum)) {
+            throw new HdfsWriteException(
+                    "Existing file checksum mismatch for message " + messageId
+                            + ": expected " + expectedChecksum + " but found " + existingChecksum
+                            + "; refusing to accept or overwrite — manual review required",
+                    targetPath, messageId);
+        }
+        logger.info("File already exists with matching checksum for message {}: {}",
+                messageId, targetPath);
+        return HdfsWriteResult.alreadyExists(targetPath, existingChecksum);
     }
 
     /** Best-effort diagnosis of a rename() that returned false. */
