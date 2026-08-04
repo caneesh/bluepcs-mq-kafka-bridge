@@ -198,7 +198,8 @@ curl localhost:8080/actuator/health
 
 ### Step 9: Verify the first message end-to-end
 
-- [ ] Log shows the `=== INCOMING MQ MESSAGE ===` block
+- [ ] Log shows the `=== INCOMING MQ MESSAGE ===` line (one structured line with
+      JMSMessageID, queue, and payload size)
 - [ ] Wrapper JSON file appears in HDFS under the configured base path
 - [ ] Claim-check notification arrives on the Kafka topic (small JSON with
       `hdfsPath`, `checksum`, `eventId`, `changeEventTypeName`)
@@ -410,13 +411,20 @@ text matching (see the table below for page-vs-notify).
 - [ ] Restart threshold understood: unhealthy must persist 3 consecutive cycles
       (~15 min at a 5-min interval) before a kill+restart — tune `MAX_FAILURES` /
       `HEALTH_URL` / `CURL_TIMEOUT_SECONDS` in `.env` if needed
+- [ ] `HEALTH_URL` defaults to `/actuator/health/liveness` (the supervisor group):
+      a Kafka/HDFS outage takes the full aggregate endpoint DOWN but must not make
+      the keepalive kill/restart a healthy bridge — do not point it at plain
+      `/actuator/health`
 - [ ] To stop the bridge intentionally: hold the Control-M job FIRST, then kill the process
       (unlike the systemd watchdog, the script cannot tell "stopped on purpose" from "dead")
 - [ ] After a host reboot the bridge stays down until the next cycle starts it — expect up
       to one interval of downtime (systemd would start it on boot)
 - [ ] DECOMMISSION this job when the systemd units are installed — two supervisors fight
-- [ ] Console log lands in `logs/bridge-console.log`; pid in `bridge.pid`; failure counter
-      in `.keepalive-failures` (project root — persists across job runs by design)
+- [ ] Console log lands in `logs/bridge-console.log`, rotated to
+      `logs/bridge-console.log.1` on each (re)start — one previous generation is kept,
+      long-term retention lives in the rolling application log; pid in `bridge.pid`;
+      failure counter in `.keepalive-failures` (project root — persists across job runs
+      by design)
 
 This replaces systemd layers 1 and 1b (weaker: up to one cycle of restart latency, no
 start-limit backoff, no start-on-boot until the first cycle after reboot). The read-only
@@ -470,13 +478,27 @@ flows into existing ops alerting.
 | 1 | Bridge unreachable or health DOWN | Alert (systemd/watchdog is likely already restarting; page if it persists) |
 | 2 | Bridge up but MQ listener disabled — NOT consuming | Alert: someone forgot `listener-enabled=true` |
 | 3 | HDFS landing-dir backlog (files older than threshold) | Alert the downstream consumer team — bridge is fine |
-| 4 | Monitor could not evaluate (e.g. HDFS/Kerberos access) | Investigate the monitor/edge node |
+| 4 | Monitor could not evaluate (e.g. HDFS/Kerberos access, hidden health details, monitor JVM failed to start) | Investigate the monitor/edge node |
 
 Checks performed: actuator health of the running instance (incl. the `mqListener`
-listener-enabled state) and HDFS landing-directory backlog. Tuning (env vars or properties):
+listener-enabled state) and HDFS landing-directory backlog. Exit-4 hardening:
+
+- Health details hidden (`show-details` not `always`, or the `mqListener` indicator
+  absent) → exit 4, never PASSED — the monitor refuses to report success on a check
+  it cannot see. The prod/test-env profiles set `show-details: always` for this.
+- A monitor JVM that dies before printing a `MONITOR RESULT` marker (bad keytab,
+  missing env var) is reclassified by `monitor.sh` from exit 1 to exit 4 — a
+  monitor-side problem must not page as "bridge down".
+- The monitor JVM logs to its own `logs/bridge-monitor.log` (as do the other
+  diagnostic scripts: `bridge-validate.log`, `bridge-smoke-test.log`,
+  `bridge-component-test.log`) — never to the running bridge's rolling log.
+
+Tuning (env vars or properties):
 
 ```
 bridge.monitor.health-url             # default http://localhost:8080/actuator/health
+                                      # (the FULL endpoint on purpose — unlike the
+                                      # supervisors, the monitor wants aggregate health)
 bridge.monitor.backlog-age-minutes    # default 30 — a file older than this is "stale"
 bridge.monitor.backlog-max-files      # default 0  — stale files tolerated before failing
 ```
@@ -537,11 +559,14 @@ messages false-alarm), `AUDIT_GAP_GRACE_MINUTES` (default 30 — stuck-message g
 ### Health Endpoints
 
 ```bash
-# Overall health
+# Overall (aggregate) health — includes component details; show-details is
+# 'always' in prod/test-env (the endpoint is localhost-only, and the Control-M
+# monitor needs the mqListener details)
 curl http://localhost:8080/actuator/health
 
-# Detailed health (if authorized)
-curl http://localhost:8080/actuator/health -u admin:password
+# Liveness group — what the supervisors (watchdog/keepalive) poll; DOWN only
+# when the bridge process itself is wedged, unaffected by Kafka/HDFS outages
+curl http://localhost:8080/actuator/health/liveness
 
 # Application info
 curl http://localhost:8080/actuator/info
