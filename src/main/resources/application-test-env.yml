@@ -46,7 +46,8 @@ bridge:
   # HDFS Configuration (Test Environment)
   # ============================================================================
   hdfs:
-    # TSTODPHA is the test HDFS load balancer (DNS name, NameNode default port 8020)
+    # TSTODPHA is the test HA nameservice (NOT necessarily a DNS name); the NameNode
+    # pair behind it is resolved from the hdfs-site.xml under HADOOP_CONF_DIR
     namenode: ${HDFS_NAMENODE:hdfs://TSTODPHA}
     base-path: ${HDFS_BASE_PATH:/test/oort/product/bluepcs/hive/csv}
     archive-path: ${HDFS_ARCHIVE_PATH:/test/oort/product/bluepcs/hive/csv/archive}

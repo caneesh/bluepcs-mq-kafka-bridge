@@ -78,7 +78,9 @@ bridge:
   # Source: cv_hfsx_* properties from Talend
   # ============================================================================
   hdfs:
-    # PRDODPHA is the prod HDFS load balancer (DNS name, NameNode default port 8020)
+    # PRDODPHA is the prod HA nameservice (cv_hdfs_nameservices, NOT a DNS name);
+    # the NameNode pair behind it (pwausl4slmn04/05:8020) is resolved from the
+    # hdfs-site.xml under HADOOP_CONF_DIR
     namenode: ${HDFS_NAMENODE:hdfs://PRDODPHA}
     base-path: ${HDFS_BASE_PATH:/prod/work/product/bluepcs/hive/raw}
     archive-path: ${HDFS_ARCHIVE_PATH:/prod/work/product/bluepcs/hive/raw/archive}

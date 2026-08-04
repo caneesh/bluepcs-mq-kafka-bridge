@@ -57,8 +57,20 @@ public class ReadinessCheckService {
     private String activeProfile;
 
     private final RestTemplate restTemplate;
+    private final org.springframework.beans.factory.ObjectProvider<org.apache.hadoop.conf.Configuration>
+            hadoopConfigurationProvider;
 
     public ReadinessCheckService() {
+        this(null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ReadinessCheckService(
+            org.springframework.beans.factory.ObjectProvider<org.apache.hadoop.conf.Configuration>
+                    hadoopConfigurationProvider) {
+        // The provider (absent in the local profile, where the check is skipped anyway)
+        // lets the HDFS check resolve an HA nameservice to real NameNode addresses.
+        this.hadoopConfigurationProvider = hadoopConfigurationProvider;
         // Explicit timeouts: a default RestTemplate has NONE, and an STS that accepts the
         // TCP connection but never responds would hang validate-only mode forever — the
         // one check here that could block, while all socket checks use 5s.
@@ -166,13 +178,20 @@ public class ReadinessCheckService {
             }
             String[] parts = namenodeUrl.split(":");
             String host = parts[0];
-            // The load balancer names (TSTODPHA/PRDODPHA) carry no port; 8020 is the
-            // NameNode default the Hadoop client also assumes for port-less URIs
+            // 8020 is the NameNode default the Hadoop client also assumes for port-less URIs
             int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 8020;
 
-            java.net.Socket socket = new java.net.Socket();
-            socket.connect(new java.net.InetSocketAddress(host, port), 5000);
-            socket.close();
+            // hdfs://PRDODPHA-style names are HA *nameservices* (dfs.nameservices), not
+            // DNS hosts — a direct socket probe would UnknownHostException against a
+            // perfectly healthy cluster. Resolve the real NameNode pair from the Hadoop
+            // config (HADOOP_CONF_DIR) and probe those instead.
+            if (!isDnsResolvable(host)) {
+                return checkHaNameservice(name, host);
+            }
+
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(host, port), 5000);
+            }
 
             String message = String.format("HDFS namenode reachable at %s:%d", host, port);
             logger.info("[PASS] {}: {}", name, message);
@@ -182,6 +201,68 @@ public class ReadinessCheckService {
             logger.error("[FAIL] {}: {}", name, message);
             return CheckResult.fail(name, message);
         }
+    }
+
+    private boolean isDnsResolvable(String host) {
+        try {
+            java.net.InetAddress.getByName(host);
+            return true;
+        } catch (java.net.UnknownHostException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Probes the NameNodes behind an HA nameservice. Reachability of EITHER node passes
+     * (a standby still accepts TCP; the probe proves the network path, not NN state).
+     * Package-private for tests.
+     */
+    CheckResult checkHaNameservice(String name, String nameservice) {
+        org.apache.hadoop.conf.Configuration conf =
+                hadoopConfigurationProvider != null ? hadoopConfigurationProvider.getIfAvailable() : null;
+        if (conf == null) {
+            String message = String.format(
+                    "%s is not DNS-resolvable and no Hadoop configuration is available "
+                            + "to resolve it as an HA nameservice", nameservice);
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+
+        String nnIds = conf.get("dfs.ha.namenodes." + nameservice);
+        if (nnIds == null || nnIds.trim().isEmpty()) {
+            String message = String.format(
+                    "%s is not DNS-resolvable and dfs.ha.namenodes.%s is not defined — "
+                            + "is HADOOP_CONF_DIR pointing at the cluster's hdfs-site.xml?",
+                    nameservice, nameservice);
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+
+        List<String> failures = new ArrayList<>();
+        for (String id : nnIds.split(",")) {
+            String nnId = id.trim();
+            String rpcAddress = conf.get("dfs.namenode.rpc-address." + nameservice + "." + nnId);
+            if (rpcAddress == null || rpcAddress.trim().isEmpty()) {
+                failures.add(nnId + " (no rpc-address configured)");
+                continue;
+            }
+            String[] hostPort = rpcAddress.split(":");
+            int nnPort = hostPort.length > 1 ? Integer.parseInt(hostPort[1]) : 8020;
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(hostPort[0], nnPort), 5000);
+                String message = String.format("HA nameservice %s: namenode %s (%s) reachable",
+                        nameservice, nnId, rpcAddress);
+                logger.info("[PASS] {}: {}", name, message);
+                return CheckResult.pass(name, message);
+            } catch (Exception e) {
+                failures.add(rpcAddress + " (" + e.getMessage() + ")");
+            }
+        }
+
+        String message = String.format("No namenode of HA nameservice %s reachable: %s",
+                nameservice, failures);
+        logger.error("[FAIL] {}: {}", name, message);
+        return CheckResult.fail(name, message);
     }
 
     private CheckResult checkOAuthToken() {
