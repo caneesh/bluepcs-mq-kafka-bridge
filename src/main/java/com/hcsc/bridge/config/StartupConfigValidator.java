@@ -64,6 +64,9 @@ public class StartupConfigValidator {
     @Value("${bridge.kafka.delivery-timeout-ms:120000}")
     private long kafkaDeliveryTimeoutMs;
 
+    @Value("${bridge.kafka.acks:all}")
+    private String kafkaAcks;
+
     @Value("${bridge.hdfs.namenode:}")
     private String hdfsNamenode;
 
@@ -226,6 +229,14 @@ public class StartupConfigValidator {
         }
 
         logger.info("[KAFKA] Security Protocol: {}", kafkaSecurityProtocol);
+
+        // KafkaConfiguration hard-enables idempotence, which the producer only accepts
+        // with acks=all. Any other value fails at FIRST SEND (lazy producer
+        // construction), not startup — surface it here instead.
+        if (!"all".equalsIgnoreCase(kafkaAcks) && !"-1".equals(kafkaAcks)) {
+            errors.add("[KAFKA] bridge.kafka.acks=" + kafkaAcks + " is invalid: the producer "
+                    + "runs with enable.idempotence=true, which requires acks=all");
+        }
 
         if ("SASL_SSL".equals(kafkaSecurityProtocol) || "SSL".equals(kafkaSecurityProtocol)) {
             if (isBlank(kafkaTruststoreLocation)) {

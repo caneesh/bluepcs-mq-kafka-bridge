@@ -74,6 +74,15 @@ public class KafkaAuditPublisher implements AuditPublisher {
         } catch (ExecutionException | TimeoutException e) {
             startCooldown(e);
             logger.error("Failed to publish audit event: {}", event.getAuditEventId(), e);
+        } catch (RuntimeException e) {
+            // send() itself can throw synchronously (metadata timeout after max.block.ms,
+            // closed producer). Without arming the cooldown here, every sync publish
+            // during a broker outage would block the caller the full max.block.ms —
+            // the exact stall the cooldown exists to prevent (the async path already
+            // handles this case).
+            startCooldown(e);
+            logger.error("Failed to publish audit event (synchronous send failure): {}",
+                    event.getAuditEventId(), e);
         }
     }
 

@@ -82,6 +82,18 @@ public class BridgeOrchestrator {
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
+            // Cross-check: the notification advertises the MQ-supplied plan id; the API's
+            // response carries its own. They should always agree — a mismatch means the
+            // gateway routed to (or returned) the wrong plan, which would otherwise ship
+            // silently because only the MQ value is published downstream.
+            String apiPlanId = enrichmentResult.getMarketingPlanId();
+            if (apiPlanId != null && !apiPlanId.isEmpty()
+                    && !apiPlanId.equals(parsedPayload.getEntityId())) {
+                logger.warn("Enrichment plan-id mismatch for eventId {}: MQ says '{}' but the "
+                                + "API response says '{}' — verify gateway routing",
+                        ctx.getEventId(), parsedPayload.getEntityId(), apiPlanId);
+            }
+
             // The full wrapper document goes to HDFS (it can exceed the broker's ~1 MB
             // message limit); Kafka carries only a small claim-check notification with
             // the HDFS path. The wrapper is built from the unmodified API response; the

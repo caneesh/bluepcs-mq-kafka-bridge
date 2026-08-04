@@ -223,7 +223,10 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
             if (body.isEmpty()) {
                 return "<empty>";
             }
-            return body.length() > 300 ? body.substring(0, 300) + "...(truncated)" : body;
+            String truncated = body.length() > 300 ? body.substring(0, 300) + "...(truncated)" : body;
+            // Same reasoning as the STS client: a misbehaving gateway can echo request
+            // material (ClientID/ClientSecret headers, bearer token) back in error pages
+            return com.hcsc.bridge.core.SecretMaskingUtil.maskSecrets(truncated);
         } catch (IOException e) {
             return "<unreadable: " + e.getMessage() + ">";
         }

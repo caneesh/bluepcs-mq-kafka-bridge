@@ -253,18 +253,21 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
     }
 
     /**
-     * Expiry precedence: an explicit expires_in/expiresIn field, then the JWT's own
-     * exp claim, then a conservative one-hour default.
+     * Expiry: the earlier of the response's expires_in/expiresIn and the JWT's own exp
+     * claim (an STS overstating expires_in is a known failure mode — the token itself is
+     * the authoritative bound); one conservative hour when neither is present.
      */
     private Instant extractExpiry(JsonNode json, String token) {
+        Instant jwtExpiry = expiryFromJwt(token);
+
         for (String field : new String[]{"expires_in", "expiresIn"}) {
             JsonNode node = json.get(field);
             if (node != null && node.isNumber()) {
-                return Instant.now().plusSeconds(node.asLong());
+                Instant claimed = Instant.now().plusSeconds(node.asLong());
+                return (jwtExpiry != null && jwtExpiry.isBefore(claimed)) ? jwtExpiry : claimed;
             }
         }
 
-        Instant jwtExpiry = expiryFromJwt(token);
         if (jwtExpiry != null) {
             return jwtExpiry;
         }
