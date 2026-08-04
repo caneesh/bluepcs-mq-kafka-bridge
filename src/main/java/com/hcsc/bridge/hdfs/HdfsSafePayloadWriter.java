@@ -12,11 +12,13 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.UUID;
 
 @Component
 public class HdfsSafePayloadWriter {
 
     private static final Logger logger = LoggerFactory.getLogger(HdfsSafePayloadWriter.class);
+    private static final String JSON_SUFFIX = ".json";
 
     private final HdfsFileOperations hdfsFileOperations;
     private final String basePath;
@@ -62,7 +64,7 @@ public class HdfsSafePayloadWriter {
     }
 
     private HdfsWriteResult safeWrite(String targetPath, String content, String messageId) {
-        String tempPath = targetPath + tempSuffix;
+        String tempPath = buildTempPath(targetPath);
 
         logger.debug("Writing payload {} to HDFS: {}", messageId, targetPath);
 
@@ -90,6 +92,14 @@ public class HdfsSafePayloadWriter {
 
             boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
             if (!renamed) {
+                // Concurrency: listener concurrency is 1 per JVM, but a second bridge
+                // instance (blue/green overlap, double-start) can process the same event.
+                // Losing the rename race to a peer that created the target is idempotent
+                // success IF the peer wrote the same bytes — verify, don't assume.
+                if (hdfsFileOperations.exists(targetPath)) {
+                    cleanupTempFile(tempPath);
+                    return verifyExistingTarget(targetPath, checksum, messageId);
+                }
                 // rename() returning false covers several distinct causes — probe so the
                 // failure is diagnosable from the log alone
                 throw new HdfsWriteException("Failed to rename temp file to target ("
@@ -152,6 +162,21 @@ public class HdfsSafePayloadWriter {
         } catch (Exception probeFailure) {
             return "probe failed: " + probeFailure.getMessage();
         }
+    }
+
+    /**
+     * Unique per attempt so two bridge instances (or a retry racing a stale attempt)
+     * can never write to or delete each other's temp file. The random token sits
+     * BEFORE the ".json" so the name still ends in ".json{tempSuffix}" and matches
+     * the hdfs-landing-cleanup.sh orphan sweep pattern ({@code *.json.tmp}).
+     */
+    private String buildTempPath(String targetPath) {
+        String token = UUID.randomUUID().toString();
+        if (targetPath.endsWith(JSON_SUFFIX)) {
+            return targetPath.substring(0, targetPath.length() - JSON_SUFFIX.length())
+                    + "." + token + JSON_SUFFIX + tempSuffix;
+        }
+        return targetPath + "." + token + tempSuffix;
     }
 
     private String buildTargetPath(EnrichedPayload payload) {

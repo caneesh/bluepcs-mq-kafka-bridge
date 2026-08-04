@@ -358,6 +358,91 @@ class HdfsSafePayloadWriterTest {
     }
 
     @Nested
+    @DisplayName("concurrent writers on the same event id")
+    class ConcurrentWriters {
+
+        @Test
+        @DisplayName("temp path is unique per write attempt and keeps the .json.tmp shape")
+        void tempPathUniquePerAttempt() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-CON-001", "TXN-CON-001", "event-id-con-001");
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
+            when(hdfsFileOperations.exists(anyString())).thenReturn(false);
+            when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(outputStream.toByteArray()));
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+
+            writer.write(payload, WRAPPER_CONTENT);
+            outputStream.reset();
+            writer.write(payload, WRAPPER_CONTENT);
+
+            ArgumentCaptor<String> tempCaptor = ArgumentCaptor.forClass(String.class);
+            verify(hdfsFileOperations, org.mockito.Mockito.times(2)).create(tempCaptor.capture());
+            String first = tempCaptor.getAllValues().get(0);
+            String second = tempCaptor.getAllValues().get(1);
+
+            assertThat(first).isNotEqualTo(second);
+            // Must stay sweepable by hdfs-landing-cleanup.sh's *.json.tmp orphan pass
+            assertThat(first).endsWith(".json" + TEMP_SUFFIX);
+            assertThat(second).endsWith(".json" + TEMP_SUFFIX);
+            assertThat(first).startsWith(BASE_PATH + "/event-id-con-001.");
+        }
+
+        @Test
+        @DisplayName("losing the rename race to a peer with identical bytes is idempotent success")
+        void renameRaceLostWithMatchingPeerIsIdempotent() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-CON-002", "TXN-CON-002", "event-id-con-002");
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            String targetPath = BASE_PATH + "/event-id-con-002.json";
+
+            // Deterministic race: target absent at the initial check, present after the
+            // failed rename (the peer instance created it in between)
+            when(hdfsFileOperations.exists(targetPath)).thenReturn(false, true);
+            when(hdfsFileOperations.exists(endsWith(TEMP_SUFFIX))).thenReturn(true);
+            when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
+                    calculateChecksum(WRAPPER_CONTENT.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+            doNothing().when(hdfsFileOperations).delete(anyString());
+
+            HdfsWriteResult result = writer.write(payload, WRAPPER_CONTENT);
+
+            assertThat(result.isAlreadyExists()).isTrue();
+            // One final file (the peer's), our own temp file cleaned up, peer's temp untouched
+            ArgumentCaptor<String> deleted = ArgumentCaptor.forClass(String.class);
+            verify(hdfsFileOperations).delete(deleted.capture());
+            assertThat(deleted.getValue()).endsWith(".json" + TEMP_SUFFIX);
+            assertThat(deleted.getValue()).startsWith(BASE_PATH + "/event-id-con-002.");
+        }
+
+        @Test
+        @DisplayName("losing the rename race to a peer with different bytes is an integrity failure")
+        void renameRaceLostWithMismatchingPeerFails() throws IOException {
+            EnrichedPayload payload = createEnrichedPayload("MSG-CON-003", "TXN-CON-003", "event-id-con-003");
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            String targetPath = BASE_PATH + "/event-id-con-003.json";
+            String goodChecksum = calculateChecksum(WRAPPER_CONTENT.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            when(hdfsFileOperations.exists(targetPath)).thenReturn(false, true);
+            when(hdfsFileOperations.exists(endsWith(TEMP_SUFFIX))).thenReturn(true);
+            when(hdfsFileOperations.create(anyString())).thenReturn(outputStream);
+            when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(false);
+            // Temp checksum matches our bytes; the peer's target holds different bytes
+            when(hdfsFileOperations.getFileChecksum(endsWith(TEMP_SUFFIX))).thenReturn(goodChecksum);
+            when(hdfsFileOperations.getFileChecksum(targetPath)).thenReturn("peer-wrote-different-bytes");
+            doNothing().when(hdfsFileOperations).mkdirs(anyString());
+            doNothing().when(hdfsFileOperations).delete(anyString());
+
+            assertThatThrownBy(() -> writer.write(payload, WRAPPER_CONTENT))
+                    .isInstanceOf(HdfsWriteException.class)
+                    .hasMessageContaining("Existing file checksum mismatch");
+        }
+    }
+
+    @Nested
     @DisplayName("checksum validation")
     class ChecksumValidation {
 
