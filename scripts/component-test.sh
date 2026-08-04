@@ -120,12 +120,15 @@ elif [ -z "${KAFKA_SASL_JAAS_CONFIG}" ]; then
     echo "         config/test-env.env.template and CONFIGURATION_GUIDE.md."
 fi
 
+mkdir -p "${PROJECT_DIR}/logs"
+# Own log file: must not share a running bridge's rolling log (see monitor.sh)
 java ${JAAS_OPT} -jar "${JAR_PATH}" \
     --spring.profiles.active="$PROFILE" \
     --bridge.component-test="$MODE" \
     --bridge.component-test-args="$ARGS" \
     --bridge.mq.listener-enabled=false \
-    --bridge.validate-only=false
+    --bridge.validate-only=false \
+    --logging.file.name="${PROJECT_DIR}/logs/bridge-component-test.log"
 
 EXIT_CODE=$?
 set -e

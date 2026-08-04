@@ -5,6 +5,7 @@
 # Starts the application with listener disabled and verifies health endpoints.
 #
 # Usage: ./smoke-test.sh [prod|test-env]
+#   profile defaults to BRIDGE_PROFILE from .env, then test-env
 # =============================================================================
 
 set -e
@@ -12,7 +13,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROFILE="${1:-prod}"
+# Load .env if present (same convention as every sibling script) — the profiles
+# declare secrets with no defaults, so without this the context dies on
+# placeholder resolution and the failure masquerades as "health not responding".
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    echo "Loading environment from ${PROJECT_DIR}/.env"
+    set -a
+    # shellcheck disable=SC1091
+    source "${PROJECT_DIR}/.env"
+    set +a
+fi
+
+# Profile: explicit argument > BRIDGE_PROFILE from .env > test-env
+PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
 JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
 PORT="${SERVER_PORT:-8080}"
 HEALTH_URL="http://localhost:${PORT}/actuator/health"
@@ -53,11 +66,14 @@ JAR_PATH=$(ls ${JAR_FILE} | head -1)
 echo "Starting application (listener disabled)..."
 # require-listener-enabled=false: the smoke test deliberately starts without
 # consuming; without this the prod profile's go-live gate would refuse to start
+mkdir -p "${PROJECT_DIR}/logs"
+# Own log file: must not share a running bridge's rolling log (see monitor.sh)
 java -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --bridge.mq.listener-enabled=false \
     --bridge.mq.require-listener-enabled=false \
     --bridge.validate-only=false \
+    --logging.file.name="${PROJECT_DIR}/logs/bridge-smoke-test.log" \
     --server.port="${PORT}" &
 
 APP_PID=$!
@@ -65,13 +81,16 @@ echo $APP_PID > "$PID_FILE"
 echo "Application PID: $APP_PID"
 echo ""
 
-# Wait for health endpoint
+# Wait for the health endpoint to RESPOND — any HTTP status counts as responding
+# (a 503 means the app started with a DOWN indicator; that verdict belongs to the
+# status check below, not to a misleading "not responding after 60s" error)
 echo "Waiting for health endpoint..."
 COUNTER=0
 while [ $COUNTER -lt $MAX_WAIT ]; do
-    if curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" | grep -q "200"; then
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL") || HTTP_CODE="000"
+    if [ "$HTTP_CODE" != "000" ]; then
         echo ""
-        echo "Health endpoint responding!"
+        echo "Health endpoint responding (HTTP ${HTTP_CODE})"
         break
     fi
     echo -n "."

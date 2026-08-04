@@ -142,8 +142,8 @@ landed files).
 ./scripts/validate-only.sh prod        # prod deploy gate
 ```
 
-ALWAYS pass the profile explicitly — unlike the other scripts, this one
-defaults to `prod` when called with no argument.
+With no argument the profile comes from `BRIDGE_PROFILE` in `.env`
+(then `test-env`), the same convention as every other script.
 
 This checks MQ/Kafka/HDFS reachability and acquires a real OAuth token.
 An SSL handshake error mentioning certificate/hostname means a broker

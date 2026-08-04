@@ -51,16 +51,34 @@ echo "Profile: ${PROFILE}"
 echo "JAR: ${JAR_PATH}"
 echo "============================================"
 
+mkdir -p "${PROJECT_DIR}/logs"
+MONITOR_OUT="$(mktemp)"
+trap 'rm -f "$MONITOR_OUT"' EXIT
+
 # - web-application-type=none: the monitor JVM must not fight the running
 #   bridge for port 8080
 # - listener-enabled=false: the monitor must never consume a message
+# - logging.file.name: the monitor JVM must NOT share the running bridge's
+#   rolling log file — two logback instances rolling the same file rename it
+#   out from under each other and lose lines
 java -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --spring.main.web-application-type=none \
     --bridge.monitor.enabled=true \
-    --bridge.mq.listener-enabled=false
+    --bridge.mq.listener-enabled=false \
+    --logging.file.name="${PROJECT_DIR}/logs/bridge-monitor.log" \
+    2>&1 | tee "$MONITOR_OUT"
 
-EXIT_CODE=$?
+EXIT_CODE=${PIPESTATUS[0]}
+
+# A Spring context that fails to START also exits 1 — but that is a monitor-side
+# problem (exit 4: investigate this JVM/host), not "bridge unreachable" (exit 1:
+# page someone). The runner always prints a MONITOR RESULT marker once its checks
+# actually ran; a non-zero exit with no marker means they never did.
+if [ "$EXIT_CODE" -ne 0 ] && ! grep -q "MONITOR RESULT:" "$MONITOR_OUT"; then
+    echo "MONITOR: JVM exited ${EXIT_CODE} before running any check — reclassifying as exit 4"
+    EXIT_CODE=4
+fi
 
 echo "============================================"
 case $EXIT_CODE in

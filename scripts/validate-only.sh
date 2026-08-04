@@ -6,6 +6,7 @@
 # connectivity without consuming any MQ messages.
 #
 # Usage: ./validate-only.sh [prod|test-env]
+#   profile defaults to BRIDGE_PROFILE from .env, then test-env
 #
 # Exit codes:
 #   0 - All validation checks passed
@@ -19,7 +20,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROFILE="${1:-prod}"
 JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
 
 # Load .env if present. Note: .env values override anything already exported
@@ -32,6 +32,12 @@ if [ -f "${PROJECT_DIR}/.env" ]; then
     source "${PROJECT_DIR}/.env"
     set +a
 fi
+
+# Profile: explicit argument > BRIDGE_PROFILE from .env > test-env — the same
+# convention as every sibling script. (This script used to default to PROD,
+# which fired real credential exchanges at the prod STS on a bare invocation
+# from the test edge node.)
+PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
 
 echo "============================================"
 echo "MQ-Kafka Bridge - Validate Only Mode"
@@ -109,11 +115,15 @@ fi
 # set +e: under set -e a non-zero java exit would kill the script HERE and the
 # RESULT summary below would never print (the exit code itself still propagated,
 # but the scheduler sysout lost the human-readable verdict).
+mkdir -p "${PROJECT_DIR}/logs"
+
 set +e
+# Own log file: must not share the running bridge's rolling log (see monitor.sh)
 java ${JAAS_OPT} -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --bridge.validate-only=true \
-    --bridge.mq.listener-enabled=false
+    --bridge.mq.listener-enabled=false \
+    --logging.file.name="${PROJECT_DIR}/logs/bridge-validate.log"
 EXIT_CODE=$?
 set -e
 
