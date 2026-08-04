@@ -60,7 +60,11 @@ fi
 
 # Profile: explicit argument > BRIDGE_PROFILE from .env > test-env (safe default)
 PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
-HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health}"
+# Liveness group, NOT the full aggregate endpoint: a Kafka/HDFS outage takes the
+# aggregate DOWN, and restarting a healthy bridge every cycle for the duration of a
+# broker incident is exactly the churn a supervisor must not cause. The liveness
+# group (mqListener,ping) is DOWN only when the bridge process itself is wedged.
+HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health/liveness}"
 MAX_FAILURES="${MAX_FAILURES:-3}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 

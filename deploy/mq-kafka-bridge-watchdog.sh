@@ -18,7 +18,9 @@
 set -u
 
 SERVICE="mq-kafka-bridge"
-HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health}"
+# Liveness group, NOT the full aggregate endpoint — a Kafka/HDFS outage must not
+# make the watchdog restart-loop a healthy JVM (see bridge-keepalive.sh)
+HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health/liveness}"
 MAX_FAILURES="${MAX_FAILURES:-3}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 STATE_FILE="/run/${SERVICE}-watchdog.failures"
@@ -29,7 +31,9 @@ if ! systemctl is-active --quiet "$SERVICE"; then
     exit 0
 fi
 
-http_code=$(curl -s -o /dev/null -m "$CURL_TIMEOUT_SECONDS" -w "%{http_code}" "$HEALTH_URL" || echo "000")
+# curl already prints 000 on failure via -w; the ||-fallback must ASSIGN, not echo,
+# or a failure yields "000\n000" (same bug fixed in bridge-keepalive.sh)
+http_code=$(curl -s -o /dev/null -m "$CURL_TIMEOUT_SECONDS" -w "%{http_code}" "$HEALTH_URL") || http_code="000"
 
 if [ "$http_code" = "200" ]; then
     rm -f "$STATE_FILE"

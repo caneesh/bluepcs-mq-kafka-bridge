@@ -123,3 +123,8 @@ management:
   endpoint:
     health:
       show-details: always
+      # Supervisor liveness group — see application-prod.yml for the reasoning
+      group:
+        liveness:
+          include: mqListener,ping
+          show-details: always

@@ -336,9 +336,13 @@ leaving a zombie with dead listener threads — the heap dump lands in the confi
 ### 1b. Health watchdog (auto-restart on persistent DOWN)
 
 The `mqListener` health indicator *reports* a wedged listener; the watchdog *acts* on it.
-A systemd timer polls `/actuator/health` every minute and restarts the bridge after 3
+A systemd timer polls `/actuator/health/liveness` every minute and restarts the bridge after 3
 consecutive failures (~4 minutes worst case). Transient blips never restart; an intentionally
-stopped bridge is never touched.
+stopped bridge is never touched. The **liveness** group (`mqListener,ping`) goes DOWN only
+when the bridge process itself is wedged — a Kafka/HDFS outage takes the full aggregate
+`/actuator/health` DOWN but must never restart-loop a healthy JVM, so both supervisors
+(watchdog and keepalive) poll the liveness group while the monitor and humans use the
+full endpoint.
 
 ```bash
 sudo cp deploy/mq-kafka-bridge-watchdog.sh /usr/local/bin/

@@ -189,6 +189,15 @@ management:
       # consuming. 'when_authorized' without Spring Security on the classpath hides
       # details from EVERYONE, silently blinding the monitor's not-consuming check.
       show-details: always
+      # Liveness group for the process supervisors (watchdog/keepalive): a restart must
+      # trigger only when the BRIDGE process is wedged (mqListener DOWN), not when a
+      # downstream dependency (Kafka/HDFS) has an outage — restarting a healthy JVM
+      # every cycle during a broker incident is pure churn and destroys the diagnostic
+      # signal. Humans and the Control-M monitor keep using the full aggregate endpoint.
+      group:
+        liveness:
+          include: mqListener,ping
+          show-details: always
   endpoints:
     web:
       exposure:
