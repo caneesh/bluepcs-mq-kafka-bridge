@@ -90,8 +90,11 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
                 // clock skew, overstated expires_in). Without invalidation every message
                 // 401s against the same cached token until natural expiry — force exactly
                 // one fresh-token attempt before treating the auth failure as permanent.
+                // Not gated on remaining attempts: even on the final attempt (or with
+                // retry-attempts=1) the refresh is worth doing — the fresh token is cached
+                // for the redelivery that follows a retryable failure.
                 boolean authFailure = e.getStatusCode() == 401 || e.getStatusCode() == 403;
-                if (authFailure && !tokenRefreshed && attempt < retryAttempts) {
+                if (authFailure && !tokenRefreshed) {
                     logger.warn("Auth failure {} on attempt {}/{} for entityId {}; refreshing "
                                     + "token and retrying once",
                             e.getStatusCode(), attempt, retryAttempts, entityId);
@@ -169,11 +172,19 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
             } else if (statusCode >= 400 && statusCode < 500) {
                 logger.warn("Client error {} for entityId: {} — response: {}",
                         statusCode, entityId, safeErrorBody(response));
+                // Retryability decides quarantine-vs-redeliver in the orchestrator. 401/403
+                // (auth outage — refresh is forced once by enrich(), a persisting failure is
+                // the gateway's problem, not this message's) and 408/429 (timeout/throttle)
+                // are environmental: the message must stay on the queue and redeliver. Only
+                // statuses that can never succeed for THIS message (400/404/422/...) may
+                // quarantine, because quarantine is followed by an MQ ack.
+                boolean transientClientError = statusCode == 401 || statusCode == 403
+                        || statusCode == 408 || statusCode == 429;
                 throw new EnrichmentException(
                         "API client error: " + statusCode,
                         entityId,
                         statusCode,
-                        false
+                        transientClientError
                 );
             } else if (statusCode >= 500) {
                 // WARN per attempt — the orchestrator emits the single terminal ERROR
@@ -222,10 +233,13 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         try {
             Thread.sleep(ms);
         } catch (InterruptedException e) {
-            // Abort the retry loop immediately (e.g. on shutdown) instead of burning the
-            // remaining attempts; non-retryable so callers do not re-enter the loop.
+            // Abort the retry loop immediately (e.g. on shutdown). MUST be retryable: an
+            // interrupt is a property of this JVM's lifecycle, not of the message — marking
+            // it permanent would quarantine + ack a healthy message on every deploy that
+            // catches a retry mid-backoff. Retryable → no ack → the broker redelivers
+            // after restart.
             Thread.currentThread().interrupt();
-            throw new EnrichmentException("Enrichment retry interrupted", entityId, e, false);
+            throw new EnrichmentException("Enrichment retry interrupted", entityId, e, true);
         }
     }
 

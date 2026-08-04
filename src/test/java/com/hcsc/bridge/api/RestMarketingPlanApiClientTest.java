@@ -157,10 +157,13 @@ class RestMarketingPlanApiClientTest {
         }
 
         @Test
-        @DisplayName("should refresh the token once on 401 and fail non-retryably if it repeats")
-        void shouldRefreshOnceThenFailOnRepeated401() {
-            // A cached-but-revoked token gets exactly one forced refresh; a second 401
-            // with the fresh token is a real auth problem and must not loop.
+        @DisplayName("should refresh the token once on 401 and fail retryably if it persists")
+        void shouldRefreshOnceThenFailRetryablyOnPersistent401() {
+            // A cached-but-revoked token gets exactly one forced refresh. A 401 that
+            // persists with the fresh token is a gateway/credential outage — an
+            // environmental failure that must redeliver (retryable), NEVER quarantine
+            // + ack: quarantining would drain the whole queue during an auth outage.
+            mockServer.enqueue(new MockResponse().setResponseCode(401));
             mockServer.enqueue(new MockResponse().setResponseCode(401));
             mockServer.enqueue(new MockResponse().setResponseCode(401));
 
@@ -171,10 +174,46 @@ class RestMarketingPlanApiClientTest {
                     .satisfies(e -> {
                         EnrichmentException ex = (EnrichmentException) e;
                         assertThat(ex.getStatusCode()).isEqualTo(401);
-                        assertThat(ex.isRetryable()).isFalse();
+                        assertThat(ex.isRetryable()).isTrue();
                     });
 
+            // Exactly one refresh even across the remaining retry attempts
             org.mockito.Mockito.verify(jwtTokenProvider).refreshToken();
+            assertThat(mockServer.getRequestCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("should treat 429 rate limiting as retryable, never quarantine")
+        void shouldTreat429AsRetryable() {
+            mockServer.enqueue(new MockResponse().setResponseCode(429));
+            mockServer.enqueue(new MockResponse().setResponseCode(429));
+            mockServer.enqueue(new MockResponse().setResponseCode(429));
+
+            client = createClient();
+
+            assertThatThrownBy(() -> client.enrich(createPayload("ENT-429")))
+                    .isInstanceOf(EnrichmentException.class)
+                    .satisfies(e -> {
+                        EnrichmentException ex = (EnrichmentException) e;
+                        assertThat(ex.getStatusCode()).isEqualTo(429);
+                        assertThat(ex.isRetryable()).isTrue();
+                    });
+            assertThat(mockServer.getRequestCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("should retry a 408 within the loop and recover")
+        void shouldRetry408AndRecover() {
+            mockServer.enqueue(new MockResponse().setResponseCode(408));
+            mockServer.enqueue(new MockResponse()
+                    .setBody(planResponseBody("MP-AFTER-408"))
+                    .setHeader("Content-Type", "application/json"));
+
+            client = createClient();
+
+            MarketingPlanApiClient.EnrichmentResult result = client.enrich(createPayload("ENT-408"));
+
+            assertThat(result.getMarketingPlanId()).isEqualTo("MP-AFTER-408");
             assertThat(mockServer.getRequestCount()).isEqualTo(2);
         }
 
@@ -380,10 +419,13 @@ class RestMarketingPlanApiClientTest {
 
             Thread.currentThread().interrupt();
             try {
+                // Retryable: an interrupt is this JVM shutting down, not a bad message —
+                // the message must stay on the queue and redeliver after restart, not be
+                // quarantined + acked away by an unlucky deploy.
                 assertThatThrownBy(() -> client.enrich(createPayload("ENT-INT-001")))
                         .isInstanceOf(EnrichmentException.class)
                         .hasMessageContaining("interrupted")
-                        .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isFalse());
+                        .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isTrue());
             } finally {
                 // Reads AND clears the flag so it cannot leak into other tests
                 assertThat(Thread.interrupted()).isTrue();
