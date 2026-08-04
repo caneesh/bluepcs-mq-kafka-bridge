@@ -98,6 +98,52 @@ class BridgeOrchestratorTest {
     }
 
     @Nested
+    @DisplayName("redelivery after acknowledgement failure (at-least-once)")
+    class RedeliveryAfterAckFailure {
+
+        /**
+         * The sequence behind review finding P0-2: HDFS write succeeds, Kafka publish
+         * succeeds, the MQ acknowledge fails (the listener deliberately does not undo any
+         * work — see MqMessageListener.acknowledgeProcessedMessage), and the broker
+         * redelivers the same JMS message id. The redelivery must be idempotent on HDFS
+         * and explicitly duplicate on Kafka: this bridge is at-least-once, not exactly-once.
+         */
+        @Test
+        @DisplayName("redelivery reuses the eventId, skips the HDFS rewrite, and republishes to Kafka")
+        void redeliveryIsIdempotentOnHdfsAndDuplicateOnKafka() {
+            MqMessage first = createMqMessage("MSG-REDELIVER-001");
+            MqMessage redelivered = createMqMessage("MSG-REDELIVER-001"); // same JMS message id
+            ParsedPayload parsed = createParsedPayload("MSG-REDELIVER-001", "TXN-001");
+
+            when(eventIdGenerator.generateEventId("MSG-REDELIVER-001")).thenReturn("stable-event-id");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(apiClient.enrich(parsed)).thenReturn(enrichmentResult());
+            // First delivery writes the file; the redelivery finds the identical file in place
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/path/stable-event-id.json", "checksum", 1024))
+                    .thenReturn(HdfsWriteResult.alreadyExists("/path/stable-event-id.json", "checksum"));
+            when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("100", "101");
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult firstResult = orchestrator.process(first);
+            ProcessingResult redeliveredResult = orchestrator.process(redelivered);
+
+            assertThat(firstResult.isSuccessful()).isTrue();
+            assertThat(redeliveredResult.isSuccessful()).isTrue();
+            // Event id is stable across deliveries of the same JMS message id
+            assertThat(firstResult.getEventId()).isEqualTo("stable-event-id");
+            assertThat(redeliveredResult.getEventId()).isEqualTo("stable-event-id");
+            // Same advertised HDFS path both times; the second write was the idempotent skip
+            assertThat(redeliveredResult.getHdfsPath()).isEqualTo(firstResult.getHdfsPath());
+            // Kafka IS published twice with the same key: duplicates are explicit and expected;
+            // downstream consumers dedupe on eventId
+            ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher, times(2)).publish(keys.capture(), anyString());
+            assertThat(keys.getAllValues()).containsExactly("stable-event-id", "stable-event-id");
+        }
+    }
+
+    @Nested
     @DisplayName("happy path processing")
     class HappyPath {
 
