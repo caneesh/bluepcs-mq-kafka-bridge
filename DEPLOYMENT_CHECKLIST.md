@@ -246,12 +246,15 @@ java -jar mq-kafka-bridge.jar \
 
 ### Step 2: Start with Listener Disabled (Optional)
 
-Start the application without consuming messages to verify startup:
+Start the application without consuming messages to verify startup. The prod
+profile's go-live gate (`bridge.mq.require-listener-enabled=true`) refuses a
+listener-disabled start unless the gate is explicitly waived:
 
 ```bash
 java -jar mq-kafka-bridge.jar \
   --spring.profiles.active=prod \
-  --bridge.mq.listener-enabled=false
+  --bridge.mq.listener-enabled=false \
+  --bridge.mq.require-listener-enabled=false
 ```
 
 Verify:
@@ -395,8 +398,13 @@ bridge.hdfs.kerberos.relogin-interval-ms   # default 300000 (5 min)
 ### 2. Listener must be explicitly enabled
 
 `bridge.mq.listener-enabled` defaults to **false** (safe-start). A 24/7 deployment must pin
-`--bridge.mq.listener-enabled=true` (the systemd unit does this) — otherwise the app runs with
-green-looking health while consuming nothing.
+`--bridge.mq.listener-enabled=true` (the systemd unit and `bridge-keepalive.sh` both do this) —
+otherwise the app runs with green-looking health while consuming nothing.
+
+The prod profile additionally sets `bridge.mq.require-listener-enabled=true`: a prod start
+that forgot the listener flag now **fails at startup** instead of running idle. Diagnostic
+modes (validate-only, component-test, monitor) are exempt; a deliberate no-consume bring-up
+(smoke test, manual verification) passes `--bridge.mq.require-listener-enabled=false`.
 
 ### 3. Monitoring signals
 

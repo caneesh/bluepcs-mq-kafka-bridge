@@ -51,9 +51,12 @@ JAR_PATH=$(ls ${JAR_FILE} | head -1)
 
 # Start application in background with listener disabled
 echo "Starting application (listener disabled)..."
+# require-listener-enabled=false: the smoke test deliberately starts without
+# consuming; without this the prod profile's go-live gate would refuse to start
 java -jar "${JAR_PATH}" \
     --spring.profiles.active="${PROFILE}" \
     --bridge.mq.listener-enabled=false \
+    --bridge.mq.require-listener-enabled=false \
     --bridge.validate-only=false \
     --server.port="${PORT}" &
 

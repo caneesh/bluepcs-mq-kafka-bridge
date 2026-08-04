@@ -89,6 +89,21 @@ public class StartupConfigValidator {
     @Value("${bridge.security.client-secret:}")
     private String oauthClientSecret;
 
+    @Value("${bridge.mq.listener-enabled:false}")
+    private boolean mqListenerEnabled;
+
+    @Value("${bridge.mq.require-listener-enabled:false}")
+    private boolean requireListenerEnabled;
+
+    @Value("${bridge.validate-only:false}")
+    private boolean validateOnly;
+
+    @Value("${bridge.component-test:}")
+    private String componentTestMode;
+
+    @Value("${bridge.monitor.enabled:false}")
+    private boolean monitorEnabled;
+
     @PostConstruct
     public void validateConfiguration() {
         logger.info("=== STARTUP CONFIGURATION VALIDATION ===");
@@ -97,6 +112,7 @@ public class StartupConfigValidator {
         List<String> warnings = new ArrayList<>();
 
         validateMqConfig(errors, warnings);
+        validateListenerGate(errors, warnings);
         validateKafkaConfig(errors, warnings);
         validateHdfsConfig(errors, warnings);
         validateApiConfig(errors, warnings);
@@ -162,6 +178,29 @@ public class StartupConfigValidator {
             warnings.add("[MQ] bridge.mq.username set without a password - connecting without MQCSP password authentication");
         } else if (!isBlank(mqPassword)) {
             logger.info("[MQ] Password: ********");
+        }
+    }
+
+    /**
+     * Go-live gate: with {@code bridge.mq.require-listener-enabled=true} (set by the prod
+     * profile) a launch that forgot {@code --bridge.mq.listener-enabled=true} fails fast
+     * instead of running healthy-looking while consuming nothing. The safe-start default
+     * of listener-enabled=false is preserved; a deliberate no-consume bring-up passes
+     * {@code --bridge.mq.require-listener-enabled=false}. Diagnostic JVMs (validate-only,
+     * component-test, monitor) never consume by design and are exempt.
+     */
+    void validateListenerGate(List<String> errors, List<String> warnings) {
+        boolean diagnosticMode = validateOnly || monitorEnabled || !isBlank(componentTestMode);
+        if (diagnosticMode) {
+            return;
+        }
+        if (requireListenerEnabled && !mqListenerEnabled) {
+            errors.add("[MQ] bridge.mq.require-listener-enabled=true but the MQ listener is disabled - "
+                    + "the app would run healthy while consuming nothing. Pass "
+                    + "--bridge.mq.listener-enabled=true for go-live, or "
+                    + "--bridge.mq.require-listener-enabled=false for a deliberate safe-start.");
+        } else if (!mqListenerEnabled) {
+            warnings.add("[MQ] listener disabled (safe-start): the app will report UP but consume nothing");
         }
     }
 
