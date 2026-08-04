@@ -98,6 +98,11 @@ component test (below) fails and the guide's per-component section says which
 value to fix:
 
 - [ ] Guide §2 — the required secrets set in `.env`
+- [ ] Audit destination decided: until the audit topic exists (prod:
+      `DAS_PRODUCT_BRIDGE_AUDIT` — NOT yet created), run with
+      `AUDIT_PUBLISHER=log` (events go to the dedicated audit log file,
+      90-day retention). Flip to `kafka` + restart once the Kafka team has
+      created the topic and ACLs. The startup log WARNs while in log mode.
 - [ ] Guide §3 — MQ values reviewed (defaults usually correct)
 - [ ] Guide §4 — API base URL + OAuth values reviewed
 - [ ] Guide §5 — Kafka truststore location exists; JAAS/keytab decided
