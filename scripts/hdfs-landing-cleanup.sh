@@ -2,8 +2,10 @@
 # =============================================================================
 # HDFS Landing Directory Retention Sweep
 # =============================================================================
-# Implements the file lifecycle for bridge payload files
-# (see DEPLOYMENT_CHECKLIST.md "HDFS File Lifecycle"):
+# SAFETY-NET sweep behind the normal file lifecycle (see DEPLOYMENT_CHECKLIST.md
+# "HDFS File Lifecycle"). The CONSUMER owns the normal path: it moves each
+# processed file out of the landing directory itself. This sweep only catches
+# what that leaves behind:
 #
 #   landing (<HDFS_BASE_PATH>)            files older than LANDING_RETENTION_DAYS
 #     └→ archive (<HDFS_ARCHIVE_PATH>)    files older than ARCHIVE_RETENTION_DAYS
@@ -35,10 +37,13 @@
 #   15 2 * * * /path/to/scripts/hdfs-landing-cleanup.sh \
 #       >> /var/log/bluepcs/hdfs-landing-cleanup.log 2>&1
 #
-# NOTE: LANDING_RETENTION_DAYS is the consumer's replay window — a Kafka
-# message re-read after the file was archived is skipped as a duplicate by
-# the consumer's BridgeMessageResolver. Size it to comfortably exceed the
-# longest expected consumer outage.
+# NOTE: a file still in landing after LANDING_RETENTION_DAYS was NEVER
+# processed by the consumer (the consumer moves processed files out itself).
+# Archiving it keeps the landing dir finite, but afterwards a redelivery of
+# its message is skipped as an already-processed duplicate by the consumer's
+# BridgeMessageResolver — so investigate the monitor's exit-3 backlog alerts
+# (which fire within ~30 min of a consumer stall) long before files age out
+# here. This sweep is garbage collection, not a replay window.
 # =============================================================================
 
 set -e

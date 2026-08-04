@@ -629,23 +629,33 @@ Key log patterns to monitor:
 
 ### HDFS File Lifecycle
 
-The bridge WRITES payload files; nothing in the bridge ever deletes them. The lifecycle
-is time-based, implemented by `scripts/hdfs-landing-cleanup.sh` (run daily from cron):
+The bridge WRITES payload files; nothing in the bridge ever moves or deletes them.
+The CONSUMER owns the normal lifecycle: after processing a claim-check notification it
+moves the file out of the landing directory (see
+`docs/consumer/BridgeMessageResolver.scala` — a missing file on re-read is treated as
+an already-processed duplicate and skipped). `scripts/hdfs-landing-cleanup.sh` (daily
+cron) is the safety net behind that, not the primary lifecycle:
 
 ```
-bridge writes  ->  <base-path>/<eventId>.json          (landing)
-consumer reads via hdfsPath in the Kafka notification  (file stays in place)
-cleanup sweep  ->  landing files older than LANDING_RETENTION_DAYS (default 7)
-                     moved to <archive-path> (<base-path>/archive)
-               ->  archive files older than ARCHIVE_RETENTION_DAYS (default 30)
-                     deleted
-               ->  orphaned *.json.tmp older than 1 day deleted
+bridge writes   ->  <base-path>/<eventId>.json          (landing)
+consumer reads via hdfsPath, processes, MOVES the file out of landing
+cleanup sweep   ->  landing files older than LANDING_RETENTION_DAYS (default 7)
+                      moved to <archive-path> (<base-path>/archive)
+                ->  archive files older than ARCHIVE_RETENTION_DAYS (default 30)
+                      deleted
+                ->  orphaned *.json.tmp older than 1 day deleted
 ```
 
-- `LANDING_RETENTION_DAYS` is the consumer's replay window: a Kafka message re-read
-  after its file was archived is skipped as an already-processed duplicate by the
-  consumer's `BridgeMessageResolver` (see `docs/consumer/BridgeMessageResolver.scala`).
-  Size it to exceed the longest expected consumer outage.
+- Because the consumer moves processed files promptly, a landing file older than
+  ~30 minutes means the consumer has stalled — that is exactly what the Control-M
+  monitor's exit-3 backlog check alerts on (section 4 above).
+- A file STILL in landing after `LANDING_RETENTION_DAYS` was therefore never
+  processed. The sweep archives it to keep the landing dir finite, but after that a
+  redelivery of its message is skipped as a duplicate by the consumer — investigate
+  exit-3 alerts long before files age out; do not treat the sweep as a replay window.
+- [ ] Consumer team confirms the deployed DStream job moves processed files out of
+      the landing directory promptly — BOTH the 30-min backlog alert and the 7-day
+      sweep semantics above assume it.
 - The `errors/` quarantine directory is NEVER auto-cleaned — a quarantined file is the
   only copy of an unparseable message; review it, then replay or delete it (see
   "Quarantine review and replay" below).
