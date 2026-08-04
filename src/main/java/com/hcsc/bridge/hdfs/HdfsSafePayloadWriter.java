@@ -10,8 +10,6 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.UUID;
 
 @Component
@@ -106,7 +104,9 @@ public class HdfsSafePayloadWriter {
                         + describeRenameFailure(tempPath, targetPath) + ")", targetPath, messageId);
             }
 
-            logger.info("Successfully wrote payload {} to HDFS: {} ({} bytes)",
+            // DEBUG: the orchestrator's terminal summary already carries the path at
+            // INFO; this line adds only the byte count on the happy path
+            logger.debug("Successfully wrote payload {} to HDFS: {} ({} bytes)",
                     messageId, targetPath, contentBytes.length);
 
             return HdfsWriteResult.success(targetPath, checksum, contentBytes.length);
@@ -196,21 +196,7 @@ public class HdfsSafePayloadWriter {
     }
 
     private String calculateChecksum(byte[] content) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(content);
-            return bytesToHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 algorithm not available", e);
-        }
-    }
-
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+        return com.hcsc.bridge.core.DigestUtil.sha256Hex(content);
     }
 
     private void writeToTempFile(String tempPath, byte[] content, String messageId) throws IOException {

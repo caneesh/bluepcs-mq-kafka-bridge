@@ -244,13 +244,22 @@ class MqMessageListenerTest {
     class JmsExceptionHandling {
 
         @Test
-        @DisplayName("should throw MqProcessingException on JMS error getting message ID")
-        void shouldThrowOnJmsErrorGettingMessageId() throws JMSException {
+        @DisplayName("should tolerate a JMS error reading the message ID and still process")
+        void shouldTolerateJmsErrorGettingMessageId() throws JMSException {
+            // Header reads must not bypass the poison guard or fail the delivery: the
+            // listener proceeds with a null id (eventId derivation falls back to the
+            // payload hash in the orchestrator).
             when(textMessage.getJMSMessageID()).thenThrow(new JMSException("Connection lost"));
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenReturn("{\"test\":\"payload\"}");
+            when(orchestrator.process(any())).thenReturn(
+                    ProcessingResult.success("event-id-hdr-001", "/path/file.json", "12345"));
+            doNothing().when(textMessage).acknowledge();
 
-            assertThatThrownBy(() -> listener.onMessage(textMessage))
-                    .isInstanceOf(MqProcessingException.class)
-                    .hasMessageContaining("JMS error");
+            listener.onMessage(textMessage);
+
+            verify(orchestrator).process(any());
+            verify(textMessage).acknowledge();
         }
 
         @Test
@@ -286,8 +295,11 @@ class MqMessageListenerTest {
         @Test
         @DisplayName("should include JMS exception as cause")
         void shouldIncludeJmsExceptionAsCause() throws JMSException {
+            // The body read is the throwing path (header reads are tolerated with null)
             JMSException jmsException = new JMSException("Original error");
-            when(textMessage.getJMSMessageID()).thenThrow(jmsException);
+            when(textMessage.getJMSMessageID()).thenReturn("MSG-JMS-CAUSE");
+            when(textMessage.getJMSCorrelationID()).thenReturn(null);
+            when(textMessage.getText()).thenThrow(jmsException);
 
             assertThatThrownBy(() -> listener.onMessage(textMessage))
                     .isInstanceOf(MqProcessingException.class)

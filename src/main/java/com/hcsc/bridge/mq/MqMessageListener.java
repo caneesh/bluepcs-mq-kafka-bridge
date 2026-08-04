@@ -85,10 +85,12 @@ public class MqMessageListener {
             }
 
             TextMessage textMessage = (TextMessage) message;
-            // Headers/properties first: the poison guard must be evaluable even when the
-            // BODY cannot be read (getText() below can throw on every delivery).
-            messageId = textMessage.getJMSMessageID();
-            String correlationId = textMessage.getJMSCorrelationID();
+            // Headers/properties first, each tolerating failure: the poison guard must be
+            // evaluable even when individual header reads (or the body read below) throw
+            // on every delivery — a header JMSException before the guard would loop the
+            // message forever with the guard never consulted.
+            messageId = readHeaderQuietly(textMessage::getJMSMessageID, "JMSMessageID");
+            String correlationId = readHeaderQuietly(textMessage::getJMSCorrelationID, "JMSCorrelationID");
             int deliveryCount = getDeliveryCount(message);
             String queueName = extractQueueName(message);
             boolean poison = maxDeliveryAttempts > 0 && deliveryCount > maxDeliveryAttempts;
@@ -109,13 +111,14 @@ public class MqMessageListener {
                 throw bodyReadFailure;
             }
 
-            logger.info("=== INCOMING MQ MESSAGE ===");
-            logger.info("  JMSMessageID: {}", messageId);
-            logger.info("  JMSCorrelationID: {}", sanitizeForLog(correlationId));
-            logger.info("  Queue: {}", sanitizeForLog(queueName));
-            logger.info("  Payload size: {} bytes", payload != null ? payload.length() : 0);
+            // One structured line, not a banner: at production rates a multi-line block
+            // per message dominates the log. Size is in CHARS (Java string length) —
+            // the HDFS write logs UTF-8 bytes, which differ for non-ASCII payloads.
+            logger.info("=== INCOMING MQ MESSAGE === JMSMessageID={} JMSCorrelationID={} queue={} payloadChars={}",
+                    messageId, sanitizeForLog(correlationId), sanitizeForLog(queueName),
+                    payload != null ? payload.length() : 0);
             if (deliveryCount > 1) {
-                logger.warn("  Redelivery: JMSXDeliveryCount={}", deliveryCount);
+                logger.warn("Redelivery: JMSXDeliveryCount={} messageId={}", deliveryCount, messageId);
             }
 
             if (logPayload && payload != null) {
@@ -124,9 +127,8 @@ public class MqMessageListener {
                     masked = masked.substring(0, MAX_LOGGED_PAYLOAD_CHARS)
                             + "... (truncated, " + payload.length() + " chars total)";
                 }
-                logger.info("  Payload:\n{}", masked);
+                logger.info("Payload for messageId={}:\n{}", messageId, masked);
             }
-            logger.info("===========================");
 
             if (poison) {
                 discardPoisonMessage(message, messageId, correlationId, payload, queueName, deliveryCount);
@@ -306,6 +308,26 @@ public class MqMessageListener {
                     .build());
         } catch (RuntimeException e) {
             logger.error("Failed to publish MESSAGE_DISCARDED audit for unsupported message type", e);
+        }
+    }
+
+    @FunctionalInterface
+    private interface HeaderReader {
+        String read() throws JMSException;
+    }
+
+    /**
+     * Header reads must never bypass the poison guard: a header that throws on every
+     * delivery (like a converted body can) would otherwise redeliver the message forever
+     * with the guard never consulted. WARN, not DEBUG — a missing JMSMessageID also
+     * changes eventId derivation (the payload-hash fallback takes over).
+     */
+    private String readHeaderQuietly(HeaderReader reader, String headerName) {
+        try {
+            return reader.read();
+        } catch (JMSException e) {
+            logger.warn("Could not read {} header; continuing without it: {}", headerName, e.getMessage());
+            return null;
         }
     }
 

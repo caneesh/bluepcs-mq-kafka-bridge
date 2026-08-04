@@ -94,24 +94,8 @@ public class HadoopFileOperations implements HdfsFileOperations {
 
     private String calculateLocalChecksum(String path) throws IOException {
         try (var inputStream = fileSystem.open(new Path(path))) {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
-            }
-            return bytesToHex(digest.digest());
-        } catch (java.security.NoSuchAlgorithmException e) {
-            throw new IOException("SHA-256 not available", e);
+            return com.hcsc.bridge.core.DigestUtil.sha256Hex(inputStream);
         }
-    }
-
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
     }
 
     @Override

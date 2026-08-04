@@ -52,7 +52,9 @@ public class KafkaEnvelopePublisher {
             String offset = String.valueOf(result.getRecordMetadata().offset());
             int partition = result.getRecordMetadata().partition();
 
-            logger.info("Published to Kafka: key={}, topic={}, partition={}, offset={}",
+            // DEBUG: the orchestrator's terminal summary already carries the offset at
+            // INFO; a second per-message INFO line here only doubles the log volume
+            logger.debug("Published to Kafka: key={}, topic={}, partition={}, offset={}",
                     key, topic, partition, offset);
 
             return offset;

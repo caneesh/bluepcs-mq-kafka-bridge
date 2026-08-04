@@ -199,22 +199,39 @@ public class BridgeOrchestrator {
                                                 MessageParseException e) {
         logger.error("Parse failure for eventId {}: {}", ctx.getEventId(), e.getMessage());
 
+        ProcessingResult quarantined = quarantineOrNull(ctx, mqMessage, "PARSE_ERROR",
+                "Unparseable message", e.getMessage());
+        if (quarantined != null) {
+            return quarantined;
+        }
+        publishAudit(ctx, null, AuditEventType.PROCESSING_FAILED,
+                "Parse failure (quarantine write also failed)", e.getMessage());
+        return ProcessingResult.failure(ctx.getEventId(), "PARSE_ERROR", e.getMessage());
+    }
+
+    /**
+     * Shared quarantine-then-ack path for permanent failures. Safety invariant: the
+     * QUARANTINED result (which the listener ACKs) is returned only when the raw payload
+     * was durably preserved; a failed quarantine write returns null and the caller falls
+     * back to FAILURE — no ack, redelivery retries the quarantine.
+     */
+    private ProcessingResult quarantineOrNull(ProcessingContext ctx, MqMessage mqMessage,
+                                              String errorCode, String description,
+                                              String errorMessage) {
         try {
             HdfsWriteResult quarantineResult = hdfsWriter.writeQuarantine(
                     ctx.getEventId(), mqMessage.getPayload(), ctx.getOriginalMqMessageId());
-            logger.warn("Quarantined unparseable message: eventId={}, path={}",
-                    ctx.getEventId(), quarantineResult.getHdfsPath());
+            logger.warn("Quarantined message: eventId={}, reason={}, path={}",
+                    ctx.getEventId(), errorCode, quarantineResult.getHdfsPath());
             publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
-                    "Unparseable message quarantined to " + quarantineResult.getHdfsPath(),
-                    e.getMessage());
+                    description + "; raw payload quarantined to " + quarantineResult.getHdfsPath(),
+                    errorMessage);
             return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
-                    "PARSE_ERROR", e.getMessage());
+                    errorCode, errorMessage);
         } catch (RuntimeException quarantineFailure) {
             logger.error("Quarantine write failed for eventId {} — message will stay on the queue "
                     + "for redelivery", ctx.getEventId(), quarantineFailure);
-            publishAudit(ctx, null, AuditEventType.PROCESSING_FAILED,
-                    "Parse failure (quarantine write also failed)", e.getMessage());
-            return ProcessingResult.failure(ctx.getEventId(), "PARSE_ERROR", e.getMessage());
+            return null;
         }
     }
 
@@ -231,21 +248,12 @@ public class BridgeOrchestrator {
         if (!e.isRetryable()) {
             logger.error("Non-retryable enrichment failure for eventId {}: {} — quarantining",
                     ctx.getEventId(), e.getMessage());
-            try {
-                HdfsWriteResult quarantineResult = hdfsWriter.writeQuarantine(
-                        ctx.getEventId(), mqMessage.getPayload(), ctx.getOriginalMqMessageId());
-                logger.warn("Quarantined message with permanent enrichment failure: eventId={}, path={}",
-                        ctx.getEventId(), quarantineResult.getHdfsPath());
-                publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
-                        "Non-retryable enrichment failure; raw payload quarantined to "
-                                + quarantineResult.getHdfsPath(), e.getMessage());
-                return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
-                        "ENRICHMENT_ERROR", e.getMessage());
-            } catch (RuntimeException quarantineFailure) {
-                logger.error("Quarantine write failed for eventId {} — message will stay on the "
-                        + "queue for redelivery", ctx.getEventId(), quarantineFailure);
-                // fall through to the FAILURE path below
+            ProcessingResult quarantined = quarantineOrNull(ctx, mqMessage, "ENRICHMENT_ERROR",
+                    "Non-retryable enrichment failure", e.getMessage());
+            if (quarantined != null) {
+                return quarantined;
             }
+            // fall through to the FAILURE path below
         } else {
             logger.error("Enrichment failure for eventId {} (retryable): {}",
                     ctx.getEventId(), e.getMessage());

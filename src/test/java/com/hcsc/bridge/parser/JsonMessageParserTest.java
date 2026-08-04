@@ -167,6 +167,27 @@ class JsonMessageParserTest {
     class InvalidMessages {
 
         @Test
+        @DisplayName("should throw a clean parse exception on an empty payload")
+        void shouldThrowOnEmptyPayload() {
+            // Pins Jackson's readTree("") -> MissingNode behavior: older Jackson versions
+            // returned null here, which would NPE instead of quarantining cleanly — a
+            // dependency bump must not silently regress this.
+            MqMessage message = createMessage("MSG-EMPTY-001", "");
+
+            assertThatThrownBy(() -> parser.parse(message))
+                    .isInstanceOf(MessageParseException.class);
+        }
+
+        @Test
+        @DisplayName("should throw a clean parse exception on a whitespace-only payload")
+        void shouldThrowOnWhitespacePayload() {
+            MqMessage message = createMessage("MSG-EMPTY-002", "   \n  ");
+
+            assertThatThrownBy(() -> parser.parse(message))
+                    .isInstanceOf(MessageParseException.class);
+        }
+
+        @Test
         @DisplayName("should throw when planNotification is missing")
         void shouldThrowWhenPlanNotificationMissing() {
             String payload = "{\"somethingElse\": {}}";
