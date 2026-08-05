@@ -67,7 +67,14 @@ public class ComponentTestRunner implements ApplicationRunner {
 
     private static final int MAX_BROWSE = 10;
     private static final int MAX_PREVIEW_CHARS = 300;
-    private static final long KAFKA_TIMEOUT_SECONDS = 30;
+    // NOT a hardcoded value: the wait must exceed the producer's own send budget
+    // (max.block.ms + delivery.timeout.ms), or a retriable condition (leader
+    // unavailable, not enough in-sync replicas, unreachable leader) makes the test
+    // report FAILED with a bare TimeoutException while the producer is still
+    // retrying — the harness would then never show the real broker-side verdict.
+    // Same coherence rule StartupConfigValidator enforces for the live publisher.
+    @Value("${bridge.kafka.timeout-seconds:190}")
+    private long kafkaTimeoutSeconds;
 
     @Value("${bridge.component-test:}")
     private String mode;
@@ -327,7 +334,7 @@ public class ComponentTestRunner implements ApplicationRunner {
         try {
             KafkaTemplate<String, String> kafkaTemplate = kafkaTemplateProvider.getObject();
             ListenableFuture<SendResult<String, String>> future = kafkaTemplate.send(topic, key, value);
-            SendResult<String, String> result = future.get(KAFKA_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            SendResult<String, String> result = future.get(kafkaTimeoutSeconds, TimeUnit.SECONDS);
 
             logger.info("============================================");
             logger.info("COMPONENT-TEST RESULT: PASSED (kafka)");
@@ -346,11 +353,31 @@ public class ComponentTestRunner implements ApplicationRunner {
             logger.error("  Error: interrupted while publishing - {}", e.getMessage());
             logger.error("============================================");
             return EXIT_FAILED;
+        } catch (java.util.concurrent.TimeoutException e) {
+            // TimeoutException carries no message ("Error: null" is useless at 2am).
+            // Reaching this means the producer connected, authenticated and got
+            // metadata — the record simply was not acknowledged in time, which points
+            // at the LEADER for this partition, not at connectivity in general.
+            logger.error("============================================");
+            logger.error("COMPONENT-TEST RESULT: FAILED (kafka)");
+            logger.error("  Topic: {}", topic);
+            logger.error("  Error: no broker acknowledgement within {}s (TimeoutException)",
+                    kafkaTimeoutSeconds);
+            logger.error("  The producer DID connect, authenticate and fetch metadata, so this is");
+            logger.error("  not a login/TLS problem. Likeliest causes, in order:");
+            logger.error("    1. the partition LEADER is on a broker this host cannot reach");
+            logger.error("       (check every bootstrap broker with: nc -zv <host> 9093)");
+            logger.error("    2. acks=all cannot be satisfied — min.insync.replicas > available ISR");
+            logger.error("    3. producer throttling/quota on this principal");
+            logger.error("  Re-run with --logging.level.org.apache.kafka.clients.producer.internals.Sender=DEBUG");
+            logger.error("  to see the per-retry broker error (NOT_ENOUGH_REPLICAS, LEADER_NOT_AVAILABLE, ...)");
+            logger.error("============================================");
+            return EXIT_FAILED;
         } catch (Exception e) {
             logger.error("============================================");
             logger.error("COMPONENT-TEST RESULT: FAILED (kafka)");
             logger.error("  Topic: {}", topic);
-            logger.error("  Error: {}", e.getMessage(), e);
+            logger.error("  Error: {}: {}", e.getClass().getSimpleName(), e.getMessage(), e);
             logger.error("============================================");
             return EXIT_FAILED;
         }
