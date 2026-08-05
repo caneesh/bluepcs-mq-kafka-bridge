@@ -67,6 +67,14 @@ relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
 - [ ] `.env` created on the edge node itself (next step) — never transferred
       between machines with real values
 - [ ] `.env` locked down: `chmod 600 .env`
+- [ ] `.env` uses bare `KEY=VALUE` lines with **no `export` prefix**. systemd's
+      `EnvironmentFile=` accepts only `KEY=VALUE` and silently skips `export`
+      lines, so an exported-style file makes every variable invisible to the
+      service and startup dies with
+      `Could not resolve placeholder 'OAUTH_CLIENT_SECRET'`. Check with
+      `grep -c '^export ' .env` (expect `0`); fix with `sed -i 's/^export //' .env`.
+      The `scripts/` wrappers work either way (they use `set -a`), so this
+      failure appears only under systemd or a bare `java -jar`.
 
 On a shared edge node where others can become the same service account,
 `export` the two secrets in your session instead of keeping them in `.env` —
@@ -602,6 +610,25 @@ Key log patterns to monitor:
 ---
 
 ## Troubleshooting
+
+### `Could not resolve placeholder 'OAUTH_CLIENT_SECRET'` (or any other var)
+
+The application never received that environment variable — the value being wrong or
+empty gives a different error, so the name is absent entirely. In order of likelihood:
+
+1. **`.env` uses `export KEY=VALUE` and the service is started by systemd.**
+   `EnvironmentFile=` skips `export` lines. Fix: `sed -i 's/^export //' .env`, then
+   `sudo systemctl restart mq-kafka-bridge`.
+2. **Started by hand with `source .env && java -jar ...`.** Bare assignments are not
+   exported to the child process. Fix: `set -a; source .env; set +a` first — or just
+   use the `scripts/` wrappers, which do it for you.
+3. **The variable is genuinely missing from `.env`.** Both profiles require four with
+   no defaults: `KAFKA_TRUSTSTORE_PASSWORD`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`,
+   `API_PASSWORD` (prod additionally expects `MQ_PASSWORD`). Verify the names present
+   without exposing values: `sed 's/=.*/=<hidden>/' .env`
+4. **`.env` is not where the launcher looks** — systemd reads the absolute
+   `EnvironmentFile=` path; the scripts read `<project-dir>/.env` (the parent of
+   `scripts/`).
 
 ### Configuration Validation Failed
 
