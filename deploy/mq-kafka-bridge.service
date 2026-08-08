@@ -38,12 +38,18 @@ EnvironmentFile=/prod/gold/integration/product/bluepcs-bridge/.env
 # OOM crash-fast: a JVM that hits OutOfMemoryError must EXIT (systemd restarts a
 # fresh one) rather than limp along as a zombie with dead listener threads. The
 # heap dump dir must exist and be writable by the service user.
+#
+# PROFILE: must be 'prod' on a production host. Running 'test-env' here silently
+# takes the test MQ/Kafka/HDFS defaults for anything the .env does not override,
+# turns on DEBUG logging, and — because only application-prod.yml sets
+# logging.file.name — sends the application log AND the audit fallback stream to
+# ${java.io.tmpdir}/spring.log*.
 ExecStart=/usr/bin/java \
     -XX:+ExitOnOutOfMemoryError \
     -XX:+HeapDumpOnOutOfMemoryError \
     -XX:HeapDumpPath=/prod/gold/integration/product/bluepcs-bridge/heapdumps \
     -jar /prod/gold/integration/product/bluepcs-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
-    --spring.profiles.active=test-env \
+    --spring.profiles.active=prod \
     --bridge.mq.listener-enabled=true
 
 # Restart on any exit (crash, OOM kill, unexpected System.exit)...

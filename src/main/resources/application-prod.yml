@@ -190,13 +190,20 @@ logging:
 # ============================================================================
 # Actuator Configuration
 # ============================================================================
+# Bind the HTTP port to loopback. show-details: always publishes MQ/Kafka/HDFS
+# endpoint details in the health payload; without this the server binds 0.0.0.0 and
+# anything on the edge-node segment can read a map of the integration estate. Every
+# consumer of this endpoint (monitor, keepalive, watchdog, smoke test) uses localhost.
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+
 management:
   endpoint:
     health:
-      # MUST be 'always': the endpoint is localhost-only in this deployment, and the
-      # Control-M monitor needs the mqListener details to verify the bridge is actually
-      # consuming. 'when_authorized' without Spring Security on the classpath hides
-      # details from EVERYONE, silently blinding the monitor's not-consuming check.
+      # MUST be 'always': the endpoint is loopback-only (see server.address above), and
+      # the Control-M monitor needs the mqListener details to verify the bridge is
+      # actually consuming. 'when_authorized' without Spring Security on the classpath
+      # hides details from EVERYONE, silently blinding the monitor's not-consuming check.
       show-details: always
       # Liveness group for the process supervisors (watchdog/keepalive): a restart must
       # trigger only when the BRIDGE process is wedged (mqListener DOWN), not when a

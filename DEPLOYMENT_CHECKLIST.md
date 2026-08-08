@@ -669,7 +669,20 @@ Key log patterns to monitor:
 1. Verify token endpoint is reachable
 2. Verify client credentials are correct
 3. Check OAuth server logs
-4. Test token acquisition: `curl -X POST $OAUTH_TOKEN_URL -d "grant_type=client_credentials&client_id=$OAUTH_CLIENT_ID&client_secret=$OAUTH_CLIENT_SECRET"`
+4. Test token acquisition. This STS is **not** a standard OAuth2 form endpoint — it takes
+   the client credentials as HEADERS and a JSON body, and rejects form-encoded requests
+   with **415** (see the contract comment in `OAuth2JwtTokenProvider.tokenRequest`).
+   A form-encoded `grant_type=client_credentials` curl will always fail here and tells you
+   nothing about the credentials:
+
+   ```bash
+   curl -X POST "$OAUTH_TOKEN_URL" \
+     -H "ClientID: $OAUTH_CLIENT_ID" \
+     -H "ClientSecret: $OAUTH_CLIENT_SECRET" \
+     -H "scope: $OAUTH_SCOPE" \
+     -H 'Content-Type: application/json' \
+     -d "{\"username\":\"$API_USERNAME\",\"password\":\"$API_PASSWORD\"}"
+   ```
 
 ---
 

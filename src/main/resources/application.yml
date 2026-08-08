@@ -110,6 +110,12 @@ bridge:
     redelivery-backoff-ms: ${MQ_REDELIVERY_BACKOFF_MS:1000}
     redelivery-backoff-max-ms: ${MQ_REDELIVERY_BACKOFF_MAX_MS:30000}
     ssl:
+      # MUST be defined in the BASE config, not only in application-prod.yml: the key
+      # is what binds MQ_SSL_ENABLED. Defined only in one profile, setting
+      # MQ_SSL_ENABLED=true under any other profile bound nothing, the channel came up
+      # in plaintext, and StartupConfigValidator's cipher-suite coherence check read the
+      # same dead key so it could not fire either.
+      enabled: ${MQ_SSL_ENABLED:false}
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
       truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}
       truststore-password: ${MQ_SSL_TRUSTSTORE_PASSWORD:}
