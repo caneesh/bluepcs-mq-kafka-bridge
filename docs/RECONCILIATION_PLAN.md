@@ -25,6 +25,12 @@ optional check that rows appear in the target product tables.
 
 ## The checks
 
+> Complementary, not redundant: the gap check below answers **which** message is missing
+> (existence, per `event_id`); the balance check in
+> [AUDIT_BALANCE_CONTROL.md](AUDIT_BALANCE_CONTROL.md) answers **whether the totals tie
+> out** (arithmetic, per window) and records each verdict in `bluepcs.bridge_control_run`.
+> Run both.
+
 ### Implemented — `scripts/audit-gap-check.sh` (hourly Control-M)
 
 | # | Check | Question answered | Exit code |

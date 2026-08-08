@@ -207,7 +207,7 @@ class KafkaAuditPublisherTest {
             };
 
             SafeAuditPublisher safePublisher =
-                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka");
+                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka", true);
             AuditEvent event = createTestEvent("event-id-safe-001", "bridge-safe-001", "MSG-SAFE-001", AuditEventType.MESSAGE_RECEIVED);
 
             safePublisher.publish(event);
@@ -229,7 +229,7 @@ class KafkaAuditPublisherTest {
             };
 
             SafeAuditPublisher safePublisher =
-                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka");
+                    new SafeAuditPublisher(failingPublisher, new LoggingAuditPublisher(), "kafka", true);
             AuditEvent event = createTestEvent("event-id-safe-002", "bridge-safe-002", "MSG-SAFE-002", AuditEventType.MESSAGE_RECEIVED);
 
             safePublisher.publishAsync(event);
@@ -243,7 +243,7 @@ class KafkaAuditPublisherTest {
             AuditPublisher kafka = countingPublisher(kafkaCalls);
             AuditPublisher log = countingPublisher(logCalls);
 
-            SafeAuditPublisher safePublisher = new SafeAuditPublisher(kafka, log, "log");
+            SafeAuditPublisher safePublisher = new SafeAuditPublisher(kafka, log, "log", true);
             safePublisher.publish(createTestEvent("event-id-safe-003", "b-003", "MSG-SAFE-003",
                     AuditEventType.MESSAGE_RECEIVED));
             safePublisher.publishAsync(createTestEvent("event-id-safe-004", "b-004", "MSG-SAFE-004",
@@ -260,11 +260,30 @@ class KafkaAuditPublisherTest {
             java.util.concurrent.atomic.AtomicInteger logCalls = new java.util.concurrent.atomic.AtomicInteger();
 
             SafeAuditPublisher safePublisher = new SafeAuditPublisher(
-                    countingPublisher(kafkaCalls), countingPublisher(logCalls), "bogus");
+                    countingPublisher(kafkaCalls), countingPublisher(logCalls), "bogus", true);
             safePublisher.publish(createTestEvent("event-id-safe-005", "b-005", "MSG-SAFE-005",
                     AuditEventType.MESSAGE_RECEIVED));
 
             org.assertj.core.api.Assertions.assertThat(kafkaCalls.get()).isEqualTo(1);
+            org.assertj.core.api.Assertions.assertThat(logCalls.get()).isZero();
+        }
+
+        @Test
+        @DisplayName("bridge.audit.enabled=false must actually suppress emission")
+        void shouldSuppressEmissionWhenDisabled() {
+            // Regression: the flag was bound and documented but read by nothing, so
+            // setting it false silently kept auditing.
+            java.util.concurrent.atomic.AtomicInteger kafkaCalls = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger logCalls = new java.util.concurrent.atomic.AtomicInteger();
+
+            SafeAuditPublisher disabled = new SafeAuditPublisher(
+                    countingPublisher(kafkaCalls), countingPublisher(logCalls), "kafka", false);
+            disabled.publish(createTestEvent("event-off-1", "b-off-1", "MSG-OFF-1",
+                    AuditEventType.MESSAGE_RECEIVED));
+            disabled.publishAsync(createTestEvent("event-off-2", "b-off-2", "MSG-OFF-2",
+                    AuditEventType.PROCESSING_COMPLETED));
+
+            org.assertj.core.api.Assertions.assertThat(kafkaCalls.get()).isZero();
             org.assertj.core.api.Assertions.assertThat(logCalls.get()).isZero();
         }
 

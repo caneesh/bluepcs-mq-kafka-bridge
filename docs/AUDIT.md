@@ -3,6 +3,11 @@
 How the bridge records what happened to every message it touches: which events exist, who
 emits them, where they go, what guarantees they carry, and how to consume them.
 
+> This is the **Audit** pillar. What is done with the trail afterwards is covered
+> separately: [AUDIT_BALANCE_CONTROL.md](AUDIT_BALANCE_CONTROL.md) (do the stage totals
+> tie out, and where the verdict is recorded) and
+> [RECONCILIATION_PLAN.md](RECONCILIATION_PLAN.md) (which individual message is missing).
+
 ## Purpose and design principles
 
 The audit stream is the bridge's per-message paper trail. Every MQ message produces a

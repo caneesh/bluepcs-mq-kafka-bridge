@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -455,6 +456,58 @@ class BridgeOrchestratorTest {
             verify(auditPublisher, times(6)).publishAsync(auditEventCaptor.capture());
             java.util.List<AuditEvent> events = auditEventCaptor.getAllValues();
             assertThat(events.get(0).getEventType()).isEqualTo(AuditEventType.MESSAGE_RECEIVED);
+        }
+
+        @Test
+        @DisplayName("balance metadata: stage events carry the keys the ABC check reads")
+        void shouldCarryBalanceMetadata() {
+            // scripts/abc-balance-check.sh reads these via get_json_object(metadata_json, ...).
+            // Renaming a key here silently breaks the balance equations, so they are pinned.
+            MqMessage mqMessage = createMqMessage("MSG-ABC-001");
+            setupSuccessfulFlow("MSG-ABC-001", "TXN-ABC-001", "event-id-abc-001");
+
+            orchestrator.process(mqMessage);
+
+            verify(auditPublisher, times(6)).publishAsync(auditEventCaptor.capture());
+            java.util.List<AuditEvent> events = auditEventCaptor.getAllValues();
+
+            AuditEvent received = events.stream()
+                    .filter(e -> e.getEventType() == AuditEventType.MESSAGE_RECEIVED)
+                    .findFirst().orElseThrow();
+            assertThat(received.getMetadata()).containsKey("payloadBytes");
+            assertThat((Integer) received.getMetadata().get("payloadBytes")).isPositive();
+
+            AuditEvent hdfs = events.stream()
+                    .filter(e -> e.getEventType() == AuditEventType.HDFS_WRITE_COMPLETED
+                              || e.getEventType() == AuditEventType.HDFS_WRITE_SKIPPED)
+                    .findFirst().orElseThrow();
+            assertThat(hdfs.getMetadata()).containsKeys("hdfsPath", "checksum", "bytesWritten");
+
+            AuditEvent kafka = events.stream()
+                    .filter(e -> e.getEventType() == AuditEventType.KAFKA_PUBLISH_COMPLETED)
+                    .findFirst().orElseThrow();
+            assertThat(kafka.getMetadata()).containsKey("kafkaOffset");
+        }
+
+        @Test
+        @DisplayName("balance metadata: quarantine carries the errorCode that attributes it to a stage")
+        void shouldCarryQuarantineErrorCode() {
+            MqMessage mqMessage = createMqMessage("MSG-ABC-002");
+            when(eventIdGenerator.generateEventId("MSG-ABC-002")).thenReturn("event-id-abc-002");
+            when(messageParser.parse(mqMessage))
+                    .thenThrow(new MessageParseException("Invalid JSON", "MSG-ABC-002", "{bad"));
+            when(hdfsWriter.writeQuarantine(anyString(), anyString(), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/errors/event-id-abc-002.json", "cs", 4));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            orchestrator.process(mqMessage);
+
+            verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
+            AuditEvent quarantined = auditEventCaptor.getAllValues().stream()
+                    .filter(e -> e.getEventType() == AuditEventType.MESSAGE_QUARANTINED)
+                    .findFirst().orElseThrow();
+            // Equation 1 subtracts PARSE_ERROR quarantines; equation 2 subtracts ENRICHMENT_ERROR
+            assertThat(quarantined.getMetadata()).containsEntry("errorCode", "PARSE_ERROR");
         }
 
         @Test

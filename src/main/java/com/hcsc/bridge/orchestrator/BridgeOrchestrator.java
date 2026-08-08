@@ -26,6 +26,7 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 
@@ -70,7 +71,8 @@ public class BridgeOrchestrator {
         logger.info("Processing message: originalMqMessageId={}, eventId={}, bridgeMessageId={}",
                 originalMqMessageId, eventId, ctx.getBridgeMessageId());
 
-        publishAudit(ctx, null, AuditEventType.MESSAGE_RECEIVED, "Message received from MQ", null);
+        publishAudit(ctx, null, AuditEventType.MESSAGE_RECEIVED, "Message received from MQ", null,
+                Map.of("payloadBytes", payloadBytes(mqMessage.getPayload())));
 
         try {
             ParsedPayload parsedPayload = messageParser.parse(mqMessage);
@@ -108,7 +110,10 @@ public class BridgeOrchestrator {
                     ? AuditEventType.HDFS_WRITE_SKIPPED
                     : AuditEventType.HDFS_WRITE_COMPLETED;
             publishAudit(ctx, enrichedPayload.getTransactionId(), hdfsEventType,
-                    "HDFS write completed: " + hdfsResult.getHdfsPath(), null);
+                    "HDFS write completed: " + hdfsResult.getHdfsPath(), null,
+                    Map.of("hdfsPath", hdfsResult.getHdfsPath(),
+                           "checksum", hdfsResult.getChecksum() != null ? hdfsResult.getChecksum() : "",
+                           "bytesWritten", hdfsResult.getBytesWritten()));
 
             String notification = notificationFactory.buildNotification(
                     wrapper,
@@ -118,7 +123,8 @@ public class BridgeOrchestrator {
                     enrichedPayload.getEventId());
             String kafkaOffset = kafkaPublisher.publish(enrichedPayload.getEventId(), notification);
             publishAudit(ctx, enrichedPayload.getTransactionId(),
-                    AuditEventType.KAFKA_PUBLISH_COMPLETED, "Published to Kafka, offset: " + kafkaOffset, null);
+                    AuditEventType.KAFKA_PUBLISH_COMPLETED, "Published to Kafka, offset: " + kafkaOffset, null,
+                    Map.of("kafkaOffset", kafkaOffset));
 
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.PROCESSING_COMPLETED, "Message processed successfully", null);
@@ -223,9 +229,14 @@ public class BridgeOrchestrator {
                     ctx.getEventId(), mqMessage.getPayload(), ctx.getOriginalMqMessageId());
             logger.warn("Quarantined message: eventId={}, reason={}, path={}",
                     ctx.getEventId(), errorCode, quarantineResult.getHdfsPath());
+            // errorCode attributes this quarantine to the stage that produced it, so the
+            // balance check can subtract it from the right equation
+            // (docs/AUDIT_BALANCE_CONTROL.md, equations 1 and 2)
             publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
                     description + "; raw payload quarantined to " + quarantineResult.getHdfsPath(),
-                    errorMessage);
+                    errorMessage,
+                    Map.of("errorCode", errorCode,
+                           "hdfsPath", quarantineResult.getHdfsPath()));
             return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
                     errorCode, errorMessage);
         } catch (RuntimeException quarantineFailure) {
@@ -286,6 +297,21 @@ public class BridgeOrchestrator {
 
     private void publishAudit(ProcessingContext ctx, @Nullable String transactionId,
                               AuditEventType eventType, String description, @Nullable String errorMessage) {
+        publishAudit(ctx, transactionId, eventType, description, errorMessage, Map.of());
+    }
+
+    /**
+     * Audit emission with balance metadata. The map lands in the Hive audit table's
+     * {@code metadata_json} column as-is, so quantities put here are queryable with
+     * {@code get_json_object} without any DDL or consumer change — this is what the
+     * Audit-Balance-Control checks read (see docs/AUDIT_BALANCE_CONTROL.md).
+     *
+     * <p>Keys must stay stable: {@code scripts/abc-balance-check.sh} depends on
+     * {@code errorCode} to attribute a quarantine to the stage that produced it.
+     */
+    private void publishAudit(ProcessingContext ctx, @Nullable String transactionId,
+                              AuditEventType eventType, String description,
+                              @Nullable String errorMessage, Map<String, Object> metadata) {
         AuditEvent event = AuditEvent.builder()
                 .auditEventId(UUID.randomUUID().toString())
                 .eventId(ctx.getEventId())
@@ -296,8 +322,14 @@ public class BridgeOrchestrator {
                 .eventType(eventType)
                 .description(description)
                 .errorMessage(errorMessage)
+                .metadata(metadata)
                 .timestamp(Instant.now())
                 .build();
         auditPublisher.publishAsync(event);
+    }
+
+    /** UTF-8 byte size of a payload, 0 when absent — the volume term of the balance. */
+    private static int payloadBytes(@Nullable String payload) {
+        return payload == null ? 0 : payload.getBytes(StandardCharsets.UTF_8).length;
     }
 }

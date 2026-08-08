@@ -552,6 +552,43 @@ messages false-alarm), `AUDIT_GAP_GRACE_MINUTES` (default 30 — stuck-message g
 - [ ] Known limitation: a real gap stops alerting once its rows age past
       `AUDIT_GAP_LOOKBACK_DAYS` — treat every exit-1 seriously while it fires
 
+### 6. Control-M ABC balance check
+
+The gap check finds **which** message is missing; `scripts/abc-balance-check.sh` answers
+the control-total question — **do the stage counts tie out for this window** — and records
+the verdict in `bluepcs.bridge_control_run` so the answer survives the run. Run both:
+they catch different failures. Full framework, equations and runbook:
+`docs/AUDIT_BALANCE_CONTROL.md`.
+
+One-time setup (in this order, before the first run):
+
+```bash
+hive -f audit-hive-consumer/hive/bridge_balance_views.ddl   # deduped view + hourly funnel
+hive -f audit-hive-consumer/hive/bridge_control_run.ddl     # control store
+./scripts/abc-balance-check.sh --dry-run                    # prints window + queries only
+```
+
+| Exit code | Meaning | Suggested Control-M On-Do |
+|-----------|---------|---------------------------|
+| 0 | All stage balances tie out | — |
+| 1 | FAIL — possible message loss | Page the bridge owner; run the runbook in `docs/AUDIT_BALANCE_CONTROL.md` |
+| 2 | WARN — audit-stream loss or within-tolerance drift | Notify, not page. A negative variance means audit events were dropped, not messages |
+| 3 | Could not evaluate (config/query error, or control write failed) | Investigate this job — the check is broken, not necessarily the data |
+
+Job definition: OS/Command, **cyclic hourly**, edge-node agent, Run As the service
+account, no auto-rerun (read-only check; a variance needs a human decision).
+
+Tuning (in `.env`): `ABC_WINDOW_LAG_MINUTES` (default 30 — **must exceed** the audit
+consumer's `batch.seconds`, default 300s, plus its Hive write time, or in-flight events
+read as loss), `ABC_WINDOW_HOURS` (default 1), `ABC_TOLERANCE_PCT_HIVE_LOAD` (default 2 —
+the only tolerant equation; stages 1-5 are exact), `ABC_CONTROL_TABLE`.
+
+- [ ] Prerequisite: same as the gap check — the audit topic, `audit-hive-consumer`, and
+      the instrumented DStream job must all be live, plus the two new DDLs applied
+- [ ] Schedule offset past the window lag (e.g. run at :35 for the hour ending at :00)
+- [ ] Sanity-check the first real run: with no traffic it must exit 0 (a zero-traffic
+      window balances), not divide-by-zero or fail
+
 ---
 
 ## Runtime Monitoring
