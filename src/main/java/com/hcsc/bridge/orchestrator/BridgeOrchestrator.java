@@ -256,6 +256,14 @@ public class BridgeOrchestrator {
      */
     private ProcessingResult handleEnrichmentFailure(ProcessingContext ctx, MqMessage mqMessage,
                                                      EnrichmentException e) {
+        // ENRICHMENT_FAILED records the FACT that enrichment failed and is emitted for
+        // every enrichment failure, retryable or not. Quarantining is a separate fact
+        // (the disposition) and adds MESSAGE_QUARANTINED on top. Emitting only the
+        // latter would make permanent failures invisible to anyone counting
+        // ENRICHMENT_FAILED, which is how enrichment health is measured.
+        publishAudit(ctx, null,
+                AuditEventType.ENRICHMENT_FAILED, "Enrichment failure", e.getMessage());
+
         if (!e.isRetryable()) {
             logger.error("Non-retryable enrichment failure for eventId {}: {} — quarantining",
                     ctx.getEventId(), e.getMessage());
@@ -264,13 +272,11 @@ public class BridgeOrchestrator {
             if (quarantined != null) {
                 return quarantined;
             }
-            // fall through to the FAILURE path below
+            // quarantine write failed — fall through to FAILURE so MQ redelivers
         } else {
             logger.error("Enrichment failure for eventId {} (retryable): {}",
                     ctx.getEventId(), e.getMessage());
         }
-        publishAudit(ctx, null,
-                AuditEventType.ENRICHMENT_FAILED, "Enrichment failure", e.getMessage());
         return ProcessingResult.failure(ctx.getEventId(), "ENRICHMENT_ERROR", e.getMessage());
     }
 
