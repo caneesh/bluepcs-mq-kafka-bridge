@@ -488,7 +488,7 @@ flows into existing ops alerting.
 | Exit code | Meaning | Suggested Control-M On-Do |
 |-----------|---------|---------------------------|
 | 0 | All checks passed | — |
-| 1 | Bridge unreachable or health DOWN | Alert (systemd/watchdog is likely already restarting; page if it persists) |
+| 1 | Bridge unreachable, or its own `mqListener` component DOWN | Alert (systemd/watchdog is likely already restarting; page if it persists) |
 | 2 | Bridge up but MQ listener disabled — NOT consuming | Alert: someone forgot `listener-enabled=true` |
 | 3 | HDFS landing-dir backlog (files older than threshold) | Alert the downstream consumer team — bridge is fine |
 | 4 | Monitor could not evaluate (e.g. HDFS/Kerberos access, hidden health details, monitor JVM failed to start) | Investigate the monitor/edge node |
@@ -505,6 +505,13 @@ listener-enabled state) and HDFS landing-directory backlog. Exit-4 hardening:
 - The monitor JVM logs to its own `logs/bridge-monitor.log` (as do the other
   diagnostic scripts: `bridge-validate.log`, `bridge-smoke-test.log`,
   `bridge-component-test.log`) — never to the running bridge's rolling log.
+- Exit 1 tracks the bridge's OWN `mqListener` component, not the aggregate status.
+  The aggregate folds in the Kafka and HDFS indicators, which run live probes on every
+  poll (`AdminClient.describeCluster` waits up to 2×5s; HDFS does a namenode RPC), so it
+  flips DOWN on any dependency blip. A degraded dependency is logged as
+  `MONITOR: DEPENDENCY DEGRADED ...` and does NOT fail the job — throughput loss is
+  caught definitively by MQ queue depth and by the backlog check. The monitor's HTTP read
+  timeout is 30s for the same reason: a slow-but-healthy endpoint is not "unreachable".
 
 Tuning (env vars or properties):
 

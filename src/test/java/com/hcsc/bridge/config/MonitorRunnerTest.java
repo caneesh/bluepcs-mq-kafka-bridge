@@ -98,12 +98,29 @@ class MonitorRunnerTest {
     }
 
     @Test
-    @DisplayName("should return 1 when overall health is DOWN")
-    void shouldFailWhenHealthDown() throws IOException {
-        enqueueHealth("{\"status\":\"DOWN\",\"components\":{}}");
+    @DisplayName("should return 1 when the mqListener component itself is DOWN")
+    void shouldFailWhenListenerComponentDown() throws IOException {
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqListener\":{\"status\":\"DOWN\","
+                + "\"details\":{\"listenerEnabled\":true,\"runningContainers\":0}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_HEALTH_DOWN);
+    }
+
+    @Test
+    @DisplayName("should PASS when only a dependency is DOWN and the listener is consuming")
+    void shouldNotFailOnDependencyOutage() throws IOException {
+        // The aggregate goes DOWN whenever the Kafka or HDFS indicator has a blip (both
+        // run live probes per poll). The bridge is still consuming, so this must not be
+        // reported as "bridge unreachable or health DOWN" — that was paging on-call for
+        // a healthy bridge. Throughput loss is caught by MQ queue depth and the backlog check.
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{"
+                + "\"mqListener\":{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true,\"runningContainers\":1}},"
+                + "\"kafka\":{\"status\":\"DOWN\",\"details\":{\"error\":\"describeCluster timed out\"}},"
+                + "\"hdfs\":{\"status\":\"UP\",\"details\":{\"accessible\":true}}}}");
+        when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(freshFile()));
+
+        assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
     }
 
     @Test
@@ -129,7 +146,8 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("health failure outranks backlog failure")
     void healthFailureTakesPrecedence() throws IOException {
-        enqueueHealth("{\"status\":\"DOWN\"}");
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqListener\":{\"status\":\"DOWN\","
+                + "\"details\":{\"listenerEnabled\":true,\"runningContainers\":0}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile()));
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_HEALTH_DOWN);

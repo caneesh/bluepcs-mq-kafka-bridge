@@ -19,9 +19,12 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -74,7 +77,11 @@ public class MonitorRunner implements ApplicationRunner {
         this(hdfsFileOperations, applicationContext, environment,
                 new OkHttpClient.Builder()
                         .connectTimeout(10, TimeUnit.SECONDS)
-                        .readTimeout(10, TimeUnit.SECONDS)
+                        // The aggregate endpoint runs LIVE probes per poll: the Kafka
+                        // indicator alone waits 2x5s on describeCluster, plus an HDFS
+                        // namenode RPC. A 10s read timeout made a slow-but-healthy
+                        // response look like "bridge unreachable".
+                        .readTimeout(30, TimeUnit.SECONDS)
                         .build());
     }
 
@@ -186,18 +193,13 @@ public class MonitorRunner implements ApplicationRunner {
             return EXIT_HEALTH_DOWN;
         }
 
-        String status = health.path("status").asText("");
-        if (!"UP".equals(status)) {
-            logger.error("MONITOR: bridge health is {} (expected UP)", status.isEmpty() ? "unknown" : status);
-            return EXIT_HEALTH_DOWN;
-        }
-
         // Never report PASSED on an unverifiable check: with
         // management.endpoint.health.show-details hidden (e.g. when_authorized with no
         // Spring Security on the classpath) the response is a bare {"status":"UP"} and
         // the listener state is unobservable — silently skipping the check here is how
         // "UP but consuming nothing" goes unnoticed.
-        JsonNode listenerDetails = health.path("components").path("mqListener").path("details");
+        JsonNode listener = health.path("components").path("mqListener");
+        JsonNode listenerDetails = listener.path("details");
         if (listenerDetails.isMissingNode() || !listenerDetails.has("listenerEnabled")) {
             logger.error("MONITOR: health response carries no mqListener details — cannot verify "
                     + "the listener is consuming. Check management.endpoint.health.show-details "
@@ -205,13 +207,52 @@ public class MonitorRunner implements ApplicationRunner {
                     + "indicator is active");
             return EXIT_MONITOR_ERROR;
         }
+
+        // The BRIDGE's liveness is the mqListener component, NOT the aggregate status.
+        // The aggregate also folds in the Kafka and HDFS indicators, which run live
+        // probes on EVERY poll (AdminClient.describeCluster, a namenode RPC) and flip
+        // DOWN on any dependency blip — treating that as "bridge unreachable or health
+        // DOWN" (exit 1 = page) fires false alarms while the bridge is processing fine.
+        String listenerStatus = listener.path("status").asText("");
+        if (!"UP".equals(listenerStatus)) {
+            logger.error("MONITOR: mqListener component is {} — the bridge is not processing. Details: {}",
+                    listenerStatus.isEmpty() ? "unknown" : listenerStatus, listenerDetails);
+            return EXIT_HEALTH_DOWN;
+        }
         if (!listenerDetails.path("listenerEnabled").asBoolean(true)) {
             logger.error("MONITOR: bridge is UP but the MQ listener is disabled — NOT consuming messages");
             return EXIT_NOT_CONSUMING;
         }
 
-        logger.info("MONITOR: health check passed (status UP, listener enabled)");
+        // Dependency trouble is reported, never failed on: loss of throughput is caught
+        // definitively by MQ queue depth and by the backlog check, and the supervisors
+        // deliberately ignore it too (they poll the liveness group).
+        List<String> degraded = degradedDependencies(health);
+        if (!degraded.isEmpty()) {
+            logger.warn("MONITOR: DEPENDENCY DEGRADED (the bridge itself is healthy and consuming): {}. "
+                    + "Not failing the job — watch MQ queue depth for actual throughput loss.", degraded);
+        }
+
+        logger.info("MONITOR: health check passed (mqListener UP and enabled; aggregate status {})",
+                health.path("status").asText("unknown"));
         return EXIT_OK;
+    }
+
+    /** Component names (excluding mqListener) whose status is not UP. */
+    private List<String> degradedDependencies(JsonNode health) {
+        List<String> degraded = new ArrayList<>();
+        Iterator<Map.Entry<String, JsonNode>> components = health.path("components").fields();
+        while (components.hasNext()) {
+            Map.Entry<String, JsonNode> component = components.next();
+            if ("mqListener".equals(component.getKey())) {
+                continue;
+            }
+            String status = component.getValue().path("status").asText("");
+            if (!status.isEmpty() && !"UP".equals(status)) {
+                degraded.add(component.getKey() + "=" + status);
+            }
+        }
+        return degraded;
     }
 
     /**
