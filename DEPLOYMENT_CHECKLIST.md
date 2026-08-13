@@ -753,6 +753,43 @@ cleanup sweep   ->  landing files older than LANDING_RETENTION_DAYS (default 7)
 - HDFS writes are idempotent (file already exists = skip) — including quarantine writes
 - Event ID is deterministic (SHA-256 of JMS Message ID)
 
+### Maximum processing time per delivery (retry budget)
+
+A transient failure means the message is NOT acked and MQ redelivers it, so a single
+message can occupy the (single) listener thread for a long time and re-run every stage —
+including a **fresh enrichment API call on every redelivery** (the enrichment result is
+not cached across deliveries). Worst case for ONE delivery attempt:
+
+| Stage | Property | Default | Worst case |
+|-------|----------|---------|-----------|
+| Redelivery backoff | `MQ_REDELIVERY_BACKOFF_MS` × (count−1), capped by `MQ_REDELIVERY_BACKOFF_MAX_MS` | 1000 / 30000 | 30 s |
+| OAuth token fetch (only when a refresh is due) | fixed 10 s connect + 30 s read | — | ~40 s |
+| Enrichment | `API_RETRY_ATTEMPTS` × `API_TIMEOUT_SECONDS` + backoff (1 s + 2 s) | 3 × 30 s | ~93 s |
+| HDFS write | namenode RPC | — | seconds |
+| Kafka publish | `KAFKA_TIMEOUT_SECONDS`, itself ≥ `max-block-ms` + `delivery-timeout-ms` | 190 (60 + 120) | 190 s |
+| **Total per delivery** | | | **~5 minutes** |
+
+Consequences to plan for:
+
+- **A stuck message loops on a ~5-minute cycle**, and each cycle calls the enrichment API
+  1–3 times. One upstream message can therefore generate steady API traffic indefinitely —
+  if APM shows periodic calls with no matching inbound volume, look for a redelivery loop
+  before suspecting the publisher.
+- **The shape identifies the failing stage**: three bunched API calls on a ~2-minute cycle
+  means enrichment is failing; a single API call on a ~4–5-minute cycle means enrichment
+  succeeds and the **Kafka publish** is timing out.
+- Diagnose from the log by eventId: `Redelivery N of message …` gives the loop count, then
+  one of `Enrichment failure … (retryable)`, `HDFS write failure …`, `Kafka publish failure …`
+  names the stage.
+- **Nothing bounds the loop by default** — see "Poison Messages" below: the app-side guard
+  `MQ_MAX_DELIVERY_ATTEMPTS` is `0` (disabled) and queue-manager backout must be configured
+  by the MQ team. Ensure `BOTHRESH` is large enough that a routine outage does not exhaust
+  it: at ~5 minutes per delivery, `BOTHRESH(5)` is roughly a 25-minute outage tolerance.
+- Ensure the MQ transaction/session and network timeouts exceed the per-delivery total.
+- To reduce API load during an outage, lower `API_RETRY_ATTEMPTS` (each retry is a real
+  call) rather than shortening `KAFKA_TIMEOUT_SECONDS` — that one must stay above the
+  producer's own budget or you generate duplicate publishes (startup validation warns).
+
 ### Quarantine review and replay
 
 A quarantined message was ACKed off the queue — its payload survives only as
