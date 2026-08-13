@@ -3,6 +3,11 @@
 How the bridge records what happened to every message it touches: which events exist, who
 emits them, where they go, what guarantees they carry, and how to consume them.
 
+> This is the **Audit** pillar. What is done with the trail afterwards is covered
+> separately: [AUDIT_BALANCE_CONTROL.md](AUDIT_BALANCE_CONTROL.md) (do the stage totals
+> tie out, and where the verdict is recorded) and
+> [RECONCILIATION_PLAN.md](RECONCILIATION_PLAN.md) (which individual message is missing).
+
 ## Purpose and design principles
 
 The audit stream is the bridge's per-message paper trail. Every MQ message produces a
@@ -201,10 +206,20 @@ The DStream job's consumer-stage instrumentation is the drop-in reference
 
 ## Known limitations (as of this writing)
 
-- `bridge.audit.enabled` is config-only; there is no code path that disables emission.
 - The reserved event types (`DUPLICATE_DETECTED`, `RECONCILIATION_*`, `RECOVERY_COMPLETED`)
   are declared but unused; the ledger-based recovery/reconciliation subsystems that would
   emit them are disabled by default and not wired to the main pipeline.
-- Poison-discard events preserve the payload only in an application-log ERROR line (masked),
-  not in HDFS — see the MQ listener review notes about masking and discard durability
-  before relying on this path in production.
+- Audit is best-effort by design: both the bridge publisher and the consumer emitter drop
+  events during a 60-second failure cooldown. Counts derived from this stream can
+  under-report; corroborate incidents against MQ queue statistics
+  (see [RECONCILIATION_PLAN.md](RECONCILIATION_PLAN.md)).
+
+### Corrected behaviours (previously listed as limitations)
+
+- **`bridge.audit.enabled` is now enforced.** It gates emission in `SafeAuditPublisher`
+  and logs a startup WARN when false. It was previously bound but read by nothing —
+  setting it false silently kept auditing.
+- **Poison-discarded payloads are written to the HDFS quarantine directory**, not to the
+  application log. `MqMessageListener` quarantines first and logs only the resulting path;
+  a masked, truncated log copy is the fallback used *only* if the quarantine write fails.
+  Look in HDFS `errors/` for a discarded payload, not in the log.

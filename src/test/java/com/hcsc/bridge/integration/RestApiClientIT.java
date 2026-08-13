@@ -282,18 +282,28 @@ class RestApiClientIT {
         }
 
         @Test
-        @DisplayName("should throw EnrichmentException on 401")
+        @DisplayName("should refresh the token once on 401 and fail retryably if it persists")
         void shouldThrowOn401() {
-            mockWebServer.enqueue(new MockResponse()
-                    .setResponseCode(401)
-                    .setBody("Unauthorized"));
+            // A 401 forces exactly ONE token refresh (a cached-but-revoked token would
+            // otherwise 401 every message until natural expiry), then the normal retry
+            // budget applies — 401 is RETRYABLE by design so an auth outage leaves the
+            // message on the queue to redeliver rather than quarantining and acking it.
+            // Hence three responses for retry-attempts=3.
+            mockWebServer.enqueue(new MockResponse().setResponseCode(401).setBody("Unauthorized"));
+            mockWebServer.enqueue(new MockResponse().setResponseCode(401).setBody("Unauthorized"));
+            mockWebServer.enqueue(new MockResponse().setResponseCode(401).setBody("Unauthorized"));
 
             ParsedPayload payload = createTestPayload("MSG-401-001", "ENTITY-401-001");
 
             assertThatThrownBy(() -> apiClient.enrich(payload))
                     .isInstanceOf(EnrichmentException.class)
-                    .extracting("statusCode")
-                    .isEqualTo(401);
+                    .satisfies(e -> {
+                        EnrichmentException ex = (EnrichmentException) e;
+                        assertThat(ex.getStatusCode()).isEqualTo(401);
+                        assertThat(ex.isRetryable()).isTrue();
+                    });
+            assertThat(mockWebServer.getRequestCount()).isEqualTo(3);
+            assertThat(jwtTokenProvider.getRefreshCount()).isEqualTo(1);
         }
 
         @Test

@@ -1,5 +1,17 @@
 target/
+
+# Secret-bearing files. `.env` alone was not enough: config/*.env.template tells
+# operators to copy to prod.env / test-env.env, and the deployment uses keytabs,
+# truststores and JAAS files — none of which were covered.
 .env
+*.env
+!*.env.template
+*.jks
+*.p12
+*.pem
+*.keytab
+*jaas*.conf
+
 *.class
 *.jar
 *.war

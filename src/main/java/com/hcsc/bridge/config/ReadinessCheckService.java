@@ -2,6 +2,7 @@ package com.hcsc.bridge.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hcsc.bridge.core.SecretMaskingUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -303,7 +304,14 @@ public class ReadinessCheckService {
                 return CheckResult.fail(name, message);
             }
         } catch (Exception e) {
-            String message = String.format("OAuth token acquisition failed - %s", e.getMessage());
+            // Spring's HttpStatusCodeException.getMessage() embeds the raw response body.
+            // This is the same STS whose error bodies can echo the credential headers it
+            // rejected — the reason the token provider and API client truncate+mask theirs.
+            String detail = e.getMessage();
+            if (detail != null && detail.length() > 300) {
+                detail = detail.substring(0, 300) + "...(truncated)";
+            }
+            String message = "OAuth token acquisition failed - " + SecretMaskingUtil.maskSecrets(detail);
             logger.error("[FAIL] {}: {}", name, message);
             return CheckResult.fail(name, message);
         }

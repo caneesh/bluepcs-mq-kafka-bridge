@@ -114,6 +114,11 @@ bridge:
 # Logging Configuration
 # ============================================================================
 logging:
+  # Without this, LOG_FILE falls back to Boot's ${java.io.tmpdir}/spring.log — which also
+  # decides where logback-spring.xml writes the audit fallback stream (${LOG_FILE}-audit.jsonl).
+  # The designated durable audit trail must never land in a tmpfs path.
+  file:
+    name: ${LOG_DIRECTORY:./logs}/bridge-application.log
   level:
     com.hcsc.bridge: DEBUG
     org.apache.kafka: INFO
