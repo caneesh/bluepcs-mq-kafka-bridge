@@ -655,6 +655,12 @@ Key log patterns to monitor:
 
 ## Troubleshooting
 
+> **Message stuck, looping, quarantined or discarded?** See
+> [`docs/RUNBOOK_MESSAGE_FAILURES.md`](docs/RUNBOOK_MESSAGE_FAILURES.md) — redelivery-loop
+> diagnosis (including the "API called every few minutes with no throughput" symptom),
+> poison-message handling, API error and "no data" classification, and the
+> `Existing file checksum mismatch` wedge.
+
 ### `Could not resolve placeholder 'OAUTH_CLIENT_SECRET'` (or any other var)
 
 The application never received that environment variable — the value being wrong or

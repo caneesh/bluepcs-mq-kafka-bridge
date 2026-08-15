@@ -137,10 +137,13 @@ liveness signal that cannot see a wedged consumer thread.
 failures; quarantine review and replay; poison-message handling; HDFS lifecycle; ABC
 balance FAIL per equation; gap-check exit routing; rollback; keepalive markers.
 
+**Runbooks added since:** `docs/RUNBOOK_MESSAGE_FAILURES.md` covers redelivery-loop
+diagnosis, poison-message handling, API error/"no data" classification, the
+`Existing file checksum mismatch` wedge, and the trade-offs when clearing a stuck message.
+
 **Runbooks still missing:** Kafka broker outage (audit cooldown makes the resulting Hive
-gap *expected* — the balance-check operator is not told this); `Existing file checksum
-mismatch` wedge; plan-id mismatch warning; STS outage tolerance; planned-maintenance
-shutdown; heap-dump triage.
+gap *expected* — the balance-check operator is not told this); plan-id mismatch warning;
+STS outage tolerance; planned-maintenance shutdown; heap-dump triage.
 
 **Alerts required:** balance check exit 1; gap check exit 1/2; monitor exit 1/2/3;
 keepalive `START-FAIL`; MQ queue depth (owned by MQ admins — the definitive

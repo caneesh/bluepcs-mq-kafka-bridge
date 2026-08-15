@@ -1,0 +1,40 @@
+{
+  "planNotification": {
+    "marketingPlanIdentifier": "BOSA61BLCIMTP",
+    "lineOfBusiness": "Retail",
+    "productLineOfBusiness": "Medical",
+    "hsaCompatible": "Yes",
+    "mockIndicator": "N",
+    "planVersion": {
+      "planVersionIdentifier": "4",
+      "planStatus": "Open",
+      "planEffectivityDates": {
+        "effectiveStartDate": "2026-01-01T06:00:00.000Z",
+        "retiredDate": "9999-12-31T00:00:00.000Z",
+        "closedDate": "9999-12-31T00:00:00.000Z"
+      }
+    },
+    "changeEvent": {
+      "eventName": "ReadyToSell",
+      "typeName": "Update",
+      "timestamp": "2026-03-05T06:21:02.971853484-06:00"
+    },
+    "productInformation": {
+      "productAbbreviation": "BLUEFC",
+      "productType": "HMO",
+      "productName": "Blue Focus POS",
+      "productShortDescription": "Blue Focus POS"
+    },
+    "channels": { "channel": [ { "channelName": "On-Exchange" } ] },
+    "divisions": { "division": [ { "divisionCode": "MT" } ] },
+    "fundings": { "funding": [ { "funding": "PREM" } ] },
+    "marketSegments": {
+      "marketSegment": [
+        {
+          "marketSegmentCode": "IndividualQHP",
+          "marketSegmentCategoryCode": "IndividualQHP"
+        }
+      ]
+    }
+  }
+}
