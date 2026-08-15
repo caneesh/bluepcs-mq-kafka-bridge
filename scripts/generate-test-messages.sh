@@ -111,7 +111,12 @@ declare -A seen
 while IFS= read -r raw || [ -n "$raw" ]; do
     line="${raw%$'\r'}"                 # tolerate CRLF
     line="${line%%,*}"                  # first CSV field if comma-separated
-    line="$(echo "$line" | tr -d '[:space:]')"
+    # Trim ONLY leading/trailing whitespace. Deleting whitespace everywhere would
+    # turn "SPSH 44PPO" into the different-but-valid identifier "SPSH44PPO" and
+    # write a file for it silently — catching up the wrong plan. Internal
+    # whitespace must survive to here so the charset check below rejects it loudly.
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
 
