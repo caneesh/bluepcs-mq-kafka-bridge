@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
@@ -64,8 +63,7 @@ public class ValidateOnlyRunner implements ApplicationRunner {
         final int exitCode = computeExitCode();
 
         logger.info("Exiting with code: {}", exitCode);
-        SpringApplication.exit(applicationContext, () -> exitCode);
-        System.exit(exitCode);
+        DiagnosticJvmExit.exit(applicationContext, exitCode);
     }
 
     public int runValidation() {

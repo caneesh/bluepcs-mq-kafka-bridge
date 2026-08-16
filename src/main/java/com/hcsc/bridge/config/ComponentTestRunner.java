@@ -12,7 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
@@ -47,7 +46,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors {@link ValidateOnlyRunner}: gated by a property, guarded by
  * {@link #isTestEnvironment()} so Spring integration tests never kill the JVM, and exits via
- * {@link SpringApplication#exit}. Dependencies are injected lazily / via {@link ObjectProvider}
+ * {@link DiagnosticJvmExit}. Dependencies are injected lazily / via {@link ObjectProvider}
  * so a mode only initializes the beans it needs (e.g. the {@code api} mode never touches Kafka).
  *
  * <p>Ordered AFTER {@link ValidateOnlyRunner} (which has no explicit order and therefore runs at
@@ -145,8 +144,7 @@ public class ComponentTestRunner implements ApplicationRunner {
             logger.warn("Component-test mode suppressed System.exit (exit code {}): the active 'test' profile is the Surefire exit-guard. Deployments use 'test-env', not 'test'.", exitCode);
             return;
         }
-        SpringApplication.exit(applicationContext, () -> exitCode);
-        System.exit(exitCode);
+        DiagnosticJvmExit.exit(applicationContext, exitCode);
     }
 
     /**

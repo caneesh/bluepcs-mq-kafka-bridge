@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.SpringApplication;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
@@ -51,7 +50,7 @@ import java.util.List;
  * </ul>
  *
  * <p>Mirrors {@link ComponentTestRunner}: property-gated, exits via
- * {@link SpringApplication#exit}, guarded by {@link #isTestEnvironment()} so Spring
+ * {@link DiagnosticJvmExit}, guarded by {@link #isTestEnvironment()} so Spring
  * integration tests never kill the JVM.
  */
 @Component
@@ -127,8 +126,7 @@ public class QuarantineReplayRunner implements ApplicationRunner {
             logger.warn("Replay mode suppressed System.exit (exit code {}): the active 'test' profile is the Surefire exit-guard. Deployments use 'test-env', not 'test'.", exitCode);
             return;
         }
-        SpringApplication.exit(applicationContext, () -> exitCode);
-        System.exit(exitCode);
+        DiagnosticJvmExit.exit(applicationContext, exitCode);
     }
 
     /** Package-private so tests can capture the exit code without System.exit. */

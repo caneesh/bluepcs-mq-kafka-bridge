@@ -433,6 +433,13 @@ text matching (see the table below for page-vs-notify).
 - [ ] After a host reboot the bridge stays down until the next cycle starts it — expect up
       to one interval of downtime (systemd would start it on boot)
 - [ ] DECOMMISSION this job when the systemd units are installed — two supervisors fight
+- [ ] The keepalive supervises only a JVM running this deployment's jar **with**
+      `--bridge.mq.listener-enabled=true`. Diagnostic JVMs (monitor, validate-only,
+      component-test, replay) run the same jar and are deliberately excluded — before
+      that exclusion existed, leftover monitor JVMs made every cycle report
+      `multiple bridge processes running` and refuse to supervise anything. An
+      instance started WITHOUT the listener is reported as a foreign process holding
+      the port rather than adopted, so a non-consuming bridge cannot look healthy.
 - [ ] Console log lands in `logs/bridge-console.log`, rotated to
       `logs/bridge-console.log.1` on each (re)start — one previous generation is kept,
       long-term retention lives in the rolling application log; pid in `bridge.pid`;

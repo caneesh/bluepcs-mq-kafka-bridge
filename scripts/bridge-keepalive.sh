@@ -90,19 +90,49 @@ if [ -z "${JAR_PATH}" ]; then
 fi
 
 is_bridge_jvm() {
-    # True if the pid is a java process running OUR jar. A plain substring match
-    # on "mq-kafka-bridge" is not enough: the checkout directory name contains
-    # it too, so a recycled PID running e.g. `tail -f .../logs/bridge-console.log`
-    # would pass. /proc cmdline is NUL-separated, hence the tr.
-    tr '\0' ' ' < "/proc/${1}/cmdline" 2>/dev/null \
-        | grep -qE 'java .*mq-kafka-bridge-[^ ]*\.jar'
+    # True if the pid is the SUPERVISED bridge: a java process running OUR jar,
+    # consuming (listener-enabled=true), and not one of the diagnostic modes.
+    #
+    # A plain substring match on "mq-kafka-bridge" is not enough: the checkout
+    # directory name contains it too, so a recycled PID running e.g.
+    # `tail -f .../logs/bridge-console.log` would pass.
+    #
+    # The diagnostic exclusions are what make this correct in practice. monitor,
+    # validate-only, component-test and replay all run the SAME jar from the SAME
+    # directory, so a jar-only match counts them as bridges: leftover monitor JVMs
+    # made this script report "multiple bridge processes running" every cycle and
+    # refuse to supervise anything, leaving the real bridge unwatched for weeks.
+    # /proc cmdline is NUL-separated, hence the tr.
+    local cmdline
+    cmdline=$(tr '\0' ' ' < "/proc/${1}/cmdline" 2>/dev/null) || return 1
+
+    case "$cmdline" in
+        *"java "*"${PROJECT_DIR}/target/mq-kafka-bridge-"*.jar*) ;;
+        *) return 1 ;;
+    esac
+    case "$cmdline" in
+        *--bridge.monitor.enabled=true*|*--bridge.component-test=*|\
+        *--bridge.validate-only=true*|*--bridge.replay=*) return 1 ;;
+    esac
+    # An instance started WITHOUT the listener is not the 24/7 consumer. It is not
+    # adopted on purpose: it still holds the health port, so the caller's
+    # foreign-process guard reports it and asks for a human instead of either
+    # killing it or silently supervising something that consumes nothing.
+    case "$cmdline" in
+        *--bridge.mq.listener-enabled=true*) return 0 ;;
+    esac
+    return 1
 }
 
 bridge_procs() {
-    # All JVMs running THIS deployment's jar — anchored to PROJECT_DIR so we
-    # never adopt a bridge from another checkout, or a non-java process
-    # (rsync, sha256sum, an editor) that merely mentions the jar name.
-    pgrep -f "java .*${PROJECT_DIR}/target/mq-kafka-bridge-[^ ]*\.jar" || true
+    # Supervised bridges only — same predicate as is_bridge_jvm, applied to every
+    # JVM running this deployment's jar. Anchored to PROJECT_DIR so we never adopt
+    # a bridge from another checkout, or a non-java process (rsync, sha256sum, an
+    # editor) that merely mentions the jar name.
+    local pid
+    for pid in $(pgrep -f "java .*${PROJECT_DIR}/target/mq-kafka-bridge-[^ ]*\.jar" || true); do
+        is_bridge_jvm "$pid" && echo "$pid"
+    done
 }
 
 bridge_pid() {
