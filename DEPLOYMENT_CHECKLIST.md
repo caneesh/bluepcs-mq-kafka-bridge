@@ -14,6 +14,8 @@ Applies to both environments; environment-specific values at a glance:
 | `BRIDGE_PROFILE` in `.env` | optional (default) | **required** — `BRIDGE_PROFILE=prod`, or keepalive/monitor run test-env |
 | Listener go-live gate | off | **on** — prod refuses a listener-disabled start unless explicitly waived |
 | 24/7 supervision | optional | systemd unit (+watchdog) or Control-M keepalive — see "Running 24/7" |
+| Audit destination | `AUDIT_PUBLISHER=log` (topic not authorized yet) | `AUDIT_PUBLISHER=log` (topic not created yet) |
+| Kafka broker reachability | every broker on 9093, from the host the client runs on — see Step 5 | same |
 
 Profile defaults live in `application-test-env.yml` / `application-prod.yml`
 (both generated from their Talend `.prm`); the `.env` only needs secrets and
@@ -106,11 +108,17 @@ component test (below) fails and the guide's per-component section says which
 value to fix:
 
 - [ ] Guide §2 — the required secrets set in `.env`
-- [ ] Audit destination decided: until the audit topic exists (prod:
-      `DAS_PRODUCT_BRIDGE_AUDIT` — NOT yet created), run with
-      `AUDIT_PUBLISHER=log` (events go to the dedicated audit log file,
-      90-day retention). Flip to `kafka` + restart once the Kafka team has
-      created the topic and ACLs. The startup log WARNs while in log mode.
+- [ ] Audit destination decided. Neither environment's audit topic is granted yet
+      (prod `DAS_PRODUCT_BRIDGE_AUDIT` not created; test `MOCK01_BRIDGE_AUDIT_TEST`
+      not authorized), so **both templates ship `AUDIT_PUBLISHER=log`** — events go
+      to `<logfile>-audit.jsonl`, 90-day retention. Flip to `kafka` + restart once
+      the Kafka team has created the topic and granted write access. The startup log
+      WARNs while in log mode.
+      Publishing at an ungranted topic does NOT stop message processing — audit is
+      best-effort — but it loses the audit trail and logs
+      `TopicAuthorizationException`. That is now recognised as permanent and retried
+      only every 15 minutes with one actionable ERROR, instead of a stack trace per
+      minute; seeing it at all means the destination still needs fixing.
 - [ ] Guide §3 — MQ values reviewed (defaults usually correct)
 - [ ] Guide §4 — API base URL + OAuth values reviewed
 - [ ] Guide §5 — Kafka truststore location exists; JAAS/keytab decided
@@ -126,9 +134,25 @@ required secrets are missing.
       (prod: `.../confluent_kafka/kafka.truststore-prod_2025.jks`)
 - [ ] Kerberos keytab exists; verify with `klist -kt <keytab>`
       (test-env: `e4193139.keytab`; prod: `a6193139.keytab`)
-- [ ] Log directory exists and is writable
+- [ ] Log directory exists and is **writable by the service account**. If it is not,
+      logback falls back to console-only with no error, and the only file you get is
+      whatever the launcher redirects (`logs/bridge-console.log`) — which reads as
+      "the application isn't logging". Check the path actually configured, not the
+      one you expect: `LOGDIR=$(grep '^LOG_DIRECTORY' .env | cut -d= -f2);
+      touch "$LOGDIR/.wtest" && rm "$LOGDIR/.wtest" && echo writable`
 - [ ] Prod only: JAAS file exists at the configured `KAFKA_JAAS_CONFIG_PATH`
       (`.../common/prod_kafka_jaas_confluent.conf`)
+- [ ] **Every Kafka broker is reachable from this host on 9093 — not just the
+      bootstrap ones.** `bootstrap.servers` only serves the first metadata request;
+      produce and fetch then go directly to each partition's leader, so a client that
+      can reach only some brokers fails on the partitions led by the rest. That looks
+      like a send timing out with no error, or a consumer reading 0 messages from a
+      topic that demonstrably has data. Sweep them all:
+      ```bash
+      for h in <every broker host>; do printf '%s: ' $h; nc -zv -w3 $h 9093 2>&1 | tail -1; done
+      ```
+      Trimming `KAFKA_BOOTSTRAP_SERVERS` to the reachable subset does NOT fix this —
+      leadership is a property of the cluster, not of your bootstrap list.
 
 ### Step 6: Verify the HDFS layout matches what downstream expects
 
@@ -512,6 +536,10 @@ listener-enabled state) and HDFS landing-directory backlog. Exit-4 hardening:
 - The monitor JVM logs to its own `logs/bridge-monitor.log` (as do the other
   diagnostic scripts: `bridge-validate.log`, `bridge-smoke-test.log`,
   `bridge-component-test.log`) — never to the running bridge's rolling log.
+- The monitor JVM always terminates: if context shutdown hangs on a dependency's
+  `close()` (Hadoop `FileSystem`, the Kafka `AdminClient`), a watchdog halts it after
+  30s with the exit code intact. Without that, a cyclic job leaks one live JVM per
+  cycle — see the troubleshooting entry on diagnostic JVMs piling up.
 - Exit 1 tracks the bridge's OWN `mqListener` component, not the aggregate status.
   The aggregate folds in the Kafka and HDFS indicators, which run live probes on every
   poll (`AdminClient.describeCluster` waits up to 2×5s; HDFS does a namenode RPC), so it
@@ -668,6 +696,45 @@ Key log patterns to monitor:
 > poison-message handling, API error and "no data" classification, and the
 > `Existing file checksum mismatch` wedge.
 
+### No application log, only `logs/bridge-console.log`
+
+`bridge-console.log` is created by the launcher redirecting the JVM's stdout — its
+presence says nothing about logback. If it is the *only* file you have, logback could
+not write its own, almost always because `LOG_DIRECTORY` names a path that does not
+exist or is not writable by the service account (no error is logged for this). Ask the
+running process rather than guessing at paths:
+
+```bash
+PID=$(pgrep -f 'mq-kafka-bridge.*\.jar' | head -1)
+ls -l /proc/$PID/cwd                          # where a relative ./logs would resolve
+lsof -p $PID | grep -E '\.log|\.jsonl'        # the files it actually has open
+```
+
+Fix by pointing `LOG_DIRECTORY` at a writable path in `.env` and restarting — the
+running JVM keeps its original destination until then. Note the audit stream
+(`<logfile>-audit.jsonl`) follows the same setting, so a bad path also silently
+discards the audit trail when `AUDIT_PUBLISHER=log`.
+
+### Diagnostic JVMs (monitor / validate-only / component-test / replay) piling up
+
+Each of these modes runs the SAME jar as the bridge and is meant to exit as soon as
+its checks finish. They now self-terminate within 30 seconds even if a dependency's
+shutdown hangs (`DiagnosticJvmExit` halts the JVM, preserving the exit code). On older
+jars they could hang forever in context shutdown — a cyclic Control-M monitor job then
+accumulated one live JVM per cycle, each holding memory, file descriptors and
+HDFS/Kafka connections. Check and reclaim:
+
+```bash
+pgrep -af 'mq-kafka-bridge.*--bridge.monitor.enabled=true' | wc -l   # expect 0 between cycles
+pkill -f  'mq-kafka-bridge.*--bridge.monitor.enabled=true'
+```
+
+Leftovers also used to blind `bridge-keepalive.sh`, which counted them as bridges and
+reported `multiple bridge processes running` every cycle while supervising nothing.
+The current script excludes diagnostic JVMs, but if you see that message, run the
+`pgrep` above first — then confirm `bridge.pid` matches the process actually holding
+port 8080 (`ss -tlnp | grep 8080`).
+
 ### `Could not resolve placeholder 'OAUTH_CLIENT_SECRET'` (or any other var)
 
 The application never received that environment variable — the value being wrong or
@@ -708,6 +775,28 @@ empty gives a different error, so the name is absent entirely. In order of likel
 2. Verify truststore file exists and contains correct certificates
 3. Verify SASL/Kerberos configuration
 4. Check Kafka broker logs
+
+#### Publish times out (or a consumer reads 0 messages) although the client connects
+
+If the log shows the client reaching the cluster — `Cluster ID: ...`, `ProducerId set
+to ...`, partition metadata — then authentication, TLS and the topic are all fine, and
+the failure is at the **partition leader**, not at connection setup. The usual cause is
+that only some brokers are reachable from this host (see Step 5). Confirm with:
+
+```bash
+# per-retry broker error instead of a bare TimeoutException
+./scripts/component-test.sh kafka <scratch-topic> <profile>     # or add:
+#   --logging.level.org.apache.kafka.clients.producer.internals.Sender=DEBUG
+
+# read one known record directly from its partition
+kafka-console-consumer --bootstrap-server <reachable-broker>:9093 \
+  --topic <topic> --partition <p> --offset <o> --max-messages 1 --timeout-ms 30000 \
+  --consumer.config <security.config>
+```
+
+`Bootstrap broker <host> (id: -N) disconnected` lines name the unreachable brokers; a
+negative id means the client never got past bootstrap with that one. Fix the network
+path — no configuration change makes a client reach a broker the firewall drops.
 
 ### HDFS Connection Issues
 
