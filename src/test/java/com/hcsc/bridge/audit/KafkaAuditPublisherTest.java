@@ -185,6 +185,31 @@ class KafkaAuditPublisherTest {
             verify(kafkaTemplate, org.mockito.Mockito.times(1))
                     .send(anyString(), anyString(), anyString());
         }
+
+        @Test
+        @DisplayName("should back off far longer when the failure is an authorization rejection")
+        void shouldUseLongCooldownForAuthorizationFailures() {
+            // A missing topic / ungranted ACL does not clear on its own. On the ordinary
+            // 60s cooldown it retried and logged a stack trace every minute for days,
+            // burying the application log while message flow was perfectly healthy.
+            KafkaAuditPublisher authPublisher =
+                    new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 5, 60_000L);
+            when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                    .thenThrow(new org.springframework.kafka.KafkaException("Send failed",
+                            new org.apache.kafka.common.errors.TopicAuthorizationException(
+                                    "Not authorized to access topics: [audit-topic]")));
+
+            authPublisher.publishAsync(createTestEvent("event-auth-1", "b-auth-1",
+                    "MSG-AUTH-1", AuditEventType.MESSAGE_RECEIVED));
+
+            long suppressedUntil = (long) org.springframework.test.util.ReflectionTestUtils
+                    .getField(authPublisher, "suppressUntil");
+            long remaining = suppressedUntil - System.currentTimeMillis();
+
+            // Held off on the permanent-failure cooldown, not the 60s transient one
+            assertThat(remaining)
+                    .isGreaterThan(KafkaAuditPublisher.PERMANENT_FAILURE_COOLDOWN_MS - 10_000L);
+        }
     }
 
     @Nested

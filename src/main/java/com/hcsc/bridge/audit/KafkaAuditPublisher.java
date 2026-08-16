@@ -28,6 +28,14 @@ public class KafkaAuditPublisher implements AuditPublisher {
     private final long failureCooldownMs;
 
     /**
+     * Cooldown for failures that cannot clear on their own (missing topic / ACL not
+     * granted). Long enough that a multi-day ACL wait costs a handful of log lines
+     * instead of one stack trace per minute, short enough to notice within an hour
+     * when the grant lands.
+     */
+    static final long PERMANENT_FAILURE_COOLDOWN_MS = 15 * 60 * 1000L;
+
+    /**
      * Outage cooldown (same pattern as the consumer-side ConsumerAuditEmitter): while the
      * broker is unreachable, send() blocks the CALLING thread up to max.block.ms on
      * metadata before failing. With 3-4 audit events per message that multiplies MQ
@@ -125,11 +133,42 @@ public class KafkaAuditPublisher implements AuditPublisher {
             return;
         }
         boolean wasActive = System.currentTimeMillis() < suppressUntil;
-        suppressUntil = System.currentTimeMillis() + failureCooldownMs;
+        // An authorization rejection is not a blip: the topic is missing or the ACL is
+        // not granted, and that stays true for days. Retrying on the transient cooldown
+        // republishes, fails, and logs a stack trace every interval — which is how a
+        // test log filled with TopicAuthorizationException while message flow was fine.
+        long cooldown = isPermanent(cause) ? PERMANENT_FAILURE_COOLDOWN_MS : failureCooldownMs;
+        suppressUntil = System.currentTimeMillis() + cooldown;
         if (!wasActive) {
-            logger.warn("Audit publishing entering {} ms cooldown after failure ({}); audit events "
-                            + "will be DROPPED during the cooldown (audit is best-effort)",
-                    failureCooldownMs, cause.toString());
+            if (isPermanent(cause)) {
+                logger.error("Audit publishing is NOT AUTHORIZED for topic '{}' — audit events will be "
+                                + "DROPPED (message processing is unaffected; audit is best-effort). "
+                                + "Grant the service principal write access, or set "
+                                + "bridge.audit.publisher=log to route audit to the audit log file "
+                                + "instead. Retrying at most every {} ms. Cause: {}",
+                        auditTopic, PERMANENT_FAILURE_COOLDOWN_MS, cause.toString());
+            } else {
+                logger.warn("Audit publishing entering {} ms cooldown after failure ({}); audit events "
+                                + "will be DROPPED during the cooldown (audit is best-effort)",
+                        cooldown, cause.toString());
+            }
         }
+    }
+
+    /**
+     * True for failures that will not clear on their own — a missing topic or an ACL the
+     * broker will keep refusing. Checked through the cause chain because the producer
+     * wraps it (KafkaException -> ExecutionException -> TopicAuthorizationException).
+     */
+    private boolean isPermanent(Throwable cause) {
+        for (Throwable t = cause; t != null; t = t.getCause()) {
+            if (t instanceof org.apache.kafka.common.errors.AuthorizationException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 }
