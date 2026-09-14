@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: mq-pmm-bridge-test
+
+bridge:
+  hdfs:
+    base-path: /tmp/test/pmm
+    temp-suffix: .tmp
+  pmm:
+    api:
+      url: http://localhost:8080/pmm
+      timeout-seconds: 5
+
+logging:
+  level:
+    com.hcsc.bridge: DEBUG

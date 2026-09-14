@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sample PMM request template. The real template is supplied by the deployment
+  team via bridge.pmm.template.location (file:/path/to/template.xml). Exactly two
+  placeholders are substituted per message, each XML-escaped before insertion:
+    ${value1}  - first value extracted from the MQ message (bridge.pmm.xpath.value1)
+    ${value2}  - second value extracted from the MQ message (bridge.pmm.xpath.value2)
+  A placeholder may appear more than once. Any other dollar-brace token fails startup.
+-->
+<PmmRequest>
+  <Header>
+    <Source>bluepcs-mq-pmm-bridge</Source>
+  </Header>
+  <Body>
+    <ProductIdentifier>${value1}</ProductIdentifier>
+    <EffectiveDate>${value2}</EffectiveDate>
+  </Body>
+</PmmRequest>

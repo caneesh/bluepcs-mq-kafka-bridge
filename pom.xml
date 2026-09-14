@@ -27,6 +27,7 @@
     <modules>
         <module>bridge-core</module>
         <module>mq-kafka-bridge</module>
+        <module>mq-pmm-bridge</module>
     </modules>
 
     <properties>

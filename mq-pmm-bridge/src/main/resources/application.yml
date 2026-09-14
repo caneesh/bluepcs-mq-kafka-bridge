@@ -1,0 +1,170 @@
+# MQ-PMM Bridge Application Configuration
+# Common settings - profile-specific overrides in application-{profile}.yml
+#
+# This application shares its infrastructure keys (bridge.mq.*, bridge.hdfs.*,
+# bridge.security.*, bridge.kafka.*, bridge.audit.*, bridge.monitor.*) with the
+# PMM+ bridge because bridge-core reads them, and each bridge runs in its own JVM
+# with its own .env. Keys that identify THIS pipeline bind to PMM_* environment
+# variables so a copy-pasted PMM+ .env can never make this bridge consume the
+# PMM+ queue or write into the PMM+ landing directory.
+
+spring:
+  application:
+    name: mq-pmm-bridge
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+  # LOCAL PROFILE ONLY: feeds Spring Boot's auto-configured KafkaTemplate (the custom
+  # KafkaConfiguration beans are @Profile("!local")).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+
+server:
+  # Second bridge JVM on the same edge node: never collide with the PMM+ bridge's 8080
+  port: ${PMM_SERVER_PORT:8081}
+
+bridge:
+  # Kafka is used for the AUDIT stream only (no claim-check notification is published).
+  kafka:
+    audit-topic: ${KAFKA_AUDIT_TOPIC:bridge-audit}
+    audit-timeout-seconds: ${KAFKA_AUDIT_TIMEOUT_SECONDS:5}
+    timeout-seconds: ${KAFKA_TIMEOUT_SECONDS:190}
+    delivery-timeout-ms: ${KAFKA_DELIVERY_TIMEOUT_MS:120000}
+    request-timeout-ms: ${KAFKA_REQUEST_TIMEOUT_MS:30000}
+    max-block-ms: ${KAFKA_MAX_BLOCK_MS:60000}
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD:}
+    truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
+    keystore-location: ${KAFKA_KEYSTORE_LOCATION:}
+    keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
+    key-password: ${KAFKA_KEY_PASSWORD:}
+
+  audit:
+    enabled: true
+    # kafka = publish to bridge.kafka.audit-topic; log = JSON lines to the 'audit' logger
+    publisher: ${AUDIT_PUBLISHER:kafka}
+
+  # HDFS: base-path is the ROOT of the windowed tree (<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml)
+  hdfs:
+    base-path: ${PMM_HDFS_BASE_PATH:/data/pmm/payloads}
+    # Quarantine dir for unparseable / permanently rejected messages; empty = <base-path>/errors
+    error-path: ${PMM_HDFS_ERROR_PATH:}
+    temp-suffix: .tmp
+    replication: ${HDFS_REPLICATION:3}
+    namenode: ${HDFS_NAMENODE:hdfs://localhost:9000}
+    local-base-path: ${HDFS_LOCAL_BASE_PATH:./data/hdfs}
+    config-dir: ${HADOOP_CONF_DIR:}
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:false}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:}
+      keytab: ${HDFS_KERBEROS_KEYTAB:}
+
+  # STS token: same protocol and credentials as the PMM+ bridge; only the endpoint may differ
+  security:
+    token-url: ${PMM_OAUTH_TOKEN_URL:}
+    client-id: ${OAUTH_CLIENT_ID:}
+    client-secret: ${OAUTH_CLIENT_SECRET:}
+    scope: ${OAUTH_SCOPE:}
+    username: ${API_USERNAME:}
+    password: ${API_PASSWORD:}
+
+  # IBM MQ - the PMM queue. Host/QM/channel may or may not be the PMM+ queue manager;
+  # set them in this bridge's own .env.
+  mq:
+    host: ${MQ_HOST:localhost}
+    port: ${MQ_PORT:1414}
+    queue-manager: ${MQ_QUEUE_MANAGER:QM1}
+    channel: ${MQ_CHANNEL:DEV.APP.SVRCONN}
+    queue: ${PMM_MQ_QUEUE:PMM.INPUT.QUEUE}
+    username: ${MQ_USERNAME:}
+    password: ${MQ_PASSWORD:}
+    # Must stay at 1: the HDFS exists-check/write/rename sequence is not atomic
+    concurrency: ${MQ_CONCURRENCY:1}
+    receive-timeout: ${MQ_RECEIVE_TIMEOUT:5000}
+    log-payload: ${MQ_LOG_PAYLOAD:false}
+    max-delivery-attempts: ${MQ_MAX_DELIVERY_ATTEMPTS:0}
+    redelivery-backoff-ms: ${MQ_REDELIVERY_BACKOFF_MS:1000}
+    redelivery-backoff-max-ms: ${MQ_REDELIVERY_BACKOFF_MAX_MS:30000}
+    ssl:
+      enabled: ${MQ_SSL_ENABLED:false}
+      cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
+      truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}
+      truststore-password: ${MQ_SSL_TRUSTSTORE_PASSWORD:}
+
+  # PMM pipeline
+  pmm:
+    xpath:
+      # XPath 1.0 expressions evaluated against the MQ message; both must match a node.
+      # For namespaced documents use //*[local-name()='Element'] (namespace-aware=false).
+      value1: ${PMM_XPATH_VALUE1:/PmmMessage/Product/ProductIdentifier}
+      value2: ${PMM_XPATH_VALUE2:/PmmMessage/Product/EffectiveDate}
+      namespace-aware: ${PMM_XPATH_NAMESPACE_AWARE:false}
+      allow-empty: ${PMM_XPATH_ALLOW_EMPTY:false}
+    template:
+      # Spring resource location: classpath:... or file:/path/to/template.xml
+      location: ${PMM_TEMPLATE_LOCATION:classpath:pmm/request-template.sample.xml}
+    api:
+      url: ${PMM_API_URL:http://localhost:8080/pmm}
+      timeout-seconds: ${PMM_API_TIMEOUT_SECONDS:60}
+      retry-attempts: ${PMM_API_RETRY_ATTEMPTS:3}
+      retry-delay-ms: ${PMM_API_RETRY_DELAY_MS:1000}
+      content-type: ${PMM_API_CONTENT_TYPE:application/xml}
+      accept: ${PMM_API_ACCEPT:application/xml}
+    hdfs:
+      # Folder rotation: <base>/<date-pattern>/<HH>/ where HH is the window start hour
+      window-hours: ${PMM_WINDOW_HOURS:4}
+      window-zone: ${PMM_WINDOW_ZONE:UTC}
+      date-pattern: ${PMM_DATE_PATTERN:yyyy-MM-dd}
+      file-extension: .xml
+      # Redelivery safety: if the target file already exists, skip the web-service call
+      # entirely (the response may carry volatile fields that would fail the checksum check)
+      skip-api-when-target-exists: true
+    monitor:
+      # Backlog check scans the current window and this many minus one preceding windows
+      backlog-windows: ${PMM_MONITOR_BACKLOG_WINDOWS:2}
+
+  # Monitor Mode (read-only checks for Control-M; scripts/monitor.sh with BRIDGE_APP=mq-pmm-bridge)
+  monitor:
+    enabled: ${MONITOR_ENABLED:false}
+    health-url: ${MONITOR_HEALTH_URL:http://localhost:8081/actuator/health}
+    backlog-age-minutes: ${MONITOR_BACKLOG_AGE_MINUTES:30}
+    backlog-max-files: ${MONITOR_BACKLOG_MAX_FILES:0}
+
+  # Ledger/recovery/reconciliation are dormant in this bridge (kept for bridge-core defaults)
+  recovery:
+    enabled: false
+  reconciliation:
+    enabled: false
+  ledger:
+    storage-path: ${LEDGER_PATH:/data/pmm/ledger}
+  hbase:
+    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:localhost}
+    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
+    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
+    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.hcsc.bridge: ${LOG_LEVEL:INFO}
+    org.apache.kafka: WARN
+    org.apache.hadoop: WARN
+    org.apache.hbase: WARN

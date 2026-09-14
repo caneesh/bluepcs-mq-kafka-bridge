@@ -1,0 +1,111 @@
+package com.hcsc.bridge.pmm.hdfs;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@DisplayName("WindowedPathResolver")
+class WindowedPathResolverTest {
+
+    private static final Clock FIXED = Clock.fixed(Instant.parse("2026-09-13T00:10:00Z"), ZoneOffset.UTC);
+
+    private static WindowedPathResolver resolver(int hours, String zone) {
+        return new WindowedPathResolver("/data/pmm/", "", hours, zone, "yyyy-MM-dd", ".xml", FIXED);
+    }
+
+    @Nested
+    @DisplayName("4-hour windows in UTC")
+    class FourHourUtc {
+
+        private final WindowedPathResolver resolver = resolver(4, "UTC");
+
+        @Test
+        @DisplayName("maps the last millisecond of a window to that window")
+        void lastMillisecond() {
+            assertThat(resolver.windowLabel(Instant.parse("2026-09-13T03:59:59.999Z"))).isEqualTo("2026-09-13/00");
+        }
+
+        @Test
+        @DisplayName("maps the first instant of a window to the new window")
+        void firstInstant() {
+            assertThat(resolver.windowLabel(Instant.parse("2026-09-13T04:00:00Z"))).isEqualTo("2026-09-13/04");
+        }
+
+        @Test
+        @DisplayName("uses 20 for the last window of the day and rolls the date at midnight")
+        void lastWindowAndMidnight() {
+            assertThat(resolver.windowLabel(Instant.parse("2026-09-13T23:59:59Z"))).isEqualTo("2026-09-13/20");
+            assertThat(resolver.windowLabel(Instant.parse("2026-09-14T00:00:00Z"))).isEqualTo("2026-09-14/00");
+        }
+
+        @Test
+        @DisplayName("builds <base>/<date>/<HH>/<eventId>.xml with the trailing slash stripped")
+        void resolvePath() {
+            assertThat(resolver.resolve("abc123", Instant.parse("2026-09-13T09:15:00Z")))
+                    .isEqualTo("/data/pmm/2026-09-13/08/abc123.xml");
+            assertThat(resolver.windowDir(Instant.parse("2026-09-13T09:15:00Z")))
+                    .isEqualTo("/data/pmm/2026-09-13/08");
+        }
+
+        @Test
+        @DisplayName("quarantines flat under <base>/errors by default, or the configured error path")
+        void quarantinePath() {
+            assertThat(resolver.quarantinePath("abc")).isEqualTo("/data/pmm/errors/abc.xml");
+            WindowedPathResolver custom = new WindowedPathResolver("/data/pmm", "/q/", 4, "UTC",
+                    "yyyy-MM-dd", "xml", FIXED);
+            assertThat(custom.quarantinePath("abc")).isEqualTo("/q/abc.xml");
+            assertThat(custom.getExtension()).isEqualTo(".xml");
+        }
+
+        @Test
+        @DisplayName("lists the current window and the previous ones across a date boundary")
+        void recentWindowDirs() {
+            assertThat(resolver.recentWindowDirs(2))
+                    .containsExactly("/data/pmm/2026-09-13/00", "/data/pmm/2026-09-12/20");
+            assertThat(resolver.recentWindowDirs(1)).containsExactly("/data/pmm/2026-09-13/00");
+            assertThat(resolver.recentWindowDirs(0)).containsExactly("/data/pmm/2026-09-13/00");
+        }
+    }
+
+    @Nested
+    @DisplayName("other window sizes and zones")
+    class Variants {
+
+        @Test
+        @DisplayName("supports 1, 6 and 12-hour windows")
+        void otherSizes() {
+            Instant t = Instant.parse("2026-09-13T13:30:00Z");
+            assertThat(resolver(1, "UTC").windowLabel(t)).isEqualTo("2026-09-13/13");
+            assertThat(resolver(6, "UTC").windowLabel(t)).isEqualTo("2026-09-13/12");
+            assertThat(resolver(12, "UTC").windowLabel(t)).isEqualTo("2026-09-13/12");
+            assertThat(resolver(24, "UTC").windowLabel(t)).isEqualTo("2026-09-13/00");
+        }
+
+        @Test
+        @DisplayName("partitions by local time in a non-UTC zone")
+        void localZone() {
+            Instant t = Instant.parse("2026-09-13T03:30:00Z"); // 22:30 CDT the previous day
+            assertThat(resolver(4, "America/Chicago").windowLabel(t)).isEqualTo("2026-09-12/20");
+            assertThat(resolver(4, "UTC").windowLabel(t)).isEqualTo("2026-09-13/00");
+        }
+
+        @Test
+        @DisplayName("rejects a window size that does not divide 24, an invalid zone or a blank base path")
+        void invalidConfig() {
+            assertThatThrownBy(() -> resolver(5, "UTC")).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("window-hours");
+            assertThatThrownBy(() -> resolver(0, "UTC")).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> resolver(4, "Mars/Olympus")).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("window-zone");
+            assertThatThrownBy(() -> new WindowedPathResolver(" ", "", 4, "UTC", "yyyy-MM-dd", ".xml", FIXED))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("base-path");
+        }
+    }
+}

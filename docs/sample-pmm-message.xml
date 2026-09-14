@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sample PMM (Product Message Model) message for local runs:
+     BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh with
+     PMM_LOCAL_SAMPLE_MESSAGE=docs/sample-pmm-message.xml
+     The default XPaths in application.yml select ProductIdentifier and EffectiveDate. -->
+<PmmMessage>
+  <Header>
+    <Source>BluePCS</Source>
+    <MessageType>ProductChange</MessageType>
+  </Header>
+  <Product>
+    <ProductIdentifier>PRD-000123</ProductIdentifier>
+    <EffectiveDate>2026-09-13</EffectiveDate>
+    <Description>Sample product &amp; plan</Description>
+  </Product>
+</PmmMessage>

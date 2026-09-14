@@ -1,0 +1,90 @@
+# Test Environment Profile for the PMM bridge.
+#
+# Use with: --spring.profiles.active=test-env
+#
+# PMM-specific values (queue, HDFS root, API URL, template, XPaths) have NO defaults:
+# they must come from this bridge's .env (see config/test-env.env.template, "PMM bridge").
+
+bridge:
+  mq:
+    host: ${MQ_HOST:teenuslika02.app.test.hscint.net}
+    port: ${MQ_PORT:1412}
+    queue-manager: ${MQ_QUEUE_MANAGER:MQGPT1}
+    channel: ${MQ_CHANNEL:QDA.APP.SVRCONN}
+    queue: ${PMM_MQ_QUEUE}
+    username: ${MQ_USERNAME:bluepcsapp}
+    password: ${MQ_PASSWORD:}
+    concurrency: 1
+    receive-timeout: 5000
+    log-payload: ${MQ_LOG_PAYLOAD:false}
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:teenuslika02.app.test.hscint.net:9093,teenuslika03.app.test.hscint.net:9093,teenuslika04.app.test.hscint.net:9093}
+    audit-topic: ${KAFKA_AUDIT_TOPIC:MOCK01_BRIDGE_AUDIT_TEST}
+    security-protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    sasl-mechanism: ${KAFKA_SASL_MECHANISM:GSSAPI}
+    kerberos-service-name: ${KAFKA_KERBEROS_SERVICE_NAME:kafka}
+    truststore-location: ${KAFKA_TRUSTSTORE_LOCATION:/prod/gold/integration/conf/product/common/kafka_truststore_test.jks}
+    truststore-password: ${KAFKA_TRUSTSTORE_PASSWORD}
+    truststore-type: ${KAFKA_TRUSTSTORE_TYPE:JKS}
+    jaas-config-path: ${KAFKA_JAAS_CONFIG_PATH:}
+    sasl-jaas-config: ${KAFKA_SASL_JAAS_CONFIG:}
+    delivery-timeout-ms: 120000
+    request-timeout-ms: 30000
+
+  hdfs:
+    namenode: ${HDFS_NAMENODE:hdfs://TSTODPHA}
+    base-path: ${PMM_HDFS_BASE_PATH}
+    error-path: ${PMM_HDFS_ERROR_PATH:}
+    replication: 2
+    kerberos:
+      enabled: ${HDFS_KERBEROS_ENABLED:true}
+      principal: ${HDFS_KERBEROS_PRINCIPAL:e4193139@HSCTEST.NET}
+      keytab: ${HDFS_KERBEROS_KEYTAB:/etc/security/keytabs/e4193139.keytab}
+      namenode-principal: ${HDFS_NAMENODE_PRINCIPAL:nn/_HOST@HSCTEST.NET}
+      resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:yarn/_HOST@HSCTEST.NET}
+
+  security:
+    # STS contract: ClientID/ClientSecret/scope as HEADERS, JSON body {"username","password"}
+    token-url: ${PMM_OAUTH_TOKEN_URL:https://t-sso-sg-uat-svc.test.hcscint.net/sts/v5/jwt_token_internal}
+    client-id: ${OAUTH_CLIENT_ID}
+    client-secret: ${OAUTH_CLIENT_SECRET}
+    scope: ${OAUTH_SCOPE:oob openid profile roles permissions}
+    username: ${API_USERNAME:a6193139}
+    password: ${API_PASSWORD}
+
+  pmm:
+    xpath:
+      value1: ${PMM_XPATH_VALUE1}
+      value2: ${PMM_XPATH_VALUE2}
+    template:
+      location: ${PMM_TEMPLATE_LOCATION}
+    api:
+      url: ${PMM_API_URL}
+      timeout-seconds: ${PMM_API_TIMEOUT_SECONDS:60}
+
+  audit:
+    enabled: true
+    publisher: ${AUDIT_PUBLISHER:kafka}
+
+  recovery:
+    enabled: false
+  reconciliation:
+    enabled: false
+
+logging:
+  file:
+    name: ${LOG_DIRECTORY:./logs}/pmm-bridge-application.log
+  level:
+    com.hcsc.bridge: DEBUG
+    org.apache.kafka: INFO
+    org.apache.hadoop: INFO
+
+management:
+  endpoint:
+    health:
+      show-details: always
+      group:
+        liveness:
+          include: mqListener,ping
+          show-details: always

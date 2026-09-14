@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hcsc</groupId>
+        <artifactId>bridge-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>mq-pmm-bridge</artifactId>
+    <packaging>jar</packaging>
+
+    <name>MQ-PMM Bridge</name>
+    <description>
+        IBM MQ (PMM canonical XML) to web-service POST to HDFS bridge. Extracts two
+        values from each XML message, renders a request template, submits it with an
+        STS token and lands the raw XML response in a 4-hourly HDFS folder.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.hcsc</groupId>
+            <artifactId>bridge-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.hcsc</groupId>
+            <artifactId>bridge-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.hcsc.bridge.PmmBridgeApplication</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

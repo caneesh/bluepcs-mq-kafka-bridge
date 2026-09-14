@@ -1,0 +1,20 @@
+# Local Development Profile - no external dependencies.
+# LocalPmmApiClient returns a canned XML response; LocalJwtTokenProvider,
+# LocalFileSystemHdfsOperations and LoggingAuditPublisher come from bridge-core.
+
+bridge:
+  hdfs:
+    local-base-path: ./data/hdfs
+    base-path: ./data/hdfs/pmm
+  ledger:
+    storage-path: ./data/ledger
+  audit:
+    publisher: log
+  pmm:
+    local:
+      # Optional: path of an XML file to push through the pipeline once at startup
+      sample-message: ${PMM_LOCAL_SAMPLE_MESSAGE:}
+
+logging:
+  level:
+    com.hcsc.bridge: DEBUG
