@@ -198,6 +198,27 @@ silently replacing a file that downstream may already have consumed is worse tha
 Identify the failing stage (§5) **before** choosing — the right action differs, and enabling
 the guard during a Kafka outage would quarantine perfectly good messages.
 
+## 8. The PMM bridge (mq-pmm-bridge) — what differs
+
+Everything in sections 1–7 applies to the PMM bridge with these substitutions:
+
+| PMM+ bridge | PMM bridge |
+|---|---|
+| Parse = JSON (`JsonMessageParser`) | Parse = XML + two XPaths (`PmmXmlExtractor`); a DOCTYPE, a non-matching XPath or a blank value is a parse failure |
+| Enrichment GET, `ENRICHMENT_*` audit, quarantine `errorCode=ENRICHMENT_ERROR` | Web-service POST, `API_CALL_*` audit, quarantine `errorCode=API_ERROR` |
+| Landing `<base>/<eventId>.json` (flat) | Landing `<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml`, `HH` = 4-hour window start of the **JMS put time** |
+| Quarantine `<error-path>/<eventId>.json` | Quarantine `<error-path>/<eventId>.xml` (flat) |
+| Only `TextMessage` accepted | `TextMessage` and `BytesMessage` (charset from `JMS_IBM_Character_Set`, UTF-8 fallback) |
+| Redelivery re-calls the API and relies on identical bytes (§6 wedge) | Redelivery **does not call the API** when the target file already exists (`HDFS_WRITE_SKIPPED`, `reason=target-exists-before-api-call`). The §6 wedge can therefore only occur if the file was replaced by hand. |
+| Replay tool `quarantine-replay.sh` | **No replay tool yet** — re-put the quarantined XML on the PMM queue by hand |
+| Sweep `hdfs-landing-cleanup.sh` | Sweep `pmm-hdfs-cleanup.sh` (whole date directories) |
+
+Window placement: a message put at 03:59 and processed at 04:10 lands in the `00/`
+window (put time, not processing time). A message without a `JMSTimestamp` is
+anchored on its receive time instead and the `MESSAGE_RECEIVED` audit says
+`anchorSource=receivedAt`; a redelivery of such a message across a window boundary
+lands a second copy under the same `eventId` filename in the next window.
+
 ## Related
 
 - `docs/sample-mq-message.json` — a valid input message, with the fields the parser requires

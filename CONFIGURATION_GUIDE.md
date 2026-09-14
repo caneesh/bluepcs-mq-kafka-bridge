@@ -310,3 +310,66 @@ full pipeline has no untested integration left.
 | `Login failure for e4193139` (HDFS) | section 6 — keytab/principal |
 | `Permission denied` on a path | section 6 — HDFS write permission |
 | SSL truststore file does not exist | section 5 — `KAFKA_TRUSTSTORE_LOCATION` path on this machine |
+
+## 11. The PMM bridge (`mq-pmm-bridge`) — second application
+
+The PMM (Product Message Model, canonical XML) feed is a **separate bootable
+application** built from the same repository: `mq-pmm-bridge/target/mq-pmm-bridge-*.jar`.
+It runs as its own JVM with its own deploy directory, `.env` and systemd unit
+(`deploy/mq-pmm-bridge.service`), and listens on port **8081** by default so it can
+share an edge node with the PMM+ bridge.
+
+Pipeline: MQ (XML) → two XPath values → XML request template → `POST` with the STS
+token in `Authorization` → raw XML response written to
+`<PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>/<HH>/<eventId>.xml` (a new folder every 4 hours,
+`HH` ∈ 00,04,08,12,16,20 in UTC) → audit events (no Kafka notification).
+
+### 11.1 Values you MUST set (no defaults in `prod` / `test-env`)
+
+| Variable | Property | What it is |
+|---|---|---|
+| `PMM_MQ_QUEUE` | `bridge.mq.queue` | The PMM queue. Deliberately not `MQ_QUEUE`: a copied PMM+ `.env` can never make this bridge consume the PMM+ queue |
+| `PMM_HDFS_BASE_PATH` | `bridge.hdfs.base-path` | Root of the windowed landing tree |
+| `PMM_API_URL` | `bridge.pmm.api.url` | Full POST URL of the web service |
+| `PMM_TEMPLATE_LOCATION` | `bridge.pmm.template.location` | `file:/path/to/template.xml` — the large XML request with `${value1}` / `${value2}` placeholders (see `mq-pmm-bridge/src/main/resources/pmm/request-template.sample.xml`). Any other `${…}` token fails startup |
+| `PMM_XPATH_VALUE1`, `PMM_XPATH_VALUE2` | `bridge.pmm.xpath.value1/2` | XPath 1.0 expressions selecting the two values from the MQ message. Single-quote them in `.env`. For namespaced XML use `//*[local-name()='Element']` |
+| `PMM_OAUTH_TOKEN_URL` | `bridge.security.token-url` | STS endpoint for the PMM service (same protocol and `OAUTH_CLIENT_ID/SECRET`, `API_USERNAME/PASSWORD` as the PMM+ bridge; may be the same URL) |
+
+Shared infrastructure keeps the same variable names as sections 3–6 (`MQ_HOST`,
+`MQ_QUEUE_MANAGER`, `MQ_CHANNEL`, `KAFKA_*` for the audit topic, `HDFS_NAMENODE`,
+`HDFS_KERBEROS_*`, `OAUTH_CLIENT_ID`, …) and is set in the PMM bridge's own `.env`
+— point them at a different queue manager if the PMM queue lives elsewhere.
+
+### 11.2 Optional tuning
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PMM_SERVER_PORT` | `8081` | Actuator/health port of this JVM |
+| `PMM_WINDOW_HOURS` / `PMM_WINDOW_ZONE` | `4` / `UTC` | Folder rotation; hours must divide 24 |
+| `PMM_HDFS_ERROR_PATH` | `<base>/errors` | Flat quarantine directory (`<eventId>.xml`) |
+| `PMM_API_TIMEOUT_SECONDS`, `PMM_API_RETRY_ATTEMPTS`, `PMM_API_RETRY_DELAY_MS` | `60`, `3`, `1000` | Same retry/backoff semantics as section 4 |
+| `PMM_API_CONTENT_TYPE` / `PMM_API_ACCEPT` | `application/xml` | Sent verbatim (use `text/xml` if the gateway insists) |
+| `PMM_MONITOR_BACKLOG_WINDOWS` | `2` | Windows scanned by the monitor's backlog check (current + previous) |
+| `AUDIT_PUBLISHER` | `kafka` | `log` keeps the audit trail in `<LOG_DIRECTORY>/pmm-bridge-application.log-audit.jsonl` |
+
+### 11.3 Running it
+
+Every script accepts `BRIDGE_APP=mq-pmm-bridge` (put it in the PMM `.env` together
+with `HEALTH_URL=http://localhost:8081/actuator/health/liveness` and
+`MONITOR_HEALTH_URL=http://localhost:8081/actuator/health`):
+
+```bash
+BRIDGE_APP=mq-pmm-bridge scripts/validate-only.sh test-env     # adds PMM_API_REACHABLE + PMM_TEMPLATE checks
+BRIDGE_APP=mq-pmm-bridge scripts/run-test-env.sh --listener-enabled --port 8081
+BRIDGE_APP=mq-pmm-bridge scripts/monitor.sh                    # backlog check walks the windowed tree
+scripts/pmm-hdfs-cleanup.sh --dry-run                          # retention on whole date directories
+```
+
+Local, no infrastructure: `PMM_LOCAL_SAMPLE_MESSAGE=docs/sample-pmm-message.xml
+BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh` pushes one sample through the pipeline
+and writes `./data/hdfs/pmm/<date>/<HH>/<eventId>.xml`.
+
+Startup fails fast (like section 1) when a `PMM_*` value is missing, an XPath does not
+compile, the template is missing or contains an unknown placeholder, or the window
+size does not divide 24.
+

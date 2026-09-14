@@ -211,7 +211,33 @@ mq-kafka-bridge/                 # PMM+ JSON bridge application (this README)
   ├── orchestrator/  # Message processing orchestration
   └── parser/        # Message parsing
   src/main/resources/application*.yml
+mq-pmm-bridge/                   # PMM canonical-XML bridge application (see below)
+  src/main/java/com/hcsc/bridge/
+  ├── PmmBridgeApplication.java
+  └── pmm/
+      ├── xml/           # hardened XML parsing + XPath extraction
+      ├── template/      # request template loading/rendering
+      ├── api/           # POST client with token refresh + retry
+      ├── hdfs/          # 4-hourly window path resolver, backlog scanner
+      ├── orchestrator/  # PmmOrchestrator
+      ├── mq/            # PMM queue listener (Text + Bytes messages)
+      ├── config/        # startup validator, readiness checks
+      └── local/         # local-profile API stub + sample runner
 audit-hive-consumer/             # standalone Spark/Hive consumer for the audit topic
+```
+
+## PMM bridge (`mq-pmm-bridge`)
+
+A second bootable application in the same reactor for the BluePCS **PMM** canonical XML
+feed: MQ (XML) → two XPath values → XML request template → `POST` with the STS token →
+raw XML response landed as `<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml` (new folder every
+4 hours) → audit only. It runs as its own JVM (port 8081, own `.env`, own systemd unit)
+and reuses everything in `bridge-core`. See `CONFIGURATION_GUIDE.md` §11 and
+`DEPLOYMENT_CHECKLIST.md` "Second application".
+
+```bash
+# local, no infrastructure: push one sample message through the pipeline
+PMM_LOCAL_SAMPLE_MESSAGE=docs/sample-pmm-message.xml BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh
 ```
 
 ## Deployment Checklist

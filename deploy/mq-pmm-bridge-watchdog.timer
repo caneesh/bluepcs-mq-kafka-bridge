@@ -1,0 +1,12 @@
+# Runs the PMM bridge health watchdog every minute (see mq-kafka-bridge-watchdog.timer).
+
+[Unit]
+Description=Run MQ-PMM Bridge health watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

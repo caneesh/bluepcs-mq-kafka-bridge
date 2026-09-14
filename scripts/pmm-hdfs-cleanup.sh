@@ -1,0 +1,156 @@
+#!/bin/bash
+# =============================================================================
+# PMM Landing Tree Retention Sweep (mq-pmm-bridge)
+# =============================================================================
+# The PMM bridge lands one XML file per message under a time-partitioned tree:
+#
+#   <PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>/<HH>/<eventId>.xml      HH = window start hour
+#   <PMM_HDFS_BASE_PATH>/errors/<eventId>.xml                 quarantine (never swept)
+#
+# This sweep works on WHOLE DATE DIRECTORIES, never on individual landing files:
+#
+#   <base>/<date>            date older than PMM_LANDING_RETENTION_DAYS
+#     └→ <archive>/<date>    date older than PMM_ARCHIVE_RETENTION_DAYS
+#          └→ deleted
+#
+# and deletes orphaned *.xml.tmp files (crashed safe-writes) older than 1 day
+# anywhere under the date directories.
+#
+# Do NOT point hdfs-landing-cleanup.sh at this tree: it is flat-directory and
+# .json-only by design. Do NOT point this script at the PMM+ landing directory.
+#
+# Usage:
+#   ./pmm-hdfs-cleanup.sh [--dry-run]
+#
+# Configuration (sourced from the PMM bridge's .env if present, else environment):
+#   PMM_HDFS_BASE_PATH          landing tree root        (required)
+#   PMM_HDFS_ARCHIVE_PATH       archive root             (default: <base>/archive)
+#   PMM_LANDING_RETENTION_DAYS  archive a date after N days   (default: 7)
+#   PMM_ARCHIVE_RETENTION_DAYS  delete from archive after M days (default: 30)
+#   HDFS_KERBEROS_PRINCIPAL / HDFS_KERBEROS_KEYTAB   kinit first when both set
+#
+# Cron example (daily at 02:45):
+#   45 2 * * * /path/to/scripts/pmm-hdfs-cleanup.sh >> /var/log/bluepcs/pmm-hdfs-cleanup.log 2>&1
+# =============================================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+DRY_RUN=false
+if [ "${1:-}" = "--dry-run" ]; then
+    DRY_RUN=true
+fi
+
+if [ -f "${PROJECT_DIR}/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "${PROJECT_DIR}/.env"
+    set +a
+fi
+
+BASE="${PMM_HDFS_BASE_PATH:-}"
+if [ -z "$BASE" ]; then
+    echo "ERROR: PMM_HDFS_BASE_PATH is not set (in .env or environment)"
+    exit 2
+fi
+BASE="${BASE%/}"
+ARCHIVE="${PMM_HDFS_ARCHIVE_PATH:-${BASE}/archive}"
+ARCHIVE="${ARCHIVE%/}"
+LANDING_DAYS="${PMM_LANDING_RETENTION_DAYS:-7}"
+ARCHIVE_DAYS="${PMM_ARCHIVE_RETENTION_DAYS:-30}"
+TMP_DAYS=1
+
+echo "============================================"
+echo "PMM HDFS Cleanup - $(date '+%Y-%m-%d %H:%M:%S')"
+echo "============================================"
+echo "Landing tree:       ${BASE}"
+echo "Archive tree:       ${ARCHIVE}"
+echo "Landing retention:  ${LANDING_DAYS} days (then archive the date directory)"
+echo "Archive retention:  ${ARCHIVE_DAYS} days (then delete the date directory)"
+echo "Dry run:            ${DRY_RUN}"
+echo ""
+
+if [ -n "${HDFS_KERBEROS_PRINCIPAL:-}" ] && [ -n "${HDFS_KERBEROS_KEYTAB:-}" ]; then
+    echo "kinit as ${HDFS_KERBEROS_PRINCIPAL}"
+    kinit -kt "${HDFS_KERBEROS_KEYTAB}" "${HDFS_KERBEROS_PRINCIPAL}"
+fi
+
+TODAY_EPOCH=$(date -u -d "$(date -u '+%Y-%m-%d')" +%s)
+LANDING_CUTOFF=$((TODAY_EPOCH - LANDING_DAYS * 86400))
+ARCHIVE_CUTOFF=$((TODAY_EPOCH - ARCHIVE_DAYS * 86400))
+NOW_EPOCH=$(date +%s)
+TMP_CUTOFF=$((NOW_EPOCH - TMP_DAYS * 86400))
+
+run_or_echo() {
+    if [ "$DRY_RUN" = true ]; then
+        echo "DRY-RUN: $*"
+    else
+        "$@"
+    fi
+}
+
+# Date directories directly under $1 whose name parses as yyyy-MM-dd. A failed
+# listing aborts the run: silently treating it as "nothing to do" would hide an
+# expired ticket or a namenode outage behind a clean exit code.
+list_date_dirs() {
+    local listing
+    if ! listing=$(hdfs dfs -ls "$1" 2>/dev/null); then
+        if hdfs dfs -test -d "$1"; then
+            echo "ERROR: cannot list $1" >&2
+            exit 3
+        fi
+        return 0
+    fi
+    echo "$listing" | awk '$1 ~ /^d/ {print $NF}' | while read -r path; do
+        name="${path##*/}"
+        if [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "$name" +%s >/dev/null 2>&1; then
+            echo "$(date -u -d "$name" +%s)	$path"
+        fi
+    done
+}
+
+archived=0; deleted=0; tmp_removed=0
+
+# 1. Landing -> archive: whole date directories older than the landing retention.
+#    Today's and the previous days' windows are never touched, so late arrivals
+#    (a message whose put time falls in a "closed" window) still land in place.
+run_or_echo hdfs dfs -mkdir -p "$ARCHIVE"
+while IFS=$'\t' read -r epoch path; do
+    [ -z "$path" ] && continue
+    if [ "$epoch" -lt "$LANDING_CUTOFF" ]; then
+        echo "archive: ${path} -> ${ARCHIVE}/"
+        run_or_echo hdfs dfs -mv "$path" "${ARCHIVE}/" && archived=$((archived + 1))
+    fi
+done < <(list_date_dirs "$BASE")
+
+# 2. Archive -> delete: date directories older than the archive retention.
+while IFS=$'\t' read -r epoch path; do
+    [ -z "$path" ] && continue
+    if [ "$epoch" -lt "$ARCHIVE_CUTOFF" ]; then
+        echo "delete: ${path}"
+        run_or_echo hdfs dfs -rm -r "$path" && deleted=$((deleted + 1))
+    fi
+done < <(list_date_dirs "$ARCHIVE")
+
+# 3. Orphaned temp files older than TMP_DAYS under the remaining date directories.
+#    Recursive listing is bounded by the retention window (at most LANDING_DAYS
+#    date directories x windows per day). errors/ and archive/ are excluded.
+while IFS=$'\t' read -r epoch path; do
+    [ -z "$path" ] && continue
+    while read -r perms _ _ _ _ d t file; do
+        case "$file" in
+            *.xml.tmp) ;;
+            *) continue ;;
+        esac
+        mtime=$(date -d "$d $t" +%s 2>/dev/null || echo "$NOW_EPOCH")
+        if [ "$mtime" -lt "$TMP_CUTOFF" ]; then
+            echo "orphan temp: ${file}"
+            run_or_echo hdfs dfs -rm "$file" && tmp_removed=$((tmp_removed + 1))
+        fi
+    done < <(hdfs dfs -ls -R "$path" 2>/dev/null | awk '$1 !~ /^d/')
+done < <(list_date_dirs "$BASE")
+
+echo ""
+echo "Done: ${archived} date dir(s) archived, ${deleted} deleted, ${tmp_removed} orphan temp file(s) removed"

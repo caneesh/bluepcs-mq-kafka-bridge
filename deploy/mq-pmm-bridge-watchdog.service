@@ -1,0 +1,18 @@
+# One-shot health check for the MQ-PMM Bridge, driven by
+# mq-pmm-bridge-watchdog.timer. Reuses mq-kafka-bridge-watchdog.sh with the
+# service name and liveness URL of the PMM bridge.
+#
+# Install (the shared script must already be in /usr/local/bin, see
+# mq-kafka-bridge-watchdog.service):
+#   sudo cp deploy/mq-pmm-bridge-watchdog.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mq-pmm-bridge-watchdog.timer
+
+[Unit]
+Description=MQ-PMM Bridge health watchdog (one shot)
+
+[Service]
+Type=oneshot
+Environment=SERVICE=mq-pmm-bridge
+Environment=HEALTH_URL=http://localhost:8081/actuator/health/liveness
+ExecStart=/usr/local/bin/mq-kafka-bridge-watchdog.sh

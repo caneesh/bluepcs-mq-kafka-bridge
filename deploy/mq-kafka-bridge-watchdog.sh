@@ -17,7 +17,8 @@
 
 set -u
 
-SERVICE="mq-kafka-bridge"
+# Overridable so the same script supervises a second bridge unit (mq-pmm-bridge)
+SERVICE="${SERVICE:-mq-kafka-bridge}"
 # Liveness group, NOT the full aggregate endpoint — a Kafka/HDFS outage must not
 # make the watchdog restart-loop a healthy JVM (see bridge-keepalive.sh)
 HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health/liveness}"

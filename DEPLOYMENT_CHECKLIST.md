@@ -830,6 +830,46 @@ path — no configuration change makes a client reach a broker the firewall drop
 
 ---
 
+## Second application: the PMM bridge (`mq-pmm-bridge`)
+
+The PMM (canonical XML) feed is a second JVM built from this repository. Deploy it
+**beside**, never inside, the PMM+ bridge:
+
+```
+~/bluepcs-pmm-bridge/                <- its own project root (WorkingDirectory in the unit)
+|-- .env                             <- its own secrets; PMM_* values identify the pipeline
+|-- scripts/                         <- same scripts; .env sets BRIDGE_APP=mq-pmm-bridge
+|-- pmm-request-template.xml         <- the large XML request (PMM_TEMPLATE_LOCATION=file:...)
+`-- mq-pmm-bridge/target/mq-pmm-bridge-*.jar
+```
+
+- [ ] `.env` filled from `config/<env>.env.template` **including the "PMM bridge" block**
+      (`PMM_MQ_QUEUE`, `PMM_HDFS_BASE_PATH`, `PMM_API_URL`, `PMM_TEMPLATE_LOCATION`,
+      `PMM_XPATH_VALUE1/2`, `PMM_OAUTH_TOKEN_URL`, `BRIDGE_APP`, `HEALTH_URL`,
+      `MONITOR_HEALTH_URL`); no default exists for the `PMM_*` identity values
+- [ ] Port: `PMM_SERVER_PORT` (default 8081) is free — the PMM+ bridge owns 8080
+- [ ] HDFS: the landing root exists and the service account can create
+      `<root>/<yyyy-MM-dd>/<HH>/` (the bridge `mkdir -p`s per window) and `<root>/errors/`
+- [ ] `BRIDGE_APP=mq-pmm-bridge scripts/validate-only.sh <profile>` passes, including
+      `PMM_API_REACHABLE` and `PMM_TEMPLATE`
+- [ ] Safe start, then enable: Steps 8–9 above with `BRIDGE_APP=mq-pmm-bridge` and
+      `--port 8081`; the first message must produce **one** `.xml` under the current
+      window folder (`hdfs dfs -ls <root>/$(date -u +%F)/`) and audit rows with
+      `metadata.pipeline = pmm`
+- [ ] 24/7: `deploy/mq-pmm-bridge.service` + `deploy/mq-pmm-bridge-watchdog.{service,timer}`
+      (the watchdog script is shared; the PMM unit passes `SERVICE=mq-pmm-bridge` and the
+      8081 liveness URL). Without sudo: `bridge-keepalive.sh` from the PMM directory
+      (`BRIDGE_APP`/`HEALTH_URL` from its `.env`)
+- [ ] Control-M: `monitor.sh` (walks the current + previous window), a second
+      `abc-balance-check.sh` job with `ABC_PIPELINE=pmm`, and `pmm-hdfs-cleanup.sh`
+      daily (whole date directories; never `hdfs-landing-cleanup.sh`)
+- [ ] The PMM+ bridge's balance job still balances after PMM traffic starts — it now
+      filters `metadata.pipeline` (default `bridge`), so this is the proof the filter works
+
+Behavioural differences (parse = XPath, quarantine = `<eventId>.xml`, redelivery skips the
+web-service call when the file exists, `BytesMessage` accepted) are in
+`docs/RUNBOOK_MESSAGE_FAILURES.md` §8.
+
 ## Rollback Procedure
 
 1. Stop the application: `kill -TERM <pid>` or stop the service

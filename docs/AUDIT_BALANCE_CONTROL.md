@@ -50,6 +50,34 @@ Why each drain term sits where it does:
   and can legitimately lag the window edge. `ABC_WINDOW_LAG_MINUTES` (default 30) must
   exceed that batch interval plus its Hive write time.
 
+## Two pipelines on one topic
+
+The PMM bridge (`mq-pmm-bridge`) publishes to the same audit topic and table. Its
+events carry `metadata.pipeline = 'pmm'`; PMM+ events carry no key. Both scripts
+therefore filter on `COALESCE(get_json_object(metadata_json, '$.pipeline'), 'bridge')`:
+`abc-balance-check.sh` with `ABC_PIPELINE` (default `bridge`), `audit-gap-check.sh`
+with `AUDIT_GAP_PIPELINE` (default `bridge`). Without the filter PMM traffic would
+fail equations 2–5 as `POSSIBLE_LOSS`, because that funnel has no enrichment or
+Kafka-publish stage.
+
+### PMM bridge funnel
+
+Run a second balance job with `ABC_PIPELINE=pmm`. The equations that apply there:
+
+| # | from → to | expected | tolerance |
+|---|---|---|---|
+| P1 | `MESSAGE_RECEIVED` → `MESSAGE_PARSED` | received − quarantined(`PARSE_ERROR`) | exact |
+| P2 | `MESSAGE_PARSED` → `API_CALL_COMPLETED` + `HDFS_WRITE_SKIPPED`(pre-check) | parsed − quarantined(`API_ERROR`) | exact |
+| P3 | `API_CALL_COMPLETED` → `HDFS_WRITE_COMPLETED` + `HDFS_WRITE_SKIPPED` | api_completed | exact |
+| P4 | HDFS written/skipped → `PROCESSING_COMPLETED` | hdfs_written | exact |
+
+`HDFS_WRITE_SKIPPED` with `metadata.reason = target-exists-before-api-call` is a
+redelivery that was resolved *without* a web-service call (see AUDIT.md, PMM flow);
+it counts as landed. There is no consumer stage (no equation 6) — the PMM files are
+read directly from the windowed HDFS tree. The current `abc-balance-check.sh` only
+implements the PMM+ equations; the PMM equations above are the contract for the
+follow-up job.
+
 ## Reading the verdict: the sign of the variance matters
 
 `variance = expected − actual`.

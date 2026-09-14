@@ -87,6 +87,14 @@ HOSTNAME_SAFE="$(hostname 2>/dev/null || echo unknown)"
 
 # --- Counts -----------------------------------------------------------------
 # One round trip. Reads the DEDUPED view: audit rows arrive at-least-once, and
+# The audit topic is shared by every bridge application. Each PMM-bridge event
+# carries metadata.pipeline='pmm'; PMM+ bridge events carry no key (COALESCE ->
+# 'bridge'). Without this filter the PMM traffic (no ENRICHMENT_*/KAFKA_PUBLISH_*
+# stages) would fail equations 2-5 as POSSIBLE_LOSS. The PMM funnel has its own
+# equations (docs/AUDIT_BALANCE_CONTROL.md, "PMM bridge") and is checked by a
+# separate run with ABC_PIPELINE=pmm.
+ABC_PIPELINE="${ABC_PIPELINE:-bridge}"
+
 # a replayed Spark batch would otherwise inflate counts into a false variance.
 #
 # COUNT(DISTINCT event_id) per stage: a redelivered message re-emits its stage
@@ -122,6 +130,7 @@ FROM ${DEDUPED_VIEW}
 WHERE event_dt >= '${PART_FROM}' AND event_dt <= '${PART_TO}'
   AND event_timestamp >= '${WINDOW_START}'
   AND event_timestamp <  '${WINDOW_END}'
+  AND COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${ABC_PIPELINE}'
 "
 
 echo "============================================"

@@ -58,6 +58,37 @@ A fully successful message therefore emits **six** bridge events: `MESSAGE_RECEI
 `MESSAGE_PARSED`, `ENRICHMENT_COMPLETED`, `HDFS_WRITE_COMPLETED`,
 `KAFKA_PUBLISH_COMPLETED`, `PROCESSING_COMPLETED`.
 
+### PMM bridge (mq-pmm-bridge)
+
+The PMM bridge shares the audit topic and event schema. Its funnel has no
+enrichment or Kafka-publish stage; the web-service call is audited as
+`API_CALL_*` and the terminal write is the windowed HDFS file. **Every event it
+emits carries `metadata.pipeline = "pmm"`** (PMM+ bridge events carry no
+`pipeline` key), which is how the balance and gap checks partition the topic.
+
+```
+PmmMqMessageListener ──(unsupported type / poison)──► MESSAGE_DISCARDED, ack
+   ▼
+PmmOrchestrator.process()
+   │ MESSAGE_RECEIVED            metadata: anchorSource (jmsTimestamp|receivedAt), window
+   ├─ extract (XPath) ── ok ──► MESSAGE_PARSED
+   │      └─ fail ─► quarantine errors/<eventId>.xml ─► MESSAGE_QUARANTINED (PARSE_ERROR), ack
+   ├─ target already exists? ─► HDFS_WRITE_SKIPPED (reason=target-exists-before-api-call)
+   │                              ─► PROCESSING_COMPLETED, ack   (no web-service call)
+   ├─ POST request ───── ok ──► API_CALL_COMPLETED   metadata: statusCode, responseBytes, durationMs
+   │      └─ fail ─────────► API_CALL_FAILED   (always)
+   │             ├ retryable ─► no ack → redelivery
+   │             └ permanent ─► MESSAGE_QUARANTINED (API_ERROR), ack
+   ├─ HDFS write ─────── ok ──► HDFS_WRITE_COMPLETED   metadata: hdfsPath, checksum, bytesWritten, window
+   │      └─ fail ─────────► HDFS_WRITE_FAILED, no ack → redelivery
+   ▼
+PROCESSING_COMPLETED, ack
+```
+
+A fully successful PMM message therefore emits **five** events: `MESSAGE_RECEIVED`,
+`MESSAGE_PARSED`, `API_CALL_COMPLETED`, `HDFS_WRITE_COMPLETED`, `PROCESSING_COMPLETED`.
+The extracted request values are never placed in audit events or logs.
+
 ### Consumer stages (end-to-end trail)
 
 The bridge's `PROCESSING_COMPLETED` only means "handed to Kafka" — it says nothing about
@@ -102,6 +133,8 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `PROCESSING_FAILED` | `BridgeOrchestrator` | Quarantine write failed after a parse failure, **or** an unexpected `RuntimeException` escaped the typed handlers (`UNEXPECTED_ERROR`) |
 | `MESSAGE_QUARANTINED` | `BridgeOrchestrator` | Unparseable payload durably preserved in the HDFS error dir; message acked |
 | `MESSAGE_DISCARDED` | `MqMessageListener` | Poison guard exceeded (`bridge.mq.max-delivery-attempts`) **or** unsupported (non-text) message type; message acked |
+| `API_CALL_COMPLETED` | `PmmOrchestrator` (PMM bridge only) | Web-service POST returned 2xx with a body; `metadata.statusCode`, `responseBytes`, `durationMs` |
+| `API_CALL_FAILED` | `PmmOrchestrator` (PMM bridge only) | POST failed after client-side retries; `metadata.retryable` says whether the message redelivers (true) or was quarantined with `errorCode=API_ERROR` (false) |
 | `RECOVERY_STARTED` / `RECOVERY_FAILED` | `RecoveryService` | Only when `bridge.recovery.enabled=true` (off by default; ledger-based) |
 | `CLAIM_CHECK_RESOLVED` | DStream consumer | HDFS payload fetched and checksum-verified |
 | `CLAIM_CHECK_SKIPPED` | DStream consumer | HDFS file missing → treated as already-processed duplicate |
@@ -123,7 +156,7 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `eventType` | One of the catalog above | never null |
 | `description` | Human-readable stage summary (e.g. HDFS path, Kafka offset) | usually set |
 | `errorMessage` | Failure detail on `*_FAILED` / discard / quarantine events | null on success events |
-| `metadata` | Map of extras — used by discard events (`deliveryCount`, `maxDeliveryAttempts`, `sourceQueue`, `correlationId`, `messageClass`) | empty map when unused |
+| `metadata` | Map of extras — used by discard events (`deliveryCount`, `maxDeliveryAttempts`, `sourceQueue`, `correlationId`, `messageClass`), by the balance check (`errorCode`, `hdfsPath`) and, on **every** PMM-bridge event, `pipeline: "pmm"` (absent on PMM+ events) | empty map when unused |
 | `timestamp` | Event creation time, serialized as an **ISO-8601 UTC string** (e.g. `2026-07-21T12:34:56.789Z`) — never an epoch number. The Hive consumer's `event_dt` partitioning and the gap check's cutoff comparison depend on this; the wire format is pinned by `KafkaAuditPublisherTest`/`LoggingAuditPublisherTest`. | never null |
 
 ## Publishers

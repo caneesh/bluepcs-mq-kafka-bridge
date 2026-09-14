@@ -1,0 +1,72 @@
+# systemd unit for running the MQ-PMM Bridge 24/7 on an edge node.
+#
+# SECOND bridge JVM: it has its own deploy directory and its own .env (never the
+# PMM+ bridge's — the PMM_* variables identify this pipeline: queue, HDFS root,
+# API URL, template, XPaths) and listens on PMM_SERVER_PORT (default 8081).
+#
+# Install:
+#   1. Adjust the paths, user, and profile below for the target host.
+#   2. sudo cp deploy/mq-pmm-bridge.service /etc/systemd/system/
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now mq-pmm-bridge
+#
+# Operate:
+#   systemctl status mq-pmm-bridge        # process state + last log lines
+#   journalctl -u mq-pmm-bridge -f        # follow logs
+#   sudo systemctl restart mq-pmm-bridge  # manual restart (e.g. after config change)
+#
+# The unit restarts the JVM automatically on crash/OOM and starts it on boot.
+# Broker outages do NOT need a restart: the JMS listener container reconnects
+# to MQ on its own. Restart=always covers the process dying, not MQ being down.
+
+[Unit]
+Description=BluePCS MQ-PMM Bridge (canonical XML feed)
+Documentation=https://github.com/caneesh/bluepcs-mq-kafka-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Service account that owns the keytabs/truststores referenced by the profile
+User=bluepcsapp
+WorkingDirectory=/prod/gold/integration/product/bluepcs-pmm-bridge
+
+# All secrets (KAFKA_TRUSTSTORE_PASSWORD, OAUTH_CLIENT_ID/SECRET, API_PASSWORD,
+# MQ_PASSWORD if the QM requires MQCSP auth, ...) live in the gitignored .env
+# file, mode 600.
+EnvironmentFile=/prod/gold/integration/product/bluepcs-pmm-bridge/.env
+
+# listener-enabled=true is what makes this a 24/7 consumer. Without it the app
+# runs healthy but consumes nothing (safe-start mode is for manual bring-up only).
+#
+# OOM crash-fast: a JVM that hits OutOfMemoryError must EXIT (systemd restarts a
+# fresh one) rather than limp along as a zombie with dead listener threads. The
+# heap dump dir must exist and be writable by the service user.
+#
+# PROFILE: must be 'prod' on a production host. Running 'test-env' here silently
+# takes the test MQ/Kafka/HDFS defaults for anything the .env does not override,
+# turns on DEBUG logging, and — because only application-prod.yml sets
+# logging.file.name — sends the application log AND the audit fallback stream to
+# ${java.io.tmpdir}/spring.log*.
+ExecStart=/usr/bin/java \
+    -XX:+ExitOnOutOfMemoryError \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/prod/gold/integration/product/bluepcs-pmm-bridge/heapdumps \
+    -jar /prod/gold/integration/product/bluepcs-pmm-bridge/mq-pmm-bridge/target/mq-pmm-bridge-1.0.0-SNAPSHOT.jar \
+    --spring.profiles.active=prod \
+    --bridge.mq.listener-enabled=true
+
+# Restart on any exit (crash, OOM kill, unexpected System.exit)...
+Restart=always
+RestartSec=10
+# ...but stop retrying if it dies 5 times within 10 minutes — that is a broken
+# config or environment, and flapping only floods MQ/STS with connection attempts.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Give in-flight message processing a chance to finish on shutdown
+TimeoutStopSec=60
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

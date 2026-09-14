@@ -75,6 +75,11 @@ ERR_FILE="/tmp/audit-gap-check.$$.err"
 trap 'rm -f "$ERR_FILE"' EXIT
 
 # ISO-8601 UTC cutoffs (see timestamp-contract note in the header)
+# Shared audit topic: PMM-bridge rows carry metadata.pipeline='pmm', PMM+ rows no
+# key. Check 1 (Hive load gaps) only makes sense for the PMM+ funnel; run with
+# AUDIT_GAP_PIPELINE=pmm for the PMM bridge's stuck/quarantined checks.
+AUDIT_GAP_PIPELINE="${AUDIT_GAP_PIPELINE:-bridge}"
+
 GAP_CUTOFF="$(date -u -d "-${AUDIT_GAP_THRESHOLD_MINUTES} minutes" '+%Y-%m-%dT%H:%M:%S')"
 GRACE_CUTOFF="$(date -u -d "-${AUDIT_GAP_GRACE_MINUTES} minutes" '+%Y-%m-%dT%H:%M:%S')"
 
@@ -86,6 +91,7 @@ SELECT event_id,
        max(CASE WHEN event_type = 'CLAIM_CHECK_SKIPPED'  THEN 1 ELSE 0 END)        AS was_skipped
 FROM ${AUDIT_GAP_TABLE}
 WHERE event_dt >= date_sub(current_date, ${AUDIT_GAP_LOOKBACK_DAYS})
+  AND COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${AUDIT_GAP_PIPELINE}'
 GROUP BY event_id
 HAVING max(CASE WHEN event_type = 'PROCESSING_COMPLETED' THEN 1 ELSE 0 END) = 1
    AND max(CASE WHEN event_type = 'HIVE_LOAD_COMPLETED'  THEN 1 ELSE 0 END) = 0
@@ -103,6 +109,7 @@ SELECT event_id,
        collect_set(event_type) AS events
 FROM ${AUDIT_GAP_TABLE}
 WHERE event_dt >= date_sub(current_date, ${AUDIT_GAP_LOOKBACK_DAYS})
+  AND COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${AUDIT_GAP_PIPELINE}'
   AND event_id IS NOT NULL
 GROUP BY event_id
 HAVING max(CASE WHEN event_type = 'MESSAGE_RECEIVED' THEN 1 ELSE 0 END) = 1
@@ -117,6 +124,7 @@ QUERY_QUARANTINED="
 SELECT DISTINCT event_id
 FROM ${AUDIT_GAP_TABLE}
 WHERE event_dt >= date_sub(current_date, ${AUDIT_GAP_LOOKBACK_DAYS})
+  AND COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${AUDIT_GAP_PIPELINE}'
   AND event_type = 'MESSAGE_QUARANTINED'
 LIMIT ${AUDIT_GAP_RESULT_LIMIT}
 "
