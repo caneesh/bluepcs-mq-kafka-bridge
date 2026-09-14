@@ -25,7 +25,7 @@ import org.springframework.context.ApplicationContext;
  * hooks, which is the one way out when a hook itself is what is stuck. The exit code is
  * preserved either way, so schedulers still route on it.
  */
-final class DiagnosticJvmExit {
+public final class DiagnosticJvmExit {
 
     private static final Logger logger = LoggerFactory.getLogger(DiagnosticJvmExit.class);
 
@@ -35,7 +35,7 @@ final class DiagnosticJvmExit {
     private DiagnosticJvmExit() {
     }
 
-    static void exit(ApplicationContext applicationContext, int exitCode) {
+    public static void exit(ApplicationContext applicationContext, int exitCode) {
         startWatchdog(exitCode);
         try {
             SpringApplication.exit(applicationContext, () -> exitCode);
