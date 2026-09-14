@@ -381,8 +381,6 @@ not Kerberos.</p>
       <td><a href="./AUDIT.md">AUDIT.md</a></td></tr>
   <tr><td>ISO-8601 string timestamps on the wire</td><td>Hive partitioning + lexicographic HQL comparison; pinned by test after a real regression</td>
       <td><a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">KafkaAuditPublisherTest</a></td></tr>
-  <tr><td>Ledger/recovery left dormant</td><td>Superseded by idempotency + quarantine + audit; kept only as scaffolding, off by default</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/ledger/LedgerState.java">LedgerState</a></td></tr>
   <tr><td>audit-hive-consumer outside the root pom</td><td>Keeps the bridge build free of the Spark dependency tree</td>
       <td><a data-code href="../audit-hive-consumer/pom.xml">audit-hive-consumer/pom.xml</a></td></tr>
 </table></div>

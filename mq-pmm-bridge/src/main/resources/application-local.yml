@@ -6,8 +6,7 @@ bridge:
   hdfs:
     local-base-path: ./data/hdfs
     base-path: ./data/hdfs/pmm
-  ledger:
-    storage-path: ./data/ledger
+
   audit:
     publisher: log
   pmm:

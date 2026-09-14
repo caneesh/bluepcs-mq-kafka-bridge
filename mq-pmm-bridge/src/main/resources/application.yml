@@ -144,14 +144,6 @@ bridge:
     backlog-age-minutes: ${MONITOR_BACKLOG_AGE_MINUTES:30}
     backlog-max-files: ${MONITOR_BACKLOG_MAX_FILES:0}
 
-  # Ledger/recovery/reconciliation are dormant in this bridge (kept for bridge-core defaults)
-  recovery:
-    enabled: false
-  reconciliation:
-    enabled: false
-  ledger:
-    storage-path: ${LEDGER_PATH:/data/pmm/ledger}
-
 management:
   endpoints:
     web:

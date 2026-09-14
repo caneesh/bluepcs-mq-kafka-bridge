@@ -145,8 +145,6 @@ The MQ listener is **disabled by default** for safety. Enable explicitly:
 |----------|---------|-------------|
 | `bridge.validate-only` | `false` | Run validation and exit |
 | `bridge.mq.listener-enabled` | `false` | Enable MQ message consumption |
-| `bridge.reconciliation.enabled` | `false` | Enable reconciliation (requires a ledger: `file-ledger` profile) |
-| `bridge.recovery.enabled` | `false` | Enable recovery processing |
 
 See `config/` directory for full configuration templates.
 
@@ -192,13 +190,10 @@ bridge-core/                     # shared library (no application class, no appl
   ├── core/          # Core utilities (event ID, digest, secrets)
   ├── hdfs/          # HDFS file operations
   ├── health/        # Actuator health indicators
-  ├── ledger/        # Ledger repository (file-based, optional; used only by recovery/reconciliation)
-  ├── local/         # Local-profile implementations (token, HDFS, ledger)
+  ├── local/         # Local-profile implementations (token, HDFS)
   ├── model/         # Generic value objects (MqMessage, HdfsWriteResult)
   ├── mq/            # MqProcessingException
   ├── orchestrator/  # ProcessingResult
-  ├── reconciliation/# Reconciliation (optional)
-  ├── recovery/      # Recovery processing (optional)
   └── security/      # STS/JWT token provider
   src/test/java/com/hcsc/bridge/mock/   # reusable test fakes (published as a test-jar)
 mq-kafka-bridge/                 # PMM+ JSON bridge application (this README)

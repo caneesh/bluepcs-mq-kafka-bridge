@@ -135,12 +135,11 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `MESSAGE_DISCARDED` | `MqMessageListener` | Poison guard exceeded (`bridge.mq.max-delivery-attempts`) **or** unsupported (non-text) message type; message acked |
 | `API_CALL_COMPLETED` | `PmmOrchestrator` (PMM bridge only) | Web-service POST returned 2xx with a body; `metadata.statusCode`, `responseBytes`, `durationMs` |
 | `API_CALL_FAILED` | `PmmOrchestrator` (PMM bridge only) | POST failed after client-side retries; `metadata.retryable` says whether the message redelivers (true) or was quarantined with `errorCode=API_ERROR` (false) |
-| `RECOVERY_STARTED` / `RECOVERY_FAILED` | `RecoveryService` | Only when `bridge.recovery.enabled=true` (off by default; ledger-based) |
 | `CLAIM_CHECK_RESOLVED` | DStream consumer | HDFS payload fetched and checksum-verified |
 | `CLAIM_CHECK_SKIPPED` | DStream consumer | HDFS file missing → treated as already-processed duplicate |
 | `HIVE_LOAD_COMPLETED` | DStream consumer | Batch containing this eventId loaded into the Hive product tables (emitted before offset commit) |
 | `HIVE_LOAD_FAILED` | DStream consumer | Batch load failed for this eventId's batch; batch will retry |
-| `DUPLICATE_DETECTED`, `RECOVERY_COMPLETED`, `RECONCILIATION_*` | — | **Reserved, never emitted today.** Consumers must tolerate them but should not expect them. |
+| `DUPLICATE_DETECTED` | — | **Reserved, never emitted today.** Consumers must tolerate it but should not expect it. Former `RECOVERY_*` / `RECONCILIATION_*` types were removed with the dormant ledger subsystem; rows carrying them can only predate that removal. |
 
 ## Event schema
 
@@ -239,9 +238,9 @@ The DStream job's consumer-stage instrumentation is the drop-in reference
 
 ## Known limitations (as of this writing)
 
-- The reserved event types (`DUPLICATE_DETECTED`, `RECONCILIATION_*`, `RECOVERY_COMPLETED`)
-  are declared but unused; the ledger-based recovery/reconciliation subsystems that would
-  emit them are disabled by default and not wired to the main pipeline.
+- `DUPLICATE_DETECTED` is declared but unused. The ledger-based recovery/reconciliation
+  subsystem (and its `RECOVERY_*` / `RECONCILIATION_*` event types) has been removed; the
+  audit stream plus idempotent HDFS writes is the only bookkeeping.
 - Audit is best-effort by design: both the bridge publisher and the consumer emitter drop
   events during a 60-second failure cooldown. Counts derived from this stream can
   under-report; corroborate incidents against MQ queue statistics

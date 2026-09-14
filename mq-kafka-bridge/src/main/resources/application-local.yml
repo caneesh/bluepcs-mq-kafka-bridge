@@ -5,8 +5,6 @@ bridge:
   hdfs:
     local-base-path: ./data/hdfs
     base-path: ./data/hdfs
-  ledger:
-    storage-path: ./data/ledger
 
 logging:
   level:

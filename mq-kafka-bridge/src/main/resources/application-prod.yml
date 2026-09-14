@@ -134,20 +134,6 @@ bridge:
   logging:
     directory: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}
 
-  # ============================================================================
-  # Recovery Configuration
-  # ============================================================================
-  recovery:
-    enabled: false
-    max-retries: 5
-    interval-ms: 120000
-
-  # ============================================================================
-  # Reconciliation Configuration (requires LedgerRepository - disabled for MVP)
-  # ============================================================================
-  reconciliation:
-    enabled: false
-
 # NOTE: no spring.kafka block here. The custom KafkaConfiguration beans (bridge.kafka.*)
 # replace Spring Boot's auto-configured KafkaTemplate in all !local profiles, so a
 # parallel spring.kafka block is inert and silently drifts from the authoritative config.

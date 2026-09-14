@@ -29,9 +29,6 @@ public class BridgeProperties {
     @NestedConfigurationProperty
     private LoggingProperties logging = new LoggingProperties();
 
-    @NestedConfigurationProperty
-    private RecoveryProperties recovery = new RecoveryProperties();
-
     // Getters and setters
 
     public MqProperties getMq() {
@@ -88,14 +85,6 @@ public class BridgeProperties {
 
     public void setLogging(LoggingProperties logging) {
         this.logging = logging;
-    }
-
-    public RecoveryProperties getRecovery() {
-        return recovery;
-    }
-
-    public void setRecovery(RecoveryProperties recovery) {
-        this.recovery = recovery;
     }
 
     // ============================================================================
@@ -699,44 +688,6 @@ public class BridgeProperties {
     }
 
     // ============================================================================
-    // Recovery Properties
-    // ============================================================================
-    public static class RecoveryProperties {
-
-        // Recovery must be an explicit opt-in per environment
-        private boolean enabled = false;
-
-        
-        private int maxRetries = 5;
-
-        
-        private long intervalMs = 120000;
-
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        public int getMaxRetries() {
-            return maxRetries;
-        }
-
-        public void setMaxRetries(int maxRetries) {
-            this.maxRetries = maxRetries;
-        }
-
-        public long getIntervalMs() {
-            return intervalMs;
-        }
-
-        public void setIntervalMs(long intervalMs) {
-            this.intervalMs = intervalMs;
-        }
-    }
-
     // ============================================================================
     // SSL Properties (shared)
     // ============================================================================

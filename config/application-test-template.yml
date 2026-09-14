@@ -56,9 +56,6 @@ bridge:
   audit:
     enabled: true
 
-  recovery:
-    enabled: false
-
 spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}

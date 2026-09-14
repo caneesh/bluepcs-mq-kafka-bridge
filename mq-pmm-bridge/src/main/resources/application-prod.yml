@@ -84,11 +84,6 @@ bridge:
     enabled: true
     publisher: ${AUDIT_PUBLISHER:kafka}
 
-  recovery:
-    enabled: false
-  reconciliation:
-    enabled: false
-
 hadoop:
   conf-dir: ${HADOOP_CONF_DIR:/etc/hadoop/conf}
 

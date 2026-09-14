@@ -18,11 +18,6 @@ bridge:
   api:
     base-url: http://localhost:8080
     timeout-seconds: 5
-  ledger:
-    storage-path: /tmp/test/ledger
-  recovery:
-    max-retries: 3
-    interval-ms: 60000
 
 logging:
   level:

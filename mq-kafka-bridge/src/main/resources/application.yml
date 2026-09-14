@@ -64,10 +64,6 @@ bridge:
       principal: ${HDFS_KERBEROS_PRINCIPAL:}
       keytab: ${HDFS_KERBEROS_KEYTAB:}
 
-  # Ledger file storage (legacy/file-ledger profile only)
-  ledger:
-    storage-path: ${LEDGER_PATH:/data/bridge/ledger}
-
   # REST API Configuration
   api:
     base-url: ${API_BASE_URL:http://localhost:8080}
@@ -112,16 +108,6 @@ bridge:
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
       truststore-location: ${MQ_SSL_TRUSTSTORE_LOCATION:}
       truststore-password: ${MQ_SSL_TRUSTSTORE_PASSWORD:}
-
-  # Recovery Configuration
-  recovery:
-    enabled: ${RECOVERY_ENABLED:false}
-    max-retries: ${RECOVERY_MAX_RETRIES:3}
-    interval-ms: ${RECOVERY_INTERVAL_MS:60000}
-
-  # Reconciliation Configuration (requires LedgerRepository)
-  reconciliation:
-    enabled: ${RECONCILIATION_ENABLED:false}
 
   # Monitor Mode (read-only checks for Control-M / external schedulers; scripts/monitor.sh)
   monitor:
