@@ -121,7 +121,7 @@ bridge:
     directory: ${LOG_DIRECTORY:/var/log/bridge}
 
   # ---------------------------------------------------------------------------
-  # Recovery Configuration (optional - requires 'hbase' profile)
+  # Recovery Configuration (optional - needs the file-ledger profile; off by default)
   # ---------------------------------------------------------------------------
   recovery:
     enabled: false

@@ -95,16 +95,6 @@ bridge:
       resourcemanager-principal: ${HDFS_RESOURCEMANAGER_PRINCIPAL:rm/_HOST@ADHCSCINT.NET}
 
   # ============================================================================
-  # HBase Configuration (opt-in via 'hbase' profile)
-  # Source: cv_hv_* properties from Talend
-  # ============================================================================
-  hbase:
-    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:pwausl4slmn01.app.hcscint.net,pwausl4slmn02.app.hcscint.net,pwausl4slmn03.app.hcscint.net}
-    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
-    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
-    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
-
-  # ============================================================================
   # Marketing Plan API Configuration
   # Source: cv_planitfeb_api_url, cv_security_token_* from Talend
   # ============================================================================
@@ -176,7 +166,6 @@ logging:
     com.hcsc.bridge: INFO
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
-    org.apache.hbase: WARN
     com.ibm.mq: WARN
   file:
     name: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}/bridge-application.log

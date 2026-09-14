@@ -1,9 +1,8 @@
 # Development Environment Profile
-# Requires: Kafka, HBase, MQ, HDFS, REST API endpoints
+# Requires: Kafka, MQ, HDFS, REST API endpoints
 #
 # Deployment team must provide:
 # - KAFKA_BOOTSTRAP_SERVERS
-# - HBASE_ZOOKEEPER_QUORUM
 # - HDFS_NAMENODE, HDFS_BASE_PATH
 # - MQ_HOST, MQ_PORT, MQ_QUEUE_MANAGER, MQ_CHANNEL, MQ_USERNAME, MQ_PASSWORD
 # - API_BASE_URL

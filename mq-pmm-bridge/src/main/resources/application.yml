@@ -151,11 +151,6 @@ bridge:
     enabled: false
   ledger:
     storage-path: ${LEDGER_PATH:/data/pmm/ledger}
-  hbase:
-    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:localhost}
-    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
-    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
-    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
 
 management:
   endpoints:
@@ -171,4 +166,3 @@ logging:
     com.hcsc.bridge: ${LOG_LEVEL:INFO}
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
-    org.apache.hbase: WARN

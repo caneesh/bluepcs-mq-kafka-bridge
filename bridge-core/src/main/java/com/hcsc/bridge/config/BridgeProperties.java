@@ -18,9 +18,6 @@ public class BridgeProperties {
     private HdfsProperties hdfs = new HdfsProperties();
 
     @NestedConfigurationProperty
-    private HBaseProperties hbase = new HBaseProperties();
-
-    @NestedConfigurationProperty
     private ApiProperties api = new ApiProperties();
 
     @NestedConfigurationProperty
@@ -59,14 +56,6 @@ public class BridgeProperties {
 
     public void setHdfs(HdfsProperties hdfs) {
         this.hdfs = hdfs;
-    }
-
-    public HBaseProperties getHbase() {
-        return hbase;
-    }
-
-    public void setHbase(HBaseProperties hbase) {
-        this.hbase = hbase;
     }
 
     public ApiProperties getApi() {
@@ -551,52 +540,6 @@ public class BridgeProperties {
     }
 
     // ============================================================================
-    // HBase Properties
-    // ============================================================================
-    public static class HBaseProperties {
-
-        private String zookeeperQuorum;
-
-        
-        private int zookeeperPort = 2181;
-
-        private String znodeParent = "/hbase";
-
-        private String ledgerTable = "bridge_ledger";
-
-        public String getZookeeperQuorum() {
-            return zookeeperQuorum;
-        }
-
-        public void setZookeeperQuorum(String zookeeperQuorum) {
-            this.zookeeperQuorum = zookeeperQuorum;
-        }
-
-        public int getZookeeperPort() {
-            return zookeeperPort;
-        }
-
-        public void setZookeeperPort(int zookeeperPort) {
-            this.zookeeperPort = zookeeperPort;
-        }
-
-        public String getZnodeParent() {
-            return znodeParent;
-        }
-
-        public void setZnodeParent(String znodeParent) {
-            this.znodeParent = znodeParent;
-        }
-
-        public String getLedgerTable() {
-            return ledgerTable;
-        }
-
-        public void setLedgerTable(String ledgerTable) {
-            this.ledgerTable = ledgerTable;
-        }
-    }
-
     // ============================================================================
     // API Properties
     // ============================================================================

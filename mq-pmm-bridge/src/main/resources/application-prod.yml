@@ -97,7 +97,6 @@ logging:
     com.hcsc.bridge: INFO
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
-    org.apache.hbase: WARN
     com.ibm.mq: WARN
   file:
     name: ${LOG_DIRECTORY:/datalakedata/prod/gold/integration/logs/product/bluepcs/talend}/pmm-bridge-application.log

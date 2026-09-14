@@ -96,7 +96,6 @@ java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar \
 | `local` | Local development with mocks, no external dependencies |
 | `test-env` | Lower/UAT environment with test defaults |
 | `prod` | Production environment |
-| `hbase` | Enables HBase ledger (optional, for recovery features) |
 
 ## Startup Modes
 
@@ -146,7 +145,7 @@ The MQ listener is **disabled by default** for safety. Enable explicitly:
 |----------|---------|-------------|
 | `bridge.validate-only` | `false` | Run validation and exit |
 | `bridge.mq.listener-enabled` | `false` | Enable MQ message consumption |
-| `bridge.reconciliation.enabled` | `false` | Enable reconciliation (requires HBase) |
+| `bridge.reconciliation.enabled` | `false` | Enable reconciliation (requires a ledger: `file-ledger` profile) |
 | `bridge.recovery.enabled` | `false` | Enable recovery processing |
 
 See `config/` directory for full configuration templates.
@@ -193,7 +192,7 @@ bridge-core/                     # shared library (no application class, no appl
   ├── core/          # Core utilities (event ID, digest, secrets)
   ├── hdfs/          # HDFS file operations
   ├── health/        # Actuator health indicators
-  ├── ledger/        # Ledger repository (HBase, optional)
+  ├── ledger/        # Ledger repository (file-based, optional; used only by recovery/reconciliation)
   ├── local/         # Local-profile implementations (token, HDFS, ledger)
   ├── model/         # Generic value objects (MqMessage, HdfsWriteResult)
   ├── mq/            # MqProcessingException

@@ -64,13 +64,6 @@ bridge:
       principal: ${HDFS_KERBEROS_PRINCIPAL:}
       keytab: ${HDFS_KERBEROS_KEYTAB:}
 
-  # HBase Ledger Configuration
-  hbase:
-    zookeeper-quorum: ${HBASE_ZOOKEEPER_QUORUM:localhost}
-    zookeeper-port: ${HBASE_ZOOKEEPER_PORT:2181}
-    znode-parent: ${HBASE_ZNODE_PARENT:/hbase}
-    ledger-table: ${HBASE_LEDGER_TABLE:bridge_ledger}
-
   # Ledger file storage (legacy/file-ledger profile only)
   ledger:
     storage-path: ${LEDGER_PATH:/data/bridge/ledger}
@@ -153,4 +146,3 @@ logging:
     com.hcsc.bridge: ${LOG_LEVEL:INFO}
     org.apache.kafka: WARN
     org.apache.hadoop: WARN
-    org.apache.hbase: WARN

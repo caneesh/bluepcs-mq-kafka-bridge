@@ -245,8 +245,7 @@ the LB isn't forwarding port 8020.
 | Variable | Default | Only change if... |
 |---|---|---|
 | `RECOVERY_ENABLED` | `false` | you want the scheduled recovery loop (needs a ledger) |
-| `RECONCILIATION_ENABLED` | `false` | you want reconciliation (needs HBase profile) |
-| `HBASE_ZOOKEEPER_QUORUM` etc. | test cluster hosts | running with the `hbase` profile for the ledger |
+| `RECONCILIATION_ENABLED` | `false` | you want reconciliation (needs the `file-ledger` profile) |
 | `AUDIT_HIVE_TABLE` | `bluepcs_mq_listener` | audit table name changes |
 | `LOG_DIRECTORY` | `/datalakedm/prod/gold/integration/logs/product/bluepcs/talend` | logs should go elsewhere (dir must be writable) |
 
