@@ -26,18 +26,20 @@ class WindowedBacklogScannerTest {
     private HdfsFileOperations hdfs;
 
     @Test
-    @DisplayName("lists only the current and previous window directories")
-    void scansBoundedWindows() throws Exception {
+    @DisplayName("reports only in-flight temp files from the current and previous window; landed files are read in place")
+    void reportsOnlyTempFilesInBoundedWindows() throws Exception {
         Clock clock = Clock.fixed(Instant.parse("2026-09-13T00:10:00Z"), ZoneOffset.UTC);
         WindowedPathResolver resolver = new WindowedPathResolver("/data/pmm", "", 4, "UTC", "yyyy-MM-dd", ".xml", clock);
-        HdfsFileInfo a = new HdfsFileInfo("/data/pmm/2026-09-13/00/a.xml", 1L);
-        HdfsFileInfo b = new HdfsFileInfo("/data/pmm/2026-09-12/20/b.xml", 2L);
-        when(hdfs.listFiles("/data/pmm/2026-09-13/00")).thenReturn(List.of(a));
-        when(hdfs.listFiles("/data/pmm/2026-09-12/20")).thenReturn(List.of(b));
+        HdfsFileInfo landedOld = new HdfsFileInfo("/data/pmm/2026-09-13/00/a.xml", 1L);
+        HdfsFileInfo inFlight = new HdfsFileInfo("/data/pmm/2026-09-13/00/b.0f3a.xml.tmp", 2L);
+        HdfsFileInfo landedPrevious = new HdfsFileInfo("/data/pmm/2026-09-12/20/c.xml", 3L);
+        HdfsFileInfo orphanPrevious = new HdfsFileInfo("/data/pmm/2026-09-12/20/d.77aa.xml.tmp", 4L);
+        when(hdfs.listFiles("/data/pmm/2026-09-13/00")).thenReturn(List.of(landedOld, inFlight));
+        when(hdfs.listFiles("/data/pmm/2026-09-12/20")).thenReturn(List.of(landedPrevious, orphanPrevious));
 
-        List<HdfsFileInfo> files = new WindowedBacklogScanner(hdfs, resolver, 2).scan();
+        List<HdfsFileInfo> files = new WindowedBacklogScanner(hdfs, resolver, 2, ".tmp").scan();
 
-        assertThat(files).containsExactly(a, b);
+        assertThat(files).containsExactly(inFlight, orphanPrevious);
         verify(hdfs).listFiles("/data/pmm/2026-09-13/00");
         verify(hdfs).listFiles("/data/pmm/2026-09-12/20");
         verifyNoMoreInteractions(hdfs);

@@ -91,24 +91,59 @@ run_or_echo() {
     fi
 }
 
-# Date directories directly under $1 whose name parses as yyyy-MM-dd. A failed
-# listing aborts the run: silently treating it as "nothing to do" would hide an
-# expired ticket or a namenode outage behind a clean exit code.
+# Date directories directly under $1 whose name parses as yyyy-MM-dd, emitted as
+# "epoch<TAB>path". A FAILED listing (expired ticket, namenode down, ACL loss) must
+# abort the run with the real error: silently treating it as "no date directories"
+# would print "0 archived, 0 deleted ... Done" forever while retention quietly
+# stops. The function runs in a process-substitution subshell, where `exit` cannot
+# reach the parent, so it signals failure through a marker file that the parent
+# checks after each pass (same pattern as hdfs-landing-cleanup.sh).
+LS_ERR_FILE=$(mktemp)
+trap 'rm -f "$LS_ERR_FILE" "${LS_ERR_FILE}.failed"' EXIT
+
 list_date_dirs() {
     local listing
-    if ! listing=$(hdfs dfs -ls "$1" 2>/dev/null); then
-        if hdfs dfs -test -d "$1"; then
-            echo "ERROR: cannot list $1" >&2
-            exit 3
+    if ! listing=$(hdfs dfs -ls "$1" 2>"$LS_ERR_FILE"); then
+        if hdfs dfs -test -d "$1" 2>/dev/null; then
+            touch "${LS_ERR_FILE}.failed"
         fi
+        # A missing directory (no traffic yet) is legitimately empty
         return 0
     fi
-    echo "$listing" | awk '$1 ~ /^d/ {print $NF}' | while read -r path; do
+    printf '%s\n' "$listing" | awk '$1 ~ /^d/ {print $NF}' | while read -r path; do
         name="${path##*/}"
         if [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "$name" +%s >/dev/null 2>&1; then
-            echo "$(date -u -d "$name" +%s)	$path"
+            printf '%s\t%s\n' "$(date -u -d "$name" +%s)" "$path"
         fi
     done
+}
+
+abort_if_listing_failed() {
+    if [ -f "${LS_ERR_FILE}.failed" ]; then
+        echo "ERROR: HDFS listing of $1 failed — aborting (nothing was silently skipped):" >&2
+        cat "$LS_ERR_FILE" >&2
+        exit 3
+    fi
+}
+
+# Per-directory failures (ACL, archive name collision) are counted and reported at
+# the end instead of aborting mid-pass under set -e — or, worse, being swallowed:
+# under set -e only the LAST command of `a && b` is checked, so a bare
+# `run_or_echo hdfs dfs -mv ... && n=$((n+1))` would hide a failed move.
+op_failures=0
+move_or_count() {
+    run_or_echo hdfs dfs -mv "$1" "$2" || {
+        echo "WARN: failed to archive: $1" >&2
+        op_failures=$((op_failures + 1))
+        return 1
+    }
+}
+remove_or_count() {
+    run_or_echo hdfs dfs -rm "$@" || {
+        echo "WARN: failed to delete: ${*: -1}" >&2
+        op_failures=$((op_failures + 1))
+        return 1
+    }
 }
 
 archived=0; deleted=0; tmp_removed=0
@@ -121,36 +156,50 @@ while IFS=$'\t' read -r epoch path; do
     [ -z "$path" ] && continue
     if [ "$epoch" -lt "$LANDING_CUTOFF" ]; then
         echo "archive: ${path} -> ${ARCHIVE}/"
-        run_or_echo hdfs dfs -mv "$path" "${ARCHIVE}/" && archived=$((archived + 1))
+        if move_or_count "$path" "${ARCHIVE}/"; then archived=$((archived + 1)); fi
     fi
 done < <(list_date_dirs "$BASE")
+abort_if_listing_failed "$BASE"
 
 # 2. Archive -> delete: date directories older than the archive retention.
 while IFS=$'\t' read -r epoch path; do
     [ -z "$path" ] && continue
     if [ "$epoch" -lt "$ARCHIVE_CUTOFF" ]; then
         echo "delete: ${path}"
-        run_or_echo hdfs dfs -rm -r "$path" && deleted=$((deleted + 1))
+        if remove_or_count -r "$path"; then deleted=$((deleted + 1)); fi
     fi
 done < <(list_date_dirs "$ARCHIVE")
+abort_if_listing_failed "$ARCHIVE"
 
 # 3. Orphaned temp files older than TMP_DAYS under the remaining date directories.
 #    Recursive listing is bounded by the retention window (at most LANDING_DAYS
-#    date directories x windows per day). errors/ and archive/ are excluded.
+#    date directories x windows per day). errors/ and archive/ are excluded because
+#    only yyyy-MM-dd directories are walked. hdfs dfs -ls prints the cluster's
+#    local date/time; -u keeps the comparison in the same frame as TMP_CUTOFF only
+#    when the cluster runs UTC, so a listing failure here is fatal but a timezone
+#    skew of a few hours on a 1-day threshold is tolerated.
 while IFS=$'\t' read -r epoch path; do
     [ -z "$path" ] && continue
+    if ! recursive=$(hdfs dfs -ls -R "$path" 2>"$LS_ERR_FILE"); then
+        echo "ERROR: HDFS recursive listing of $path failed — aborting:" >&2
+        cat "$LS_ERR_FILE" >&2
+        exit 3
+    fi
     while read -r perms _ _ _ _ d t file; do
-        case "$file" in
-            *.xml.tmp) ;;
-            *) continue ;;
-        esac
-        mtime=$(date -d "$d $t" +%s 2>/dev/null || echo "$NOW_EPOCH")
+        case "$perms" in d*) continue ;; esac
+        case "$file" in *.xml.tmp) ;; *) continue ;; esac
+        mtime=$(date -u -d "$d $t" +%s 2>/dev/null || echo "$NOW_EPOCH")
         if [ "$mtime" -lt "$TMP_CUTOFF" ]; then
             echo "orphan temp: ${file}"
-            run_or_echo hdfs dfs -rm "$file" && tmp_removed=$((tmp_removed + 1))
+            if remove_or_count "$file"; then tmp_removed=$((tmp_removed + 1)); fi
         fi
-    done < <(hdfs dfs -ls -R "$path" 2>/dev/null | awk '$1 !~ /^d/')
+    done <<< "$recursive"
 done < <(list_date_dirs "$BASE")
+abort_if_listing_failed "$BASE"
 
 echo ""
-echo "Done: ${archived} date dir(s) archived, ${deleted} deleted, ${tmp_removed} orphan temp file(s) removed"
+echo "Done: ${archived} date dir(s) archived, ${deleted} deleted, ${tmp_removed} orphan temp file(s) removed, op_failures=${op_failures}, dry_run=${DRY_RUN}"
+if [ "$op_failures" -gt 0 ]; then
+    echo "WARNING: ${op_failures} HDFS operation(s) failed — see WARN lines above"
+    exit 1
+fi

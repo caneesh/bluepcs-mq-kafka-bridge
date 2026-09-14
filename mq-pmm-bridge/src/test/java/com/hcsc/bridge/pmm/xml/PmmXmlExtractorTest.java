@@ -54,6 +54,17 @@ class PmmXmlExtractorTest {
         }
 
         @Test
+        @DisplayName("fails when an expression matches more than one node, and accepts an indexed one")
+        void ambiguousMatch() {
+            String xml = "<M><P><Id>1</Id></P><P><Id>2</Id></P></M>";
+
+            assertThatThrownBy(() -> extractor("//Id", "//Id").extract(xml, "MSG-1"))
+                    .isInstanceOf(PmmXmlException.class)
+                    .hasMessageContaining("matched 2 nodes");
+            assertThat(extractor("(//Id)[1]", "(//Id)[2]").extract(xml, "MSG-1").getValue2()).isEqualTo("2");
+        }
+
+        @Test
         @DisplayName("fails when an expression matches nothing")
         void missingNode() {
             assertThatThrownBy(() -> extractor("/PmmMessage/Nope", "/PmmMessage/Product/EffectiveDate")

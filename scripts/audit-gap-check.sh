@@ -76,8 +76,9 @@ trap 'rm -f "$ERR_FILE"' EXIT
 
 # ISO-8601 UTC cutoffs (see timestamp-contract note in the header)
 # Shared audit topic: PMM-bridge rows carry metadata.pipeline='pmm', PMM+ rows no
-# key. Check 1 (Hive load gaps) only makes sense for the PMM+ funnel; run with
-# AUDIT_GAP_PIPELINE=pmm for the PMM bridge's stuck/quarantined checks.
+# key. Check 1 (Hive load gaps) exists only for the PMM+ funnel and is skipped for
+# any other pipeline; run with AUDIT_GAP_PIPELINE=pmm for the PMM bridge's
+# stuck/quarantined checks.
 AUDIT_GAP_PIPELINE="${AUDIT_GAP_PIPELINE:-bridge}"
 
 GAP_CUTOFF="$(date -u -d "-${AUDIT_GAP_THRESHOLD_MINUTES} minutes" '+%Y-%m-%dT%H:%M:%S')"
@@ -169,9 +170,18 @@ echo "Gap threshold: ${AUDIT_GAP_THRESHOLD_MINUTES}m (cutoff ${GAP_CUTOFF}Z)  Gr
 echo "============================================"
 
 # --- Check 1: load gaps ------------------------------------------------------
+# Only the PMM+ funnel has a Hive-load stage; for any other pipeline every completed
+# message would (correctly, and forever) lack HIVE_LOAD_COMPLETED and page as a gap.
+HARD_GAPS=""; SKIP_WARNS=""; HARD_COUNT=0
+if [ "${AUDIT_GAP_PIPELINE}" != "bridge" ]; then
+    GAP_ROWS=""
+    echo "CHECK 1 (load gaps): SKIPPED - pipeline '${AUDIT_GAP_PIPELINE}' has no Hive load stage"
+else
 GAP_ROWS="$(run_query "${QUERY_GAPS}")" || true
-HARD_GAPS=""; SKIP_WARNS=""
-if [ "${GAP_ROWS}" = "__QUERY_FAILED__" ]; then
+fi
+if [ "${AUDIT_GAP_PIPELINE}" != "bridge" ]; then
+    :
+elif [ "${GAP_ROWS}" = "__QUERY_FAILED__" ]; then
     EVAL_FAILED=true
     echo "CHECK 1 (load gaps): ERROR - query failed"
 else

@@ -216,8 +216,25 @@ Everything in sections 1–7 applies to the PMM bridge with these substitutions:
 Window placement: a message put at 03:59 and processed at 04:10 lands in the `00/`
 window (put time, not processing time). A message without a `JMSTimestamp` is
 anchored on its receive time instead and the `MESSAGE_RECEIVED` audit says
-`anchorSource=receivedAt`; a redelivery of such a message across a window boundary
-lands a second copy under the same `eventId` filename in the next window.
+`anchorSource=receivedAt`; before calling the web service the bridge then also looks
+for the file in the previous window, so a redelivery that crossed one boundary is
+still resolved as `HDFS_WRITE_SKIPPED` rather than landing a second copy.
+
+Other PMM-specific behaviours to know:
+
+- **Empty 2xx response** is permanent (quarantine + ack), as in the PMM+ bridge. With
+  no PMM replay tool, recovery is a manual re-put of the quarantined XML on the PMM
+  queue (it gets a new JMSMessageID and therefore a new file name).
+- **Redirects** from the web service are refused and permanent: the client never
+  follows a `Location`, because that would replay the request body and the gateway
+  credentials to another host.
+- **`AUDIT_PUBLISHER=log`**: the Kafka producer and its health indicator still start
+  (they are part of bridge-core), so the aggregate `/actuator/health` shows the Kafka
+  component DOWN when no broker is reachable. The liveness group (`mqListener,ping`),
+  the watchdog and `monitor.sh` are unaffected; this is cosmetic.
+- **`MQ_MAX_MESSAGE_BYTES`** (default 64 MiB): a larger `BytesMessage` is refused
+  before allocation; without a poison guard it stays on the queue like any other
+  unreadable body.
 
 ## Related
 

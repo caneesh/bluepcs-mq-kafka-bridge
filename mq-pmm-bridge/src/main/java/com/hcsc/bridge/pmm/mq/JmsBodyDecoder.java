@@ -28,15 +28,34 @@ public final class JmsBodyDecoder {
         return message instanceof TextMessage || message instanceof BytesMessage;
     }
 
+    /** Default body cap: PMM messages are small; anything near this is a broken publisher. */
+    public static final long DEFAULT_MAX_BODY_BYTES = 64L * 1024 * 1024;
+
     public static String decode(Message message) throws JMSException {
+        return decode(message, DEFAULT_MAX_BODY_BYTES);
+    }
+
+    /**
+     * @param maxBodyBytes upper bound for a BytesMessage body; larger bodies are refused
+     *                     before any allocation (a JMSException, so the listener's poison
+     *                     guard can still discard the message)
+     */
+    public static String decode(Message message, long maxBodyBytes) throws JMSException {
         if (message instanceof TextMessage) {
-            return ((TextMessage) message).getText();
+            // Same producer habit as a BOM-prefixed BytesMessage: an MQFMT_STRING put from a
+            // UTF-8-with-BOM file. The parser rejects U+FEFF before the declaration.
+            return stripBom(((TextMessage) message).getText());
         }
         if (message instanceof BytesMessage) {
             BytesMessage bytesMessage = (BytesMessage) message;
             long length = bytesMessage.getBodyLength();
-            if (length > Integer.MAX_VALUE - 8) {
-                throw new JMSException("BytesMessage body too large to decode: " + length + " bytes");
+            if (length <= 0) {
+                // Treated like an empty TextMessage: the extractor quarantines it
+                return "";
+            }
+            if (length > maxBodyBytes || length > Integer.MAX_VALUE - 8) {
+                throw new JMSException("BytesMessage body too large to decode: " + length
+                        + " bytes (max " + maxBodyBytes + ")");
             }
             byte[] buffer = new byte[(int) length];
             bytesMessage.reset();
@@ -68,6 +87,6 @@ public final class JmsBodyDecoder {
     }
 
     static String stripBom(String text) {
-        return text != null && !text.isEmpty() && text.charAt(0) == '﻿' ? text.substring(1) : text;
+        return text != null && !text.isEmpty() && text.charAt(0) == '\uFEFF' ? text.substring(1) : text;
     }
 }

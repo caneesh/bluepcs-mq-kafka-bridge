@@ -20,6 +20,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
+import javax.annotation.PostConstruct;
 import javax.jms.JMSException;
 import javax.jms.Message;
 import java.time.Instant;
@@ -66,6 +67,10 @@ public class PmmMqMessageListener {
     @Value("${bridge.mq.redelivery-backoff-max-ms:30000}")
     private long redeliveryBackoffMaxMs;
 
+    /** Refuse BytesMessage bodies above this size before allocating anything. */
+    @Value("${bridge.mq.max-message-bytes:67108864}")
+    private long maxMessageBytes;
+
     public PmmMqMessageListener(PmmOrchestrator orchestrator, AuditPublisher auditPublisher,
                                 SafeHdfsWriter hdfsWriter, WindowedPathResolver pathResolver,
                                 EventIdGenerator eventIdGenerator) {
@@ -74,6 +79,15 @@ public class PmmMqMessageListener {
         this.hdfsWriter = hdfsWriter;
         this.pathResolver = pathResolver;
         this.eventIdGenerator = eventIdGenerator;
+    }
+
+    @PostConstruct
+    void warnIfPayloadLoggingEnabled() {
+        if (logPayload) {
+            logger.warn("bridge.mq.log-payload=true: raw MQ payloads (which may contain PHI/PII) will be written "
+                    + "to the application log with secret-pattern masking only, not PHI redaction. Never enable "
+                    + "this against a production or PHI-bearing queue.");
+        }
     }
 
     @JmsListener(destination = "${bridge.mq.queue}")
@@ -98,7 +112,7 @@ public class PmmMqMessageListener {
 
             String payload;
             try {
-                payload = JmsBodyDecoder.decode(message);
+                payload = JmsBodyDecoder.decode(message, maxMessageBytes);
             } catch (JMSException bodyReadFailure) {
                 // A conversion error throws on EVERY delivery; when the guard is armed and
                 // tripped this is the only place it can act.

@@ -86,7 +86,7 @@ fi
 BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
 JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
-    echo "ERROR: JAR not found under ${PROJECT_DIR}/target. Build or copy it first."
+    echo "ERROR: JAR not found under ${PROJECT_DIR}/${BRIDGE_APP}/target. Build or copy it first."
     exit 3
 fi
 JAR_PATH=$(ls ${JAR_FILE} | head -1)

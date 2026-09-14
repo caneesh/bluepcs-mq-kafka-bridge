@@ -62,6 +62,11 @@ public class RestPmmApiClient implements PmmApiClient {
                         .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
                         .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                         .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                        // A fixed internal endpoint never legitimately redirects. Following one
+                        // would replay the PHI-bearing body and the ClientID/ClientSecret headers
+                        // (which OkHttp does NOT strip, unlike Authorization) to the Location host.
+                        .followRedirects(false)
+                        .followSslRedirects(false)
                         .build(),
                 retryAttempts, retryDelayMs, contentType, accept);
     }
@@ -173,6 +178,11 @@ public class RestPmmApiClient implements PmmApiClient {
                 logger.warn("Server error {} for eventId {} — response: {}",
                         statusCode, eventId, safeErrorBody(response));
                 throw new PmmApiException("API server error: " + statusCode, eventId, statusCode, true);
+            } else if (statusCode >= 300 && statusCode < 400) {
+                // Redirects are refused (see the client builder) and can never succeed for
+                // this message: permanent, so the operator sees it in quarantine
+                logger.warn("Redirect {} refused for eventId {} — the PMM endpoint must not redirect", statusCode, eventId);
+                throw new PmmApiException("API redirect refused: " + statusCode, eventId, statusCode, false);
             } else {
                 throw new PmmApiException("Unexpected response status: " + statusCode, eventId, statusCode, false);
             }

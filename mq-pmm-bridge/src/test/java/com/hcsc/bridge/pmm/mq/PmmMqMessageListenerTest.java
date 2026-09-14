@@ -59,6 +59,7 @@ class PmmMqMessageListenerTest {
     void setUp() throws JMSException {
         listener = new PmmMqMessageListener(orchestrator, auditPublisher, hdfsWriter, pathResolver, eventIdGenerator);
         ReflectionTestUtils.setField(listener, "redeliveryBackoffMs", 0L);
+        ReflectionTestUtils.setField(listener, "maxMessageBytes", JmsBodyDecoder.DEFAULT_MAX_BODY_BYTES);
         // lenient: the message-type tests drive a BytesMessage / plain Message instead
         lenient().when(textMessage.getJMSMessageID()).thenReturn("MSG-1");
         lenient().when(textMessage.getText()).thenReturn(XML);

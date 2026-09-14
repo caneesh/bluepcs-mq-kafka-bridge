@@ -37,6 +37,8 @@ mvn clean package               # runs unit tests (no external infra needed)
 mvn clean package -DskipTests   # faster, jar only
 # The repo is a Maven reactor: the bridge jar is built into
 # mq-kafka-bridge/target/mq-kafka-bridge-*.jar (bridge-core is a library it embeds).
+# Only -DskipTests is supported as a skip switch (-Dmaven.test.skip=true breaks the
+# bridge-core test-jar the application tests depend on).
 ```
 
 Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
@@ -860,7 +862,10 @@ The PMM (canonical XML) feed is a second JVM built from this repository. Deploy 
       (the watchdog script is shared; the PMM unit passes `SERVICE=mq-pmm-bridge` and the
       8081 liveness URL). Without sudo: `bridge-keepalive.sh` from the PMM directory
       (`BRIDGE_APP`/`HEALTH_URL` from its `.env`)
-- [ ] Control-M: `monitor.sh` (walks the current + previous window), a second
+- [ ] Downstream reader selects `*.xml` only: in-flight writes are visible as
+      `<eventId>.<uuid>.xml.tmp` in the same window directory until the rename
+- [ ] Control-M: `monitor.sh` (its backlog check reports orphaned `*.xml.tmp` files in the
+      current + previous window; landed `.xml` files are read in place and never count), a second
       `abc-balance-check.sh` job with `ABC_PIPELINE=pmm`, and `pmm-hdfs-cleanup.sh`
       daily (whole date directories; never `hdfs-landing-cleanup.sh`)
 - [ ] The PMM+ bridge's balance job still balances after PMM traffic starts — it now

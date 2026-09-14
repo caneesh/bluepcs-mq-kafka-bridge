@@ -28,6 +28,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -112,15 +113,18 @@ public class PmmOrchestrator {
 
             String targetPath = pathResolver.resolve(eventId, anchor);
 
-            if (skipApiWhenTargetExists && targetExists(targetPath, originalMqMessageId)) {
-                logger.info("Target already exists for eventId {} ({}); skipping the web-service call",
-                        eventId, targetPath);
-                publishAudit(ctx, AuditEventType.HDFS_WRITE_SKIPPED,
-                        "Target file already present before the API call: " + targetPath, null,
-                        metadata("hdfsPath", targetPath, "reason", "target-exists-before-api-call"));
-                publishAudit(ctx, AuditEventType.PROCESSING_COMPLETED,
-                        "Message already landed (redelivery)", null, metadata());
-                return ProcessingResult.success(eventId, targetPath);
+            if (skipApiWhenTargetExists) {
+                String existing = existingTarget(eventId, targetPath, anchor, mqMessage, originalMqMessageId);
+                if (existing != null) {
+                    logger.info("Target already exists for eventId {} ({}); skipping the web-service call",
+                            eventId, existing);
+                    publishAudit(ctx, AuditEventType.HDFS_WRITE_SKIPPED,
+                            "Target file already present before the API call: " + existing, null,
+                            metadata("hdfsPath", existing, "reason", "target-exists-before-api-call"));
+                    publishAudit(ctx, AuditEventType.PROCESSING_COMPLETED,
+                            "Message already landed (redelivery)", null, metadata());
+                    return ProcessingResult.success(eventId, existing);
+                }
             }
 
             String requestXml = template.render(values);
@@ -159,6 +163,26 @@ public class PmmOrchestrator {
             // redelivery loop.
             return handleUnexpectedFailure(ctx, e);
         }
+    }
+
+    /**
+     * The landed file for this message if one exists. With a receive-time anchor (no
+     * JMSTimestamp) a redelivery that crossed a window boundary computes the NEXT window's
+     * path, so the previous window is probed as well — one bounded extra exists() — rather
+     * than re-POSTing and landing a second copy.
+     */
+    private String existingTarget(String eventId, String targetPath, Instant anchor, MqMessage mqMessage,
+                                  String messageId) {
+        if (targetExists(targetPath, messageId)) {
+            return targetPath;
+        }
+        if (mqMessage.getJmsTimestamp() == null) {
+            String previous = pathResolver.resolve(eventId, anchor.minus(pathResolver.getWindowHours(), ChronoUnit.HOURS));
+            if (!previous.equals(targetPath) && targetExists(previous, messageId)) {
+                return previous;
+            }
+        }
+        return null;
     }
 
     private boolean targetExists(String targetPath, String messageId) {

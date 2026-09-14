@@ -190,6 +190,32 @@ class PmmOrchestratorTest {
         }
 
         @Test
+        @DisplayName("with a receive-time anchor, also finds the file in the previous window and skips the call")
+        void receivedAtAnchorProbesPreviousWindow() throws IOException {
+            when(extractor.extract(PAYLOAD, "MSG-1")).thenReturn(new PmmExtractedValues("a", "b"));
+            String current = resolver.resolve(eventIdOf("MSG-1"), RECEIVE_TIME);            // window 08
+            String previous = resolver.resolve(eventIdOf("MSG-1"), RECEIVE_TIME.minusSeconds(4 * 3600)); // window 04
+            when(hdfsFileOperations.exists(current)).thenReturn(false);
+            when(hdfsFileOperations.exists(previous)).thenReturn(true);
+
+            ProcessingResult result = orchestrator.process(message("MSG-1", null));
+
+            assertThat(result.isSuccessful()).isTrue();
+            assertThat(result.getHdfsPath()).isEqualTo(previous);
+            verify(apiClient, never()).submit(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("with a JMSTimestamp anchor, only the anchored window is probed")
+        void jmsTimestampAnchorProbesOnlyItsWindow() throws IOException {
+            stubHappyPath();
+
+            orchestrator.process(message("MSG-1", PUT_TIME));
+
+            verify(hdfsFileOperations, org.mockito.Mockito.times(1)).exists(anyString());
+        }
+
+        @Test
         @DisplayName("calls the web service when the pre-check is disabled")
         void preCheckDisabled() throws IOException {
             orchestrator = new PmmOrchestrator(extractor, template, apiClient, hdfsWriter, hdfsFileOperations,

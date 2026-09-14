@@ -331,8 +331,8 @@ token in `Authorization` → raw XML response written to
 | `PMM_MQ_QUEUE` | `bridge.mq.queue` | The PMM queue. Deliberately not `MQ_QUEUE`: a copied PMM+ `.env` can never make this bridge consume the PMM+ queue |
 | `PMM_HDFS_BASE_PATH` | `bridge.hdfs.base-path` | Root of the windowed landing tree |
 | `PMM_API_URL` | `bridge.pmm.api.url` | Full POST URL of the web service |
-| `PMM_TEMPLATE_LOCATION` | `bridge.pmm.template.location` | `file:/path/to/template.xml` — the large XML request with `${value1}` / `${value2}` placeholders (see `mq-pmm-bridge/src/main/resources/pmm/request-template.sample.xml`). Any other `${…}` token fails startup |
-| `PMM_XPATH_VALUE1`, `PMM_XPATH_VALUE2` | `bridge.pmm.xpath.value1/2` | XPath 1.0 expressions selecting the two values from the MQ message. Single-quote them in `.env`. For namespaced XML use `//*[local-name()='Element']` |
+| `PMM_TEMPLATE_LOCATION` | `bridge.pmm.template.location` | `file:/path/to/template.xml` — the large XML request with `${value1}` / `${value2}` placeholders (see `mq-pmm-bridge/src/main/resources/pmm/request-template.sample.xml`). Placeholders may sit only in element text or a quoted attribute value; one inside a CDATA section, comment or processing instruction, or any other `${…}` token, fails startup |
+| `PMM_XPATH_VALUE1`, `PMM_XPATH_VALUE2` | `bridge.pmm.xpath.value1/2` | XPath 1.0 expressions selecting the two values from the MQ message; each must match **exactly one** node (an expression matching several is a parse failure — disambiguate with `(//Element)[1]`). Single-quote them in `.env`. For namespaced XML use `//*[local-name()='Element']` |
 | `PMM_OAUTH_TOKEN_URL` | `bridge.security.token-url` | STS endpoint for the PMM service (same protocol and `OAUTH_CLIENT_ID/SECRET`, `API_USERNAME/PASSWORD` as the PMM+ bridge; may be the same URL) |
 
 Shared infrastructure keeps the same variable names as sections 3–6 (`MQ_HOST`,
@@ -349,7 +349,8 @@ Shared infrastructure keeps the same variable names as sections 3–6 (`MQ_HOST`
 | `PMM_HDFS_ERROR_PATH` | `<base>/errors` | Flat quarantine directory (`<eventId>.xml`) |
 | `PMM_API_TIMEOUT_SECONDS`, `PMM_API_RETRY_ATTEMPTS`, `PMM_API_RETRY_DELAY_MS` | `60`, `3`, `1000` | Same retry/backoff semantics as section 4 |
 | `PMM_API_CONTENT_TYPE` / `PMM_API_ACCEPT` | `application/xml` | Sent verbatim (use `text/xml` if the gateway insists) |
-| `PMM_MONITOR_BACKLOG_WINDOWS` | `2` | Windows scanned by the monitor's backlog check (current + previous) |
+| `PMM_MONITOR_BACKLOG_WINDOWS` | `2` | Windows scanned by the monitor's backlog check (current + previous). The backlog is orphaned in-flight `*.xml.tmp` files older than `MONITOR_BACKLOG_AGE_MINUTES`; landed `.xml` files are read in place and never count |
+| `MQ_MAX_MESSAGE_BYTES` | `67108864` | `BytesMessage` bodies above this are refused before allocation |
 | `AUDIT_PUBLISHER` | `kafka` | `log` keeps the audit trail in `<LOG_DIRECTORY>/pmm-bridge-application.log-audit.jsonl` |
 
 ### 11.3 Running it
@@ -370,6 +371,13 @@ BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh` pushes one sample through the pip
 and writes `./data/hdfs/pmm/<date>/<HH>/<eventId>.xml`.
 
 Startup fails fast (like section 1) when a `PMM_*` value is missing, an XPath does not
-compile, the template is missing or contains an unknown placeholder, or the window
-size does not divide 24.
+compile, the template is missing or contains an unknown or unsafely placed placeholder,
+or the window size does not divide 24.
+
+Downstream contract: readers of the window directories must select `*.xml` only. A
+write in progress is visible as `<eventId>.<uuid>.xml.tmp` next to the landed files
+until the atomic rename, and a crashed write leaves that temp file until
+`pmm-hdfs-cleanup.sh` removes it. Do not change `PMM_WINDOW_HOURS` / `PMM_WINDOW_ZONE`
+while messages are being redelivered: the window (and so the file path) of an
+unacknowledged message would change and it would land a second copy.
 

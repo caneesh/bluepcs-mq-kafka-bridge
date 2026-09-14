@@ -3,9 +3,12 @@
   Sample PMM request template. The real template is supplied by the deployment
   team via bridge.pmm.template.location (file:/path/to/template.xml). Exactly two
   placeholders are substituted per message, each XML-escaped before insertion:
-    ${value1}  - first value extracted from the MQ message (bridge.pmm.xpath.value1)
-    ${value2}  - second value extracted from the MQ message (bridge.pmm.xpath.value2)
-  A placeholder may appear more than once. Any other dollar-brace token fails startup.
+    value1  - first value extracted from the MQ message (bridge.pmm.xpath.value1)
+    value2  - second value extracted from the MQ message (bridge.pmm.xpath.value2)
+  written as a dollar sign, an opening brace, the name and a closing brace (see the
+  Body element below). A placeholder may appear more than once, but only in element
+  text or an attribute value: one inside a comment, CDATA section or processing
+  instruction fails startup, as does any other dollar-brace token.
 -->
 <PmmRequest>
   <Header>

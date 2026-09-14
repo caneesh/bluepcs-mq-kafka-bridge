@@ -100,6 +100,26 @@ class PmmRequestTemplateTest {
         }
 
         @Test
+        @DisplayName("rejects a placeholder inside a CDATA section, a comment or a processing instruction")
+        void rejectsUnsafePlacement() {
+            assertThatThrownBy(() -> template("<r><![CDATA[${value1}]]>${value2}</r>"))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("CDATA");
+            assertThatThrownBy(() -> template("<r><!-- ${value1} -->${value2}</r>"))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("comment");
+            assertThatThrownBy(() -> template("<?pi ${value1}?><r>${value2}</r>"))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("processing instruction");
+        }
+
+        @Test
+        @DisplayName("accepts placeholders after a closed comment, CDATA section or the XML declaration")
+        void acceptsPlacementAfterClosedRegions() {
+            String out = template("<?xml version=\"1.0\"?><!-- c --><r><![CDATA[x]]>${value1}|${value2}</r>")
+                    .render(new PmmExtractedValues("A", "B"));
+
+            assertThat(out).isEqualTo("<?xml version=\"1.0\"?><!-- c --><r><![CDATA[x]]>A|B</r>");
+        }
+
+        @Test
         @DisplayName("rejects an empty template")
         void empty() {
             assertThatThrownBy(() -> template("  "))

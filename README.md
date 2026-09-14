@@ -31,6 +31,10 @@ mvn clean package -DskipTests                       # all modules
 mvn -pl mq-kafka-bridge -am package -DskipTests     # one application + its dependencies
 ```
 
+Use `-DskipTests`, not `-Dmaven.test.skip=true`: the latter also skips test *compilation*,
+and the applications' tests depend on the `bridge-core` test-jar (shared fakes), so the
+build fails resolving it.
+
 ## Running
 
 ### Local Development (no external dependencies)

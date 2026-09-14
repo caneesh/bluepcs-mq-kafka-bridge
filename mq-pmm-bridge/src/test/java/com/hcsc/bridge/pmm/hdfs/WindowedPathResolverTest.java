@@ -97,6 +97,22 @@ class WindowedPathResolverTest {
         }
 
         @Test
+        @DisplayName("is deterministic on DST transition days in a local zone")
+        void dstDays() {
+            WindowedPathResolver chicago = resolver(4, "America/Chicago");
+            // 2026-03-08: clocks jump 02:00 -> 03:00 CST->CDT. 08:30Z = 03:30 CDT -> window 00
+            assertThat(chicago.windowLabel(Instant.parse("2026-03-08T08:30:00Z"))).isEqualTo("2026-03-08/00");
+            // 10:30Z = 05:30 CDT -> window 04
+            assertThat(chicago.windowLabel(Instant.parse("2026-03-08T10:30:00Z"))).isEqualTo("2026-03-08/04");
+            // 2026-11-01: 01:00-02:00 local happens twice. 06:30Z = 01:30 CDT, 07:30Z = 01:30 CST -> both window 00
+            assertThat(chicago.windowLabel(Instant.parse("2026-11-01T06:30:00Z"))).isEqualTo("2026-11-01/00");
+            assertThat(chicago.windowLabel(Instant.parse("2026-11-01T07:30:00Z"))).isEqualTo("2026-11-01/00");
+            // and the same instant always maps to the same path
+            assertThat(chicago.resolve("e", Instant.parse("2026-11-01T07:30:00Z")))
+                    .isEqualTo(chicago.resolve("e", Instant.parse("2026-11-01T07:30:00Z")));
+        }
+
+        @Test
         @DisplayName("rejects a window size that does not divide 24, an invalid zone or a blank base path")
         void invalidConfig() {
             assertThatThrownBy(() -> resolver(5, "UTC")).isInstanceOf(IllegalStateException.class)

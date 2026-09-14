@@ -109,7 +109,7 @@ Accepted by explicit decision, each with its compensating control.
   deployable `test` profile is gone.
 - **Tooling caveat:** `mvn -o clean verify` cannot run here (`maven-clean-plugin` is not in
   the offline repo) and a failed clean leaves **stale reports that read as a passing run**.
-  Use `mvn -o verify` after `rm -rf target/*-reports`. `mvn test` alone does **not** run
+  Use `mvn -o verify` after `rm -rf */target/*-reports`. `mvn test` alone does **not** run
   `*IT.java` — that gap hid two real defects for six days during this session.
 - Sandbox runs JDK 21 while `pom.xml` targets 11 (enforcer has `fail=false`). Tests were
   **not** exercised on the production JDK.

@@ -136,11 +136,38 @@ public class PmmRequestTemplate {
                         + " contains an unknown placeholder " + token + " (only "
                         + PLACEHOLDER_1 + " and " + PLACEHOLDER_2 + " are substituted)");
             }
+            String region = unescapedRegionContaining(text, start);
+            if (region != null) {
+                throw new IllegalStateException("PMM request template " + location + " places " + token
+                        + " inside a " + region + " at offset " + start + "; values are escaped for element "
+                        + "text and attribute values only, and could break out of that construct");
+            }
             if (start > pos) {
                 out.add(text.substring(pos, start));
             }
             out.add(placeholder);
             pos = end + 1;
         }
+    }
+
+    private static final String[][] UNESCAPED_REGIONS = {
+            {"<![CDATA[", "]]>", "CDATA section"},
+            {"<!--", "-->", "comment"},
+            {"<?", "?>", "processing instruction"},
+    };
+
+    /** Name of the CDATA/comment/PI region that is still open at {@code offset}, else null. */
+    private static String unescapedRegionContaining(String text, int offset) {
+        for (String[] region : UNESCAPED_REGIONS) {
+            int open = text.lastIndexOf(region[0], offset);
+            if (open < 0) {
+                continue;
+            }
+            int close = text.indexOf(region[1], open + region[0].length());
+            if (close < 0 || close > offset) {
+                return region[2];
+            }
+        }
+        return null;
     }
 }

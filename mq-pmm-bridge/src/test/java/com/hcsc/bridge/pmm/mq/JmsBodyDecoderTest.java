@@ -61,9 +61,37 @@ class JmsBodyDecoderTest {
     @Test
     @DisplayName("strips a leading byte-order mark")
     void stripsBom() throws JMSException {
-        byte[] withBom = ("﻿<a/>").getBytes(StandardCharsets.UTF_8);
+        byte[] withBom = ("\uFEFF<a/>").getBytes(StandardCharsets.UTF_8);
 
         assertThat(JmsBodyDecoder.decode(bytesMessage(withBom, "UTF-8"))).isEqualTo("<a/>");
+    }
+
+    @Test
+    @DisplayName("strips a leading byte-order mark from a TextMessage too")
+    void stripsBomFromText() throws JMSException {
+        TextMessage message = mock(TextMessage.class);
+        when(message.getText()).thenReturn("\uFEFF<?xml version=\"1.0\"?><a/>");
+
+        assertThat(JmsBodyDecoder.decode(message)).isEqualTo("<?xml version=\"1.0\"?><a/>");
+    }
+
+    @Test
+    @DisplayName("decodes an empty BytesMessage as an empty string instead of failing the read")
+    void emptyBytesMessage() throws JMSException {
+        BytesMessage message = mock(BytesMessage.class);
+        when(message.getBodyLength()).thenReturn(0L);
+
+        assertThat(JmsBodyDecoder.decode(message)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("refuses a body above the configured cap before allocating it")
+    void refusesOversizedBody() throws JMSException {
+        BytesMessage message = mock(BytesMessage.class);
+        when(message.getBodyLength()).thenReturn(1024L);
+
+        assertThatThrownBy(() -> JmsBodyDecoder.decode(message, 512))
+                .isInstanceOf(JMSException.class).hasMessageContaining("too large");
     }
 
     @Test

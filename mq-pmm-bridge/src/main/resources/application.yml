@@ -95,6 +95,8 @@ bridge:
     max-delivery-attempts: ${MQ_MAX_DELIVERY_ATTEMPTS:0}
     redelivery-backoff-ms: ${MQ_REDELIVERY_BACKOFF_MS:1000}
     redelivery-backoff-max-ms: ${MQ_REDELIVERY_BACKOFF_MAX_MS:30000}
+    # BytesMessage bodies above this are refused before allocation (64 MiB)
+    max-message-bytes: ${MQ_MAX_MESSAGE_BYTES:67108864}
     ssl:
       enabled: ${MQ_SSL_ENABLED:false}
       cipher-suite: ${MQ_SSL_CIPHER_SUITE:}
@@ -130,7 +132,9 @@ bridge:
       # entirely (the response may carry volatile fields that would fail the checksum check)
       skip-api-when-target-exists: true
     monitor:
-      # Backlog check scans the current window and this many minus one preceding windows
+      # Backlog = orphaned in-flight *.xml.tmp files (files are read in place, so landed
+      # .xml files are never a backlog); scanned in the current window and this many
+      # minus one preceding windows
       backlog-windows: ${PMM_MONITOR_BACKLOG_WINDOWS:2}
 
   # Monitor Mode (read-only checks for Control-M; scripts/monitor.sh with BRIDGE_APP=mq-pmm-bridge)

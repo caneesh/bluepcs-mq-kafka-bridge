@@ -45,6 +45,8 @@ class RestPmmApiClientTest {
         OkHttpClient http = new OkHttpClient.Builder()
                 .connectTimeout(2, TimeUnit.SECONDS)
                 .readTimeout(1, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .followSslRedirects(false)
                 .build();
         return new RestPmmApiClient(provider, server.url("/pmm").toString(), "cid", "csecret", http,
                 attempts, 10, "application/xml", "application/xml");
@@ -108,6 +110,18 @@ class RestPmmApiClientTest {
                     .isInstanceOf(PmmApiException.class)
                     .satisfies(e -> assertThat(((PmmApiException) e).isRetryable()).isTrue());
             assertThat(tokenProvider.getRefreshCount()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("refreshes even on the last attempt so the fresh token is cached for the redelivery")
+        void refreshOnLastAttempt() {
+            server.enqueue(new MockResponse().setResponseCode(401));
+
+            assertThatThrownBy(() -> newClient(tokenProvider, 1).submit(REQUEST, "evt-1"))
+                    .isInstanceOf(PmmApiException.class)
+                    .satisfies(e -> assertThat(((PmmApiException) e).isRetryable()).isTrue());
+            assertThat(tokenProvider.getRefreshCount()).isEqualTo(1);
+            assertThat(server.getRequestCount()).isEqualTo(1);
         }
 
         @Test
@@ -178,6 +192,19 @@ class RestPmmApiClientTest {
 
             assertThat(client.submit(REQUEST, "evt-1").getBody()).isEqualTo(RESPONSE);
             assertThat(server.getRequestCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("a redirect is refused: no follow-up request carries the body or credentials, and it is permanent")
+        void redirectRefused() {
+            server.enqueue(new MockResponse().setResponseCode(307)
+                    .setHeader("Location", "http://evil.example/collect"));
+
+            assertThatThrownBy(() -> client.submit(REQUEST, "evt-1"))
+                    .isInstanceOf(PmmApiException.class)
+                    .hasMessageContaining("redirect")
+                    .satisfies(e -> assertThat(((PmmApiException) e).isRetryable()).isFalse());
+            assertThat(server.getRequestCount()).isEqualTo(1);
         }
 
         @Test

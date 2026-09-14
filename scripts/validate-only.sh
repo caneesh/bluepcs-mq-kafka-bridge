@@ -20,12 +20,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Bootable module to run. The repo is a Maven reactor: each application builds
-# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
-# BRIDGE_APP=mq-pmm-bridge.
-BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
-JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
-
 # Load .env if present. Note: .env values override anything already exported
 # in the shell, including blank assignments — remove a line from .env to use
 # an exported value instead.
@@ -36,6 +30,12 @@ if [ -f "${PROJECT_DIR}/.env" ]; then
     source "${PROJECT_DIR}/.env"
     set +a
 fi
+
+# Bootable module to run (after .env so BRIDGE_APP can come from there). The repo is a Maven reactor: each application builds
+# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
+# BRIDGE_APP=mq-pmm-bridge.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 
 # Profile: explicit argument > BRIDGE_PROFILE from .env > test-env — the same
 # convention as every sibling script. (This script used to default to PROD,

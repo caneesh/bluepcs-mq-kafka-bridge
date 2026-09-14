@@ -68,11 +68,18 @@ HEALTH_URL="${HEALTH_URL:-http://localhost:8080/actuator/health/liveness}"
 MAX_FAILURES="${MAX_FAILURES:-3}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 
-PID_FILE="${PROJECT_DIR}/bridge.pid"
-STATE_FILE="${PROJECT_DIR}/.keepalive-failures"
-APP_LOG="${PROJECT_DIR}/logs/bridge-console.log"
+# State files are namespaced by BRIDGE_APP for any non-default bridge, so two
+# bridges supervised from ONE checkout (documented layout is one checkout each,
+# but a shared checkout must not corrupt both supervisions) cannot share a pid
+# file, failure streak, console log or lock. The default names are unchanged.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+APP_SUFFIX=""
+[ "$BRIDGE_APP" != "mq-kafka-bridge" ] && APP_SUFFIX=".${BRIDGE_APP}"
+PID_FILE="${PROJECT_DIR}/bridge${APP_SUFFIX}.pid"
+STATE_FILE="${PROJECT_DIR}/.keepalive-failures${APP_SUFFIX}"
+APP_LOG="${PROJECT_DIR}/logs/bridge${APP_SUFFIX}-console.log"
 HEAPDUMP_DIR="${PROJECT_DIR}/heapdumps"
-LOCK_FILE="${PROJECT_DIR}/.keepalive.lock"
+LOCK_FILE="${PROJECT_DIR}/.keepalive${APP_SUFFIX}.lock"
 
 # Serialize runs: a manual invocation racing the cyclic job (or an overlapping
 # cycle stuck in the kill-wait loop) must not double-start or fight over the
@@ -83,8 +90,8 @@ if ! flock -n 9; then
     exit 0
 fi
 
-# Bootable module to supervise (Maven reactor: <module>/target/<module>-*.jar).
-BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+# Bootable module to supervise (Maven reactor: <module>/target/<module>-*.jar);
+# BRIDGE_APP itself is resolved above, next to the state files it namespaces.
 JAR_DIR="${PROJECT_DIR}/${BRIDGE_APP}/target"
 JAR_PATH=$(ls "${JAR_DIR}"/"${BRIDGE_APP}"-*.jar 2>/dev/null | head -1)
 if [ -z "${JAR_PATH}" ]; then

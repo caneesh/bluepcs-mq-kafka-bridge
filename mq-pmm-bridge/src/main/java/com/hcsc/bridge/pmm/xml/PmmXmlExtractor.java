@@ -5,7 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Document;
-import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
@@ -77,13 +77,20 @@ public class PmmXmlExtractor {
                             String messageId, String label) {
         String raw;
         try {
-            // NODE first so "no match" is distinguishable from "matched an empty element";
-            // expressions that yield a string (concat(), string()) fall back to STRING.
-            Node node = (Node) expression.evaluate(document, XPathConstants.NODE);
-            if (node == null) {
+            // NODESET first so "no match" and "ambiguous match" are both distinguishable from
+            // "matched an empty element"; expressions that yield a string (concat(),
+            // string()) fall back to STRING below.
+            NodeList nodes = (NodeList) expression.evaluate(document, XPathConstants.NODESET);
+            if (nodes == null || nodes.getLength() == 0) {
                 throw new PmmXmlException("XPath for " + label + " matched nothing: " + expressionText, messageId);
             }
-            raw = node.getTextContent();
+            if (nodes.getLength() > 1) {
+                // Silently taking the first node would POST the wrong identifier with no
+                // trail; the operator must disambiguate, e.g. (//Element)[1]
+                throw new PmmXmlException("XPath for " + label + " matched " + nodes.getLength()
+                        + " nodes, expected exactly one: " + expressionText, messageId);
+            }
+            raw = nodes.item(0).getTextContent();
         } catch (XPathExpressionException nodeFailure) {
             try {
                 raw = (String) expression.evaluate(document, XPathConstants.STRING);
