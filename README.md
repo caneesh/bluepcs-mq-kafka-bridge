@@ -14,6 +14,17 @@ IBM MQ → Parse → Enrich (REST API) → Write HDFS → Publish Kafka → Ackn
 - At-least-once delivery (duplicates handled by downstream consumers)
 - Fail-fast configuration validation
 
+## Removed on purpose
+
+Several components were deleted in September 2026 after a review found nothing on
+either bridge's message path used them. Do not reintroduce them without a new reason:
+
+| Removed | What it was | Why it went |
+|---|---|---|
+| HBase (`hbase-client`, `HBaseLedgerRepository`, `hbase` profile) | Optional store for the message ledger | Ledger was never written by the live path; dependency added ~27 MB per jar |
+| Ledger, recovery, reconciliation packages (`file-ledger` profile, `bridge.ledger/recovery/reconciliation.*`, `RECOVERY_*` / `RECONCILIATION_*` audit types) | Scaffolding for a state-store based retry loop | Idempotent HDFS writes keyed by the deterministic event id, plus the audit stream and the audit-based gap/balance checks, are the actual bookkeeping |
+| JAXB-generated classes (never added; the WebSphere predecessor used them) | Schema-bound object model of the PMM XML | The PMM bridge reads two XPath values and forwards the response verbatim; no XSD is available and a bound model would only add drift |
+
 ## Prerequisites
 
 - Java 11

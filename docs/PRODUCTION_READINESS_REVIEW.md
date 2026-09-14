@@ -103,7 +103,8 @@ Accepted by explicit decision, each with its compensating control.
 ## 7. Verification evidence
 
 - `mvn -o verify` → **BUILD SUCCESS**: 366 unit + 56 integration tests, 0 failures,
-  4 skips (pre-existing HBase ledger ITs).
+  4 skips (pre-existing HBase ledger ITs; the HBase and ledger subsystems were removed in
+  September 2026, so current runs report 0 skips).
 - All 12 shell scripts pass `bash -n`; `abc-balance-check.sh --dry-run` renders correctly.
 - No defaultless `${MQ_PASSWORD}` placeholders; no substring profile guards; the colliding
   deployable `test` profile is gone.
