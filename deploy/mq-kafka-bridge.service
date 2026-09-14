@@ -48,7 +48,7 @@ ExecStart=/usr/bin/java \
     -XX:+ExitOnOutOfMemoryError \
     -XX:+HeapDumpOnOutOfMemoryError \
     -XX:HeapDumpPath=/prod/gold/integration/product/bluepcs-bridge/heapdumps \
-    -jar /prod/gold/integration/product/bluepcs-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
+    -jar /prod/gold/integration/product/bluepcs-bridge/mq-kafka-bridge/target/mq-kafka-bridge-1.0.0-SNAPSHOT.jar \
     --spring.profiles.active=prod \
     --bridge.mq.listener-enabled=true
 

@@ -83,9 +83,12 @@ if ! flock -n 9; then
     exit 0
 fi
 
-JAR_PATH=$(ls "${PROJECT_DIR}"/target/mq-kafka-bridge-*.jar 2>/dev/null | head -1)
+# Bootable module to supervise (Maven reactor: <module>/target/<module>-*.jar).
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_DIR="${PROJECT_DIR}/${BRIDGE_APP}/target"
+JAR_PATH=$(ls "${JAR_DIR}"/"${BRIDGE_APP}"-*.jar 2>/dev/null | head -1)
 if [ -z "${JAR_PATH}" ]; then
-    echo "KEEPALIVE: START-FAIL - no jar under ${PROJECT_DIR}/target"
+    echo "KEEPALIVE: START-FAIL - no jar under ${JAR_DIR}"
     exit 1
 fi
 
@@ -107,7 +110,7 @@ is_bridge_jvm() {
     cmdline=$(tr '\0' ' ' < "/proc/${1}/cmdline" 2>/dev/null) || return 1
 
     case "$cmdline" in
-        *"java "*"${PROJECT_DIR}/target/mq-kafka-bridge-"*.jar*) ;;
+        *"java "*"${JAR_DIR}/${BRIDGE_APP}-"*.jar*) ;;
         *) return 1 ;;
     esac
     case "$cmdline" in
@@ -130,7 +133,7 @@ bridge_procs() {
     # a bridge from another checkout, or a non-java process (rsync, sha256sum, an
     # editor) that merely mentions the jar name.
     local pid
-    for pid in $(pgrep -f "java .*${PROJECT_DIR}/target/mq-kafka-bridge-[^ ]*\.jar" || true); do
+    for pid in $(pgrep -f "java .*${JAR_DIR}/${BRIDGE_APP}-[^ ]*\.jar" || true); do
         is_bridge_jvm "$pid" && echo "$pid"
     done
 }
@@ -230,7 +233,7 @@ if ! pid=$(bridge_pid); then
         # a start is doomed (bind failure) and would mask the real problem.
         http_code=$(check_health)
         if [ "$http_code" != "000" ]; then
-            echo "KEEPALIVE: START-FAIL - no mq-kafka-bridge process, but ${HEALTH_URL} answered HTTP ${http_code};"
+            echo "KEEPALIVE: START-FAIL - no ${BRIDGE_APP} process, but ${HEALTH_URL} answered HTTP ${http_code};"
             echo "  a foreign process holds the port - refusing to start a duplicate. Check: ss -tlnp | grep 8080"
             exit 1
         fi

@@ -35,6 +35,8 @@ mvn -version     # unless carrying a pre-built jar
 ```bash
 mvn clean package               # runs unit tests (no external infra needed)
 mvn clean package -DskipTests   # faster, jar only
+# The repo is a Maven reactor: the bridge jar is built into
+# mq-kafka-bridge/target/mq-kafka-bridge-*.jar (bridge-core is a library it embeds).
 ```
 
 Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
@@ -56,11 +58,12 @@ relative to themselves (`PROJECT_DIR` = the parent of `scripts/`):
 ~/bluepcs-bridge/                  <- project root
 |-- .env                           <- created HERE by hand, never transferred
 |-- scripts/                       <- copied from the repo
-`-- target/
-    `-- mq-kafka-bridge-*.jar      <- the built jar
+`-- mq-kafka-bridge/
+    `-- target/
+        `-- mq-kafka-bridge-*.jar  <- the built jar (module-relative, as in the repo)
 ```
 
-- [ ] Jar copied to `~/bluepcs-bridge/target/`
+- [ ] Jar copied to `~/bluepcs-bridge/mq-kafka-bridge/target/`
 - [ ] `scripts/` copied and executable: `chmod +x scripts/*.sh`
 - [ ] Running as the service account (not a personal login) — it must be able
       to read the environment's keytab:
@@ -224,7 +227,7 @@ prod (manual bring-up; the go-live gate requires the explicit waiver for a
 listener-disabled start):
 
 ```bash
-java -jar target/mq-kafka-bridge-*.jar \
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar \
   --spring.profiles.active=prod \
   --bridge.mq.listener-enabled=false \
   --bridge.mq.require-listener-enabled=false   # deliberate safe-start only
@@ -436,7 +439,7 @@ text matching (see the table below for page-vs-notify).
 
 **Setup checklist:**
 
-- [ ] Prerequisites on the edge node already done (Steps 3–7 above): jar in `target/`,
+- [ ] Prerequisites on the edge node already done (Steps 3–7 above): jar in `mq-kafka-bridge/target/`,
       `.env` populated, `chmod +x scripts/*.sh`, `validate-only.sh` passes
 - [ ] Job is cyclic 24/7 (no time window), on the edge-node agent, Run As the service account
 - [ ] No auto-rerun-with-restart On-Do — the script already remediates

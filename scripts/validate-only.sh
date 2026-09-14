@@ -12,7 +12,7 @@
 #   0 - All validation checks passed
 #   1 - One or more validation checks failed
 #   2 - Validation exception occurred
-#   3 - JAR file not found (run 'mvn package' first)
+#   3 - JAR file not found (run 'mvn package' from the repo root first)
 # =============================================================================
 
 set -e
@@ -20,7 +20,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
+# Bootable module to run. The repo is a Maven reactor: each application builds
+# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
+# BRIDGE_APP=mq-pmm-bridge.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 
 # Load .env if present. Note: .env values override anything already exported
 # in the shell, including blank assignments — remove a line from .env to use
@@ -48,7 +52,7 @@ echo ""
 
 # Check if JAR exists
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
-    echo "ERROR: JAR file not found. Run 'mvn package' first."
+    echo "ERROR: JAR file not found. Run 'mvn package' from the repo root first."
     exit 3
 fi
 

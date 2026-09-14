@@ -22,8 +22,13 @@ IBM MQ → Parse → Enrich (REST API) → Write HDFS → Publish Kafka → Ackn
 
 ## Building
 
+The repository is a Maven reactor. `bridge-core` is a shared library; every other
+module is a bootable Spring Boot application that builds into
+`<module>/target/<module>-*.jar` and runs as its own JVM.
+
 ```bash
-mvn clean package -DskipTests
+mvn clean package -DskipTests                       # all modules
+mvn -pl mq-kafka-bridge -am package -DskipTests     # one application + its dependencies
 ```
 
 ## Running
@@ -31,7 +36,7 @@ mvn clean package -DskipTests
 ### Local Development (no external dependencies)
 
 ```bash
-java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=local
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar --spring.profiles.active=local
 ```
 
 Or use the script:
@@ -58,7 +63,7 @@ Or export them and run the jar directly:
 ```bash
 export KAFKA_TRUSTSTORE_PASSWORD=<secret>
 export OAUTH_CLIENT_SECRET=<secret>
-java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=test-env
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar --spring.profiles.active=test-env
 ```
 
 ### Production
@@ -72,10 +77,10 @@ export OAUTH_CLIENT_SECRET=<secret>
 # export MQ_PASSWORD=<secret>
 
 # Run with listener disabled (safe start)
-java -jar target/mq-kafka-bridge-*.jar --spring.profiles.active=prod
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar --spring.profiles.active=prod
 
 # Run with message consumption enabled
-java -jar target/mq-kafka-bridge-*.jar \
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar \
   --spring.profiles.active=prod \
   --bridge.mq.listener-enabled=true
 ```
@@ -96,7 +101,7 @@ java -jar target/mq-kafka-bridge-*.jar \
 Validates configuration and connectivity without consuming messages:
 
 ```bash
-java -jar target/mq-kafka-bridge-*.jar \
+java -jar mq-kafka-bridge/target/mq-kafka-bridge-*.jar \
   --spring.profiles.active=prod \
   --bridge.validate-only=true
 ```
@@ -176,22 +181,37 @@ mvn test jacoco:report
 ## Project Structure
 
 ```
-src/main/java/com/hcsc/bridge/
-├── api/           # REST API client for enrichment
-├── audit/         # Audit event publishing
-├── config/        # Spring configuration
-├── core/          # Core utilities (event ID, secrets)
-├── hdfs/          # HDFS file operations
-├── kafka/         # Kafka envelope publishing
-├── ledger/        # Ledger repository (HBase)
-├── local/         # Local development implementations
-├── model/         # Domain models
-├── mq/            # IBM MQ listener
-├── orchestrator/  # Message processing orchestration
-├── parser/        # Message parsing
-├── reconciliation/# Reconciliation (optional)
-├── recovery/      # Recovery processing (optional)
-└── security/      # OAuth2/JWT token provider
+pom.xml                          # reactor parent: versions, plugins, shared dependency list
+bridge-core/                     # shared library (no application class, no application*.yml)
+  src/main/java/com/hcsc/bridge/
+  ├── audit/         # Audit event publishing
+  ├── config/        # MQ/HDFS/Kafka/Kerberos configuration, readiness + monitor + validate-only runners
+  ├── core/          # Core utilities (event ID, digest, secrets)
+  ├── hdfs/          # HDFS file operations
+  ├── health/        # Actuator health indicators
+  ├── ledger/        # Ledger repository (HBase, optional)
+  ├── local/         # Local-profile implementations (token, HDFS, ledger)
+  ├── model/         # Generic value objects (MqMessage, HdfsWriteResult)
+  ├── mq/            # MqProcessingException
+  ├── orchestrator/  # ProcessingResult
+  ├── reconciliation/# Reconciliation (optional)
+  ├── recovery/      # Recovery processing (optional)
+  └── security/      # STS/JWT token provider
+  src/test/java/com/hcsc/bridge/mock/   # reusable test fakes (published as a test-jar)
+mq-kafka-bridge/                 # PMM+ JSON bridge application (this README)
+  src/main/java/com/hcsc/bridge/
+  ├── MqKafkaBridgeApplication.java
+  ├── api/           # REST API client for enrichment
+  ├── config/        # Startup validator, component-test and quarantine-replay runners
+  ├── hdfs/          # HdfsSafePayloadWriter (flat landing directory)
+  ├── kafka/         # Kafka envelope publishing
+  ├── local/         # Local-profile API client
+  ├── model/         # ParsedPayload, EnrichedPayload
+  ├── mq/            # IBM MQ listener
+  ├── orchestrator/  # Message processing orchestration
+  └── parser/        # Message parsing
+  src/main/resources/application*.yml
+audit-hive-consumer/             # standalone Spark/Hive consumer for the audit topic
 ```
 
 ## Deployment Checklist

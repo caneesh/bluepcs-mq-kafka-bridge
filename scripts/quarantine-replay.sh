@@ -80,7 +80,11 @@ if [ $MISSING_VARS -gt 0 ]; then
     exit 3
 fi
 
-JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
+# Bootable module to run. The repo is a Maven reactor: each application builds
+# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
+# BRIDGE_APP=mq-pmm-bridge.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
     echo "ERROR: JAR not found under ${PROJECT_DIR}/target. Build or copy it first."
     exit 3

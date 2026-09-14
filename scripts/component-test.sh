@@ -84,11 +84,15 @@ echo "Profile: ${PROFILE}"
 echo ""
 
 # Check if JAR exists, if not build
-JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
+# Bootable module to run. The repo is a Maven reactor: each application builds
+# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
+# BRIDGE_APP=mq-pmm-bridge.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
     echo "JAR not found. Building..."
     cd "$PROJECT_DIR"
-    mvn package -DskipTests -q
+    mvn -q -pl "${BRIDGE_APP}" -am package -DskipTests
     echo "Build complete."
     echo ""
 fi

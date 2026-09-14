@@ -26,7 +26,11 @@ fi
 
 # Profile: explicit argument > BRIDGE_PROFILE from .env > test-env
 PROFILE="${1:-${BRIDGE_PROFILE:-test-env}}"
-JAR_FILE="${PROJECT_DIR}/target/mq-kafka-bridge-*.jar"
+# Bootable module to run. The repo is a Maven reactor: each application builds
+# into <module>/target/<module>-*.jar. Override for another bridge, e.g.
+# BRIDGE_APP=mq-pmm-bridge.
+BRIDGE_APP="${BRIDGE_APP:-mq-kafka-bridge}"
+JAR_FILE="${PROJECT_DIR}/${BRIDGE_APP}/target/${BRIDGE_APP}-*.jar"
 PORT="${SERVER_PORT:-8080}"
 HEALTH_URL="http://localhost:${PORT}/actuator/health"
 MAX_WAIT=60
@@ -56,7 +60,7 @@ trap cleanup EXIT
 
 # Check if JAR exists
 if ! ls ${JAR_FILE} 1> /dev/null 2>&1; then
-    echo "ERROR: JAR file not found. Run 'mvn package' first."
+    echo "ERROR: JAR file not found. Run 'mvn package' from the repo root first."
     exit 1
 fi
 
