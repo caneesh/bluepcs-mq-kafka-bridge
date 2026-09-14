@@ -25,6 +25,11 @@ public final class ProcessingResult {
         return new ProcessingResult(eventId, Status.SUCCESS, hdfsPath, kafkaOffset, null, null);
     }
 
+    /** Success for pipelines whose terminal step is the HDFS write (no Kafka publish). */
+    public static ProcessingResult success(String eventId, String hdfsPath) {
+        return new ProcessingResult(eventId, Status.SUCCESS, hdfsPath, null, null, null);
+    }
+
     public static ProcessingResult failure(String eventId, String errorCode, String errorMessage) {
         return new ProcessingResult(eventId, Status.FAILURE, null, null, errorCode, errorMessage);
     }

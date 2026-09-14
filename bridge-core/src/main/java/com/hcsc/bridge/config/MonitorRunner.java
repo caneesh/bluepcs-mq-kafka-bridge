@@ -9,6 +9,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -67,12 +68,15 @@ public class MonitorRunner implements ApplicationRunner {
     private final ApplicationContext applicationContext;
     private final Environment environment;
     private final OkHttpClient httpClient;
+    /** Null = flat landing directory (list bridge.hdfs.base-path directly). */
+    private final BacklogScanner backlogScanner;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     public MonitorRunner(HdfsFileOperations hdfsFileOperations,
                          ApplicationContext applicationContext,
-                         Environment environment) {
+                         Environment environment,
+                         ObjectProvider<BacklogScanner> backlogScannerProvider) {
         this(hdfsFileOperations, applicationContext, environment,
                 new OkHttpClient.Builder()
                         .connectTimeout(10, TimeUnit.SECONDS)
@@ -81,17 +85,27 @@ public class MonitorRunner implements ApplicationRunner {
                         // namenode RPC. A 10s read timeout made a slow-but-healthy
                         // response look like "bridge unreachable".
                         .readTimeout(30, TimeUnit.SECONDS)
-                        .build());
+                        .build(),
+                backlogScannerProvider.getIfAvailable());
     }
 
     MonitorRunner(HdfsFileOperations hdfsFileOperations,
                   ApplicationContext applicationContext,
                   Environment environment,
                   OkHttpClient httpClient) {
+        this(hdfsFileOperations, applicationContext, environment, httpClient, null);
+    }
+
+    MonitorRunner(HdfsFileOperations hdfsFileOperations,
+                  ApplicationContext applicationContext,
+                  Environment environment,
+                  OkHttpClient httpClient,
+                  BacklogScanner backlogScanner) {
         this.hdfsFileOperations = hdfsFileOperations;
         this.applicationContext = applicationContext;
         this.environment = environment;
         this.httpClient = httpClient;
+        this.backlogScanner = backlogScanner;
     }
 
     private boolean isTestEnvironment() {
@@ -265,7 +279,10 @@ public class MonitorRunner implements ApplicationRunner {
         }
 
         long cutoffMillis = Instant.now().minusSeconds(backlogAgeMinutes * 60).toEpochMilli();
-        List<HdfsFileInfo> stale = hdfsFileOperations.listFiles(landingPath).stream()
+        List<HdfsFileInfo> candidates = backlogScanner != null
+                ? backlogScanner.scan()
+                : hdfsFileOperations.listFiles(landingPath);
+        List<HdfsFileInfo> stale = candidates.stream()
                 .filter(f -> f.getModificationTimeMillis() < cutoffMillis)
                 .collect(Collectors.toList());
 

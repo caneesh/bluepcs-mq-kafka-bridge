@@ -10,6 +10,7 @@ public final class MqMessage {
     private final String payload;
     private final Instant receivedAt;
     private final String sourceQueue;
+    private final Instant jmsTimestamp;
 
     /**
      * messageId and payload are deliberately nullable: JMS permits a null
@@ -20,11 +21,23 @@ public final class MqMessage {
      */
     public MqMessage(String messageId, String correlationId, String payload,
                      Instant receivedAt, String sourceQueue) {
+        this(messageId, correlationId, payload, receivedAt, sourceQueue, null);
+    }
+
+    /**
+     * @param jmsTimestamp the broker's JMSTimestamp (put time), or null when the header is
+     *                     absent/unreadable. Unlike {@code receivedAt}, which is re-stamped on
+     *                     every delivery, it is identical across redeliveries — the stable
+     *                     anchor for any time-partitioned target path.
+     */
+    public MqMessage(String messageId, String correlationId, String payload,
+                     Instant receivedAt, String sourceQueue, Instant jmsTimestamp) {
         this.messageId = messageId;
         this.correlationId = correlationId;
         this.payload = payload;
         this.receivedAt = Objects.requireNonNull(receivedAt, "receivedAt must not be null");
         this.sourceQueue = sourceQueue;
+        this.jmsTimestamp = jmsTimestamp;
     }
 
     public String getMessageId() {
@@ -47,6 +60,11 @@ public final class MqMessage {
         return sourceQueue;
     }
 
+    /** Broker put time from the JMSTimestamp header; null when not available. */
+    public Instant getJmsTimestamp() {
+        return jmsTimestamp;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -67,6 +85,7 @@ public final class MqMessage {
                 ", correlationId='" + correlationId + '\'' +
                 ", receivedAt=" + receivedAt +
                 ", sourceQueue='" + sourceQueue + '\'' +
+                ", jmsTimestamp=" + jmsTimestamp +
                 '}';
     }
 }

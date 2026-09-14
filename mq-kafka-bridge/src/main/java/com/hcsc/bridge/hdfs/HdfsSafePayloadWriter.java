@@ -2,33 +2,33 @@ package com.hcsc.bridge.hdfs;
 
 import com.hcsc.bridge.model.EnrichedPayload;
 import com.hcsc.bridge.model.HdfsWriteResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
-
+/**
+ * PMM+ landing-directory layout on top of the generic {@link SafeHdfsWriter}:
+ * {@code <base-path>/<eventId>.json} for enriched payloads and
+ * {@code <error-path>/<eventId>.json} for quarantined raw messages.
+ */
 @Component
 public class HdfsSafePayloadWriter {
 
-    private static final Logger logger = LoggerFactory.getLogger(HdfsSafePayloadWriter.class);
-    private static final String JSON_SUFFIX = ".json";
-
-    private final HdfsFileOperations hdfsFileOperations;
+    private final SafeHdfsWriter safeWriter;
     private final String basePath;
     private final String errorPath;
-    private final String tempSuffix;
 
+    @Autowired
     public HdfsSafePayloadWriter(
             HdfsFileOperations hdfsFileOperations,
             @Value("${bridge.hdfs.base-path:/data/bridge/payloads}") String basePath,
             @Value("${bridge.hdfs.error-path:}") String errorPath,
             @Value("${bridge.hdfs.temp-suffix:.tmp}") String tempSuffix) {
-        this.hdfsFileOperations = hdfsFileOperations;
+        this(new SafeHdfsWriter(hdfsFileOperations, tempSuffix), basePath, errorPath);
+    }
+
+    public HdfsSafePayloadWriter(SafeHdfsWriter safeWriter, String basePath, String errorPath) {
+        this.safeWriter = safeWriter;
         // Tolerate a trailing slash on the configured base path — the advertised
         // hdfsPath must stay clean (no "//") for consumers comparing paths
         this.basePath = basePath.replaceAll("/+$", "");
@@ -38,7 +38,6 @@ public class HdfsSafePayloadWriter {
         this.errorPath = (errorPath == null || errorPath.trim().isEmpty())
                 ? this.basePath + "/errors"
                 : errorPath.replaceAll("/+$", "");
-        this.tempSuffix = tempSuffix;
     }
 
     /**
@@ -47,7 +46,7 @@ public class HdfsSafePayloadWriter {
      * the bytes written are the UTF-8 encoding of {@code content}.
      */
     public HdfsWriteResult write(EnrichedPayload payload, String content) {
-        return safeWrite(buildTargetPath(payload), content, payload.getMessageId());
+        return safeWriter.write(buildTargetPath(payload), content, payload.getMessageId());
     }
 
     /**
@@ -57,126 +56,8 @@ public class HdfsSafePayloadWriter {
      * eventId so a redelivered message quarantines to the same file.
      */
     public HdfsWriteResult writeQuarantine(String eventId, String rawPayload, String messageId) {
-        return safeWrite(errorPath + "/" + eventId + ".json",
+        return safeWriter.write(errorPath + "/" + eventId + ".json",
                 rawPayload != null ? rawPayload : "", messageId);
-    }
-
-    private HdfsWriteResult safeWrite(String targetPath, String content, String messageId) {
-        String tempPath = buildTempPath(targetPath);
-
-        logger.debug("Writing payload {} to HDFS: {}", messageId, targetPath);
-
-        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
-        String checksum = calculateChecksum(contentBytes);
-
-        try {
-            if (hdfsFileOperations.exists(targetPath)) {
-                return verifyExistingTarget(targetPath, checksum, messageId);
-            }
-
-            ensureParentDirectoryExists(targetPath);
-
-            writeToTempFile(tempPath, contentBytes, messageId);
-
-            // Verify the checksum on the temp file BEFORE the rename: once a bad file is
-            // renamed into place it would satisfy the exists() idempotency check on redelivery
-            // and the corruption would become permanent and acked.
-            String writtenChecksum = hdfsFileOperations.getFileChecksum(tempPath);
-            if (!checksum.equals(writtenChecksum)) {
-                throw new HdfsWriteException(
-                        "Checksum mismatch after write: expected " + checksum + " but got " + writtenChecksum,
-                        targetPath, messageId);
-            }
-
-            boolean renamed = hdfsFileOperations.rename(tempPath, targetPath);
-            if (!renamed) {
-                // Concurrency: listener concurrency is 1 per JVM, but a second bridge
-                // instance (blue/green overlap, double-start) can process the same event.
-                // Losing the rename race to a peer that created the target is idempotent
-                // success IF the peer wrote the same bytes — verify, don't assume.
-                if (hdfsFileOperations.exists(targetPath)) {
-                    cleanupTempFile(tempPath);
-                    return verifyExistingTarget(targetPath, checksum, messageId);
-                }
-                // rename() returning false covers several distinct causes — probe so the
-                // failure is diagnosable from the log alone
-                throw new HdfsWriteException("Failed to rename temp file to target ("
-                        + describeRenameFailure(tempPath, targetPath) + ")", targetPath, messageId);
-            }
-
-            // DEBUG: the orchestrator's terminal summary already carries the path at
-            // INFO; this line adds only the byte count on the happy path
-            logger.debug("Successfully wrote payload {} to HDFS: {} ({} bytes)",
-                    messageId, targetPath, contentBytes.length);
-
-            return HdfsWriteResult.success(targetPath, checksum, contentBytes.length);
-
-        } catch (HdfsWriteException e) {
-            cleanupTempFile(tempPath);
-            throw e;
-        } catch (IOException e) {
-            cleanupTempFile(tempPath);
-            throw new HdfsWriteException("Failed to write payload to HDFS", targetPath, messageId, e);
-        } catch (RuntimeException e) {
-            // Hadoop client code can surface unchecked exceptions (wrapped
-            // AccessControlException, IPC/Kerberos failures) between create and rename —
-            // without this the temp file would be orphaned in the landing directory.
-            cleanupTempFile(tempPath);
-            throw e;
-        }
-    }
-
-    /**
-     * An existing target is only an idempotent redelivery if it holds the SAME bytes this
-     * message would write. Accepting it blindly would let a stale, truncated, or foreign
-     * file under the deterministic eventId name be advertised to Kafka as valid — and
-     * permanently, because the message then gets acked. On mismatch, refuse without
-     * overwriting: the message stays on the queue and the file needs manual review.
-     *
-     * <p>NOTE: this assumes the wrapper bytes are stable across redeliveries, i.e. the
-     * enrichment API returns identical content for the same plan/effective-date within
-     * the redelivery window. If the API response carries volatile fields (timestamps,
-     * request ids), redelivery after a partial failure would mismatch here and wedge the
-     * message — verify response stability in UAT before relying on redelivery.
-     */
-    private HdfsWriteResult verifyExistingTarget(String targetPath, String expectedChecksum,
-                                                 String messageId) throws IOException {
-        String existingChecksum = hdfsFileOperations.getFileChecksum(targetPath);
-        if (!expectedChecksum.equals(existingChecksum)) {
-            throw new HdfsWriteException(
-                    "Existing file checksum mismatch for message " + messageId
-                            + ": expected " + expectedChecksum + " but found " + existingChecksum
-                            + "; refusing to accept or overwrite — manual review required",
-                    targetPath, messageId);
-        }
-        logger.info("File already exists with matching checksum for message {}: {}",
-                messageId, targetPath);
-        return HdfsWriteResult.alreadyExists(targetPath, existingChecksum);
-    }
-
-    /** Best-effort diagnosis of a rename() that returned false. */
-    private String describeRenameFailure(String tempPath, String targetPath) {
-        try {
-            return "source exists=" + hdfsFileOperations.exists(tempPath)
-                    + ", target exists=" + hdfsFileOperations.exists(targetPath);
-        } catch (Exception probeFailure) {
-            return "probe failed: " + probeFailure.getMessage();
-        }
-    }
-
-    /**
-     * Unique per attempt so two bridge instances (or a retry racing a stale attempt)
-     * can never write to or delete each other's temp file. The random token sits
-     * BEFORE the ".json" so the name still ends in ".json{tempSuffix}" and matches
-     * the hdfs-landing-cleanup.sh orphan sweep pattern ({@code *.json.tmp}).
-     */
-    private String buildTempPath(String targetPath) {
-        String token = UUID.randomUUID().toString();
-        if (targetPath.endsWith(JSON_SUFFIX)) {
-            return targetPath.substring(0, targetPath.length() - JSON_SUFFIX.length())
-                    + "." + token + JSON_SUFFIX + tempSuffix;
-        }
-        return targetPath + "." + token + tempSuffix;
     }
 
     private String buildTargetPath(EnrichedPayload payload) {
@@ -185,39 +66,5 @@ public class HdfsSafePayloadWriter {
         // message-derived values (eventType) proved unreliable, and the eventId
         // filename alone keeps redelivered messages idempotent.
         return basePath + "/" + payload.getEventId() + ".json";
-    }
-
-    private void ensureParentDirectoryExists(String filePath) throws IOException {
-        int lastSlash = filePath.lastIndexOf('/');
-        if (lastSlash > 0) {
-            String parentPath = filePath.substring(0, lastSlash);
-            hdfsFileOperations.mkdirs(parentPath);
-        }
-    }
-
-    private String calculateChecksum(byte[] content) {
-        return com.hcsc.bridge.core.DigestUtil.sha256Hex(content);
-    }
-
-    private void writeToTempFile(String tempPath, byte[] content, String messageId) throws IOException {
-        try (OutputStream out = hdfsFileOperations.create(tempPath)) {
-            out.write(content);
-            out.flush();
-        } catch (IOException e) {
-            throw new HdfsWriteException("Failed to write temp file", tempPath, messageId, e);
-        }
-    }
-
-    private void cleanupTempFile(String tempPath) {
-        // Catches Exception, not just IOException: an unchecked failure here must never
-        // replace the original write exception the caller is about to throw.
-        try {
-            if (hdfsFileOperations.exists(tempPath)) {
-                hdfsFileOperations.delete(tempPath);
-                logger.debug("Cleaned up temp file: {}", tempPath);
-            }
-        } catch (Exception e) {
-            logger.warn("Failed to cleanup temp file: {}", tempPath, e);
-        }
     }
 }

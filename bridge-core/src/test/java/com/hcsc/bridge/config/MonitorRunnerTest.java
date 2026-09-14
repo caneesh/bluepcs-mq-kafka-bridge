@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -193,6 +195,26 @@ class MonitorRunnerTest {
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile(), staleFile()));
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
+    }
+
+    @Test
+    @DisplayName("should evaluate the BacklogScanner hook instead of the flat landing dir when one is present")
+    void shouldUseBacklogScannerWhenPresent() throws IOException {
+        OkHttpClient httpClient = new OkHttpClient.Builder()
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(2, TimeUnit.SECONDS)
+                .build();
+        MonitorRunner scanned = new MonitorRunner(hdfsFileOperations, applicationContext, environment,
+                httpClient, () -> List.of(staleFile()));
+        ReflectionTestUtils.setField(scanned, "healthUrl", mockServer.url("/actuator/health").toString());
+        ReflectionTestUtils.setField(scanned, "backlogAgeMinutes", 30L);
+        ReflectionTestUtils.setField(scanned, "backlogMaxFiles", 0);
+        ReflectionTestUtils.setField(scanned, "landingPath", LANDING_PATH);
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+                + "\"details\":{\"listenerEnabled\":true}}}}");
+
+        assertThat(scanned.runChecks()).isEqualTo(MonitorRunner.EXIT_BACKLOG);
+        verify(hdfsFileOperations, never()).listFiles(anyString());
     }
 
     // Regression: the guard once used substring matching ("test-env".contains("test")),

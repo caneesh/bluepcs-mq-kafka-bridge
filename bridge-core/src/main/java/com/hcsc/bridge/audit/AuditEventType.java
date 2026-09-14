@@ -14,6 +14,12 @@ public enum AuditEventType {
     PROCESSING_FAILED,
     MESSAGE_DISCARDED,
     MESSAGE_QUARANTINED,
+    // Web-service call stage of pipelines that POST a request and land the raw
+    // response (mq-pmm-bridge). Every event from such a pipeline also carries
+    // metadata.pipeline (e.g. "pmm") so the balance checks can partition the topic;
+    // the PMM+ bridge's stage-2 counters remain ENRICHMENT_*.
+    API_CALL_COMPLETED,
+    API_CALL_FAILED,
     // Consumer-stage events: emitted by the downstream DStream job (via
     // ConsumerAuditEmitter, see docs/consumer/), never by the bridge itself.
     // Declared here so this enum stays the single source of truth for the
