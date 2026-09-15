@@ -1,7 +1,8 @@
 package com.hcsc.bridge.pmm.config;
 
-import com.hcsc.bridge.config.ReadinessCheckService.CheckResult;
-import com.hcsc.bridge.config.ReadinessCheckService.ReadinessReport;
+import com.hcsc.bridge.diagnostics.ReadinessCheckService;
+import com.hcsc.bridge.diagnostics.ReadinessCheckService.CheckResult;
+import com.hcsc.bridge.diagnostics.ReadinessCheckService.ReadinessReport;
 import com.hcsc.bridge.pmm.template.PmmRequestTemplate;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.DisplayName;

@@ -1,5 +1,6 @@
 package com.hcsc.bridge.config;
 
+import com.hcsc.bridge.diagnostics.DiagnosticJvmExit;
 import com.hcsc.bridge.hdfs.HdfsFileOperations;
 import com.hcsc.bridge.hdfs.HdfsFileOperations.HdfsFileInfo;
 import org.slf4j.Logger;

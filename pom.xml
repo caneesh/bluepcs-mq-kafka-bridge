@@ -18,15 +18,19 @@
 
     <name>BluePCS Bridge Parent</name>
     <description>
-        Reactor for the BluePCS bridge applications. bridge-core is the shared library;
-        every other module is a bootable Spring Boot application with its own JVM,
+        Reactor for the BluePCS bridge applications. Dependencies run one way, from
+        bridge-contract (what the bridges agree on) to bridge-adapters (infrastructure
+        implementations), then bridge-diagnostics (startup modes that can exit the JVM),
+        and finally the bootable applications. Each application has its own JVM,
         systemd unit and .env. This parent owns VERSIONS and plugins only: each module
         declares the dependencies it actually uses, so the module graph is the real
         boundary between shared infrastructure and an application's own concerns.
     </description>
 
     <modules>
-        <module>bridge-core</module>
+        <module>bridge-contract</module>
+        <module>bridge-adapters</module>
+        <module>bridge-diagnostics</module>
         <module>mq-kafka-bridge</module>
         <module>mq-pmm-bridge</module>
     </modules>

@@ -1,0 +1,429 @@
+package com.hcsc.bridge.diagnostics;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hcsc.bridge.core.SecretMaskingUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+public class ReadinessCheckService {
+
+    private static final Logger logger = LoggerFactory.getLogger(ReadinessCheckService.class);
+
+    @Value("${bridge.mq.host:}")
+    private String mqHost;
+
+    @Value("${bridge.mq.port:1414}")
+    private int mqPort;
+
+    @Value("${bridge.kafka.bootstrap-servers:}")
+    private String kafkaBootstrapServers;
+
+    @Value("${bridge.hdfs.namenode:}")
+    private String hdfsNamenode;
+
+    @Value("${bridge.hdfs.base-path:}")
+    private String hdfsBasePath;
+
+    @Value("${bridge.security.token-url:}")
+    private String oauthTokenUrl;
+
+    @Value("${bridge.security.client-id:}")
+    private String oauthClientId;
+
+    @Value("${bridge.security.client-secret:}")
+    private String oauthClientSecret;
+
+    @Value("${bridge.security.scope:}")
+    private String oauthScope;
+
+    @Value("${bridge.security.username:}")
+    private String oauthUsername;
+
+    @Value("${bridge.security.password:}")
+    private String oauthPassword;
+
+    @Value("${spring.profiles.active:}")
+    private String activeProfile;
+
+    private final RestTemplate restTemplate;
+    private final org.springframework.beans.factory.ObjectProvider<org.apache.hadoop.conf.Configuration>
+            hadoopConfigurationProvider;
+
+    public ReadinessCheckService() {
+        this(null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ReadinessCheckService(
+            org.springframework.beans.factory.ObjectProvider<org.apache.hadoop.conf.Configuration>
+                    hadoopConfigurationProvider) {
+        // The provider (absent in the local profile, where the check is skipped anyway)
+        // lets the HDFS check resolve an HA nameservice to real NameNode addresses.
+        this.hadoopConfigurationProvider = hadoopConfigurationProvider;
+        // Explicit timeouts: a default RestTemplate has NONE, and an STS that accepts the
+        // TCP connection but never responds would hang validate-only mode forever — the
+        // one check here that could block, while all socket checks use 5s.
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(10_000);
+        this.restTemplate = new RestTemplate(factory);
+    }
+
+    public ReadinessReport runAllChecks() {
+        logger.info("=== RUNNING READINESS CHECKS ===");
+
+        List<CheckResult> results = new ArrayList<>();
+
+        results.add(checkMqConnection());
+        results.add(checkKafkaConnection());
+        results.add(checkHdfsConnection());
+        results.add(checkOAuthToken());
+
+        ReadinessReport report = new ReadinessReport(results);
+
+        logger.info("=== VALIDATION RESULT: {} ===", report.isPassed() ? "PASSED" : "FAILED");
+
+        return report;
+    }
+
+    private CheckResult checkMqConnection() {
+        String name = "MQ_CONNECTION";
+        logger.info("Checking {}...", name);
+
+        if (isBlank(mqHost)) {
+            return CheckResult.skip(name, "MQ host not configured");
+        }
+
+        try {
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(mqHost, mqPort), 5000);
+            }
+            String message = String.format("MQ reachable at %s:%d", mqHost, mqPort);
+            logger.info("[PASS] {}: {}", name, message);
+            return CheckResult.pass(name, message);
+        } catch (Exception e) {
+            String message = String.format("Cannot reach MQ at %s:%d - %s", mqHost, mqPort, e.getMessage());
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+    }
+
+    private CheckResult checkKafkaConnection() {
+        String name = "KAFKA_CONNECTION";
+        logger.info("Checking {}...", name);
+
+        if (isBlank(kafkaBootstrapServers)) {
+            return CheckResult.skip(name, "Kafka bootstrap servers not configured");
+        }
+
+        // Bootstrap semantics: the client only needs one reachable broker to discover the
+        // cluster, so a single reachable broker passes. Unreachable brokers are logged so a
+        // partial outage is still visible.
+        String[] servers = kafkaBootstrapServers.split(",");
+        List<String> failures = new ArrayList<>();
+        for (String server : servers) {
+            // Parse inside the per-server try: a malformed entry ("host:9093x") must
+            // count as an unreachable broker (clean [FAIL]), not escape as a
+            // NumberFormatException that turns the whole run into RESULT: EXCEPTION.
+            try (java.net.Socket socket = new java.net.Socket()) {
+                String[] parts = server.trim().split(":");
+                String host = parts[0];
+                int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 9092;
+                socket.connect(new java.net.InetSocketAddress(host, port), 5000);
+
+                if (!failures.isEmpty()) {
+                    logger.warn("{}: some Kafka brokers unreachable: {}", name, failures);
+                }
+                String message = String.format("Kafka reachable at %s:%d", host, port);
+                logger.info("[PASS] {}: {}", name, message);
+                return CheckResult.pass(name, message);
+            } catch (Exception e) {
+                failures.add(String.format("%s (%s)", server.trim(), e.getMessage()));
+            }
+        }
+
+        String message = "No Kafka brokers reachable: " + failures;
+        logger.error("[FAIL] {}: {}", name, message);
+        return CheckResult.fail(name, message);
+    }
+
+    private CheckResult checkHdfsConnection() {
+        String name = "HDFS_CONNECTION";
+        logger.info("Checking {}...", name);
+
+        if (isBlank(hdfsNamenode)) {
+            return CheckResult.skip(name, "HDFS namenode not configured");
+        }
+
+        if ("local".equals(activeProfile)) {
+            return CheckResult.skip(name, "Skipped in local profile");
+        }
+
+        try {
+            String namenodeUrl = hdfsNamenode;
+            if (namenodeUrl.startsWith("hdfs://")) {
+                namenodeUrl = namenodeUrl.substring(7);
+            }
+            String[] parts = namenodeUrl.split(":");
+            String host = parts[0];
+            // 8020 is the NameNode default the Hadoop client also assumes for port-less URIs
+            int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 8020;
+
+            // hdfs://PRDODPHA-style names are HA *nameservices* (dfs.nameservices), not
+            // DNS hosts — a direct socket probe would UnknownHostException against a
+            // perfectly healthy cluster. Resolve the real NameNode pair from the Hadoop
+            // config (HADOOP_CONF_DIR) and probe those instead.
+            if (!isDnsResolvable(host)) {
+                return checkHaNameservice(name, host);
+            }
+
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(host, port), 5000);
+            }
+
+            String message = String.format("HDFS namenode reachable at %s:%d", host, port);
+            logger.info("[PASS] {}: {}", name, message);
+            return CheckResult.pass(name, message);
+        } catch (Exception e) {
+            String message = String.format("Cannot reach HDFS namenode - %s", e.getMessage());
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+    }
+
+    private boolean isDnsResolvable(String host) {
+        try {
+            java.net.InetAddress.getByName(host);
+            return true;
+        } catch (java.net.UnknownHostException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Probes the NameNodes behind an HA nameservice. Reachability of EITHER node passes
+     * (a standby still accepts TCP; the probe proves the network path, not NN state).
+     * Package-private for tests.
+     */
+    CheckResult checkHaNameservice(String name, String nameservice) {
+        org.apache.hadoop.conf.Configuration conf =
+                hadoopConfigurationProvider != null ? hadoopConfigurationProvider.getIfAvailable() : null;
+        if (conf == null) {
+            String message = String.format(
+                    "%s is not DNS-resolvable and no Hadoop configuration is available "
+                            + "to resolve it as an HA nameservice", nameservice);
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+
+        String nnIds = conf.get("dfs.ha.namenodes." + nameservice);
+        if (nnIds == null || nnIds.trim().isEmpty()) {
+            String message = String.format(
+                    "%s is not DNS-resolvable and dfs.ha.namenodes.%s is not defined — "
+                            + "is HADOOP_CONF_DIR pointing at the cluster's hdfs-site.xml?",
+                    nameservice, nameservice);
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+
+        List<String> failures = new ArrayList<>();
+        for (String id : nnIds.split(",")) {
+            String nnId = id.trim();
+            String rpcAddress = conf.get("dfs.namenode.rpc-address." + nameservice + "." + nnId);
+            if (rpcAddress == null || rpcAddress.trim().isEmpty()) {
+                failures.add(nnId + " (no rpc-address configured)");
+                continue;
+            }
+            String[] hostPort = rpcAddress.split(":");
+            int nnPort = hostPort.length > 1 ? Integer.parseInt(hostPort[1]) : 8020;
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(hostPort[0], nnPort), 5000);
+                String message = String.format("HA nameservice %s: namenode %s (%s) reachable",
+                        nameservice, nnId, rpcAddress);
+                logger.info("[PASS] {}: {}", name, message);
+                return CheckResult.pass(name, message);
+            } catch (Exception e) {
+                failures.add(rpcAddress + " (" + e.getMessage() + ")");
+            }
+        }
+
+        String message = String.format("No namenode of HA nameservice %s reachable: %s",
+                nameservice, failures);
+        logger.error("[FAIL] {}: {}", name, message);
+        return CheckResult.fail(name, message);
+    }
+
+    private CheckResult checkOAuthToken() {
+        String name = "OAUTH_TOKEN";
+        logger.info("Checking {}...", name);
+
+        if (isBlank(oauthTokenUrl) || isBlank(oauthClientId) || isBlank(oauthClientSecret)) {
+            return CheckResult.skip(name, "OAuth not fully configured");
+        }
+
+        try {
+            // The STS expects client credentials + scope as headers and a JSON body
+            // with username/password (form-encoding is rejected with 415)
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("ClientID", oauthClientId);
+            headers.set("ClientSecret", oauthClientSecret);
+            if (!isBlank(oauthScope)) {
+                headers.set("scope", oauthScope);
+            }
+
+            // Build with Jackson so quotes/backslashes in credentials stay valid JSON
+            ObjectNode bodyNode = new ObjectMapper().createObjectNode();
+            bodyNode.put("username", oauthUsername);
+            bodyNode.put("password", oauthPassword);
+            String body = bodyNode.toString();
+
+            HttpEntity<String> request = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(oauthTokenUrl, request, String.class);
+
+            if (response.getStatusCode().is2xxSuccessful()) {
+                // A 2xx alone proves nothing: an STS behind a gateway can answer 200 with
+                // {} or an HTML page. Apply the runtime provider's own acceptance rule so
+                // validate-only cannot approve a deployment whose first message would fail.
+                String token = com.hcsc.bridge.security.OAuth2JwtTokenProvider.tokenFrom(response.getBody());
+                if (token == null) {
+                    String message = "OAuth token endpoint answered " + response.getStatusCode()
+                            + " but the body carries no recognized token field (fields: "
+                            + responseFieldNames(response.getBody()) + ")";
+                    logger.error("[FAIL] {}: {}", name, message);
+                    return CheckResult.fail(name, message);
+                }
+                String message = "OAuth token acquired successfully (" + token.length() + " chars)";
+                logger.info("[PASS] {}: {}", name, message);
+                return CheckResult.pass(name, message);
+            } else {
+                String message = String.format("OAuth token request failed with status %s", response.getStatusCode());
+                logger.error("[FAIL] {}: {}", name, message);
+                return CheckResult.fail(name, message);
+            }
+        } catch (Exception e) {
+            // Spring's HttpStatusCodeException.getMessage() embeds the raw response body.
+            // This is the same STS whose error bodies can echo the credential headers it
+            // rejected — the reason the token provider and API client truncate+mask theirs.
+            String detail = e.getMessage();
+            if (detail != null && detail.length() > 300) {
+                detail = detail.substring(0, 300) + "...(truncated)";
+            }
+            String message = "OAuth token acquisition failed - " + SecretMaskingUtil.maskSecrets(detail);
+            logger.error("[FAIL] {}: {}", name, message);
+            return CheckResult.fail(name, message);
+        }
+    }
+
+    /** Field NAMES of a JSON body for diagnostics (never values: one could be the token). */
+    private static String responseFieldNames(String body) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode json = new ObjectMapper().readTree(body == null ? "" : body);
+            if (json == null || !json.isObject()) {
+                return "<not a JSON object>";
+            }
+            List<String> names = new ArrayList<>();
+            json.fieldNames().forEachRemaining(names::add);
+            return names.isEmpty() ? "<none>" : String.join(",", names);
+        } catch (Exception e) {
+            return "<unparseable>";
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    public static class CheckResult {
+        private final String name;
+        private final Status status;
+        private final String message;
+
+        public enum Status {
+            PASS, FAIL, SKIP
+        }
+
+        private CheckResult(String name, Status status, String message) {
+            this.name = name;
+            this.status = status;
+            this.message = message;
+        }
+
+        public static CheckResult pass(String name, String message) {
+            return new CheckResult(name, Status.PASS, message);
+        }
+
+        public static CheckResult fail(String name, String message) {
+            return new CheckResult(name, Status.FAIL, message);
+        }
+
+        public static CheckResult skip(String name, String message) {
+            return new CheckResult(name, Status.SKIP, message);
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public Status getStatus() {
+            return status;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public boolean isPassed() {
+            return status == Status.PASS;
+        }
+
+        public boolean isFailed() {
+            return status == Status.FAIL;
+        }
+
+        public boolean isSkipped() {
+            return status == Status.SKIP;
+        }
+    }
+
+    public static class ReadinessReport {
+        private final List<CheckResult> results;
+
+        public ReadinessReport(List<CheckResult> results) {
+            this.results = new ArrayList<>(results);
+        }
+
+        public List<CheckResult> getResults() {
+            return results;
+        }
+
+        public boolean isPassed() {
+            return results.stream().noneMatch(CheckResult::isFailed);
+        }
+
+        public long getPassedCount() {
+            return results.stream().filter(CheckResult::isPassed).count();
+        }
+
+        public long getFailedCount() {
+            return results.stream().filter(CheckResult::isFailed).count();
+        }
+
+        public long getSkippedCount() {
+            return results.stream().filter(CheckResult::isSkipped).count();
+        }
+    }
+}

@@ -1,6 +1,6 @@
 package com.hcsc.bridge.pmm.hdfs;
 
-import com.hcsc.bridge.config.BacklogScanner;
+import com.hcsc.bridge.diagnostics.BacklogScanner;
 import com.hcsc.bridge.hdfs.HdfsFileOperations;
 import com.hcsc.bridge.hdfs.HdfsFileOperations.HdfsFileInfo;
 import org.springframework.beans.factory.annotation.Value;

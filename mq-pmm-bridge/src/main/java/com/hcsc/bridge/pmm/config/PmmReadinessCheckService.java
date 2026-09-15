@@ -1,6 +1,7 @@
 package com.hcsc.bridge.pmm.config;
 
-import com.hcsc.bridge.config.ReadinessCheckService;
+import com.hcsc.bridge.diagnostics.ReadinessCheckService;
+import com.hcsc.bridge.diagnostics.ValidateOnlyRunner;
 import com.hcsc.bridge.pmm.template.PmmRequestTemplate;
 import com.hcsc.bridge.pmm.xml.PmmExtractedValues;
 import org.apache.hadoop.conf.Configuration;

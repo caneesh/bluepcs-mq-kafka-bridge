@@ -1,6 +1,6 @@
 package com.hcsc.bridge.pmm;
 
-import com.hcsc.bridge.config.ReadinessCheckService;
+import com.hcsc.bridge.diagnostics.ReadinessCheckService;
 import com.hcsc.bridge.pmm.api.PmmApiClient;
 import com.hcsc.bridge.pmm.config.PmmReadinessCheckService;
 import com.hcsc.bridge.pmm.local.LocalPmmApiClient;

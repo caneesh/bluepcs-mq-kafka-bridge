@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.hcsc</groupId>
+        <artifactId>bridge-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>bridge-contract</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Bridge Contract</name>
+    <description>
+        What the bridges agree on, with no infrastructure attached: message identity
+        (MqMessage, ProcessingContext, the deterministic event id), the outcome of
+        processing a message and the rule for when acknowledging it is safe
+        (ProcessingResult), the audit event contract (AuditEvent, AuditEventType,
+        AuditPublisher), and the interfaces an adapter implements (HdfsFileOperations,
+        JwtTokenProvider).
+
+        Deliberately depends on nothing but the Spring annotation it needs: no MQ, no
+        Kafka, no Hadoop, no HTTP client, and nothing that can terminate a JVM. A
+        change here is a change to a contract, which is why it is the one module both
+        applications and every adapter compile against.
+    </description>
+
+    <dependencies>
+        <!-- @Component on EventIdGenerator; nothing else from Spring is used here -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.junit.vintage</groupId>
+                    <artifactId>junit-vintage-engine</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Publishes the hand-written fakes (mock package) so adapters and both
+                 applications test against the same in-memory audit publisher, HDFS
+                 operations and token provider. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

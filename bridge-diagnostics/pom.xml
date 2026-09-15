@@ -10,20 +10,20 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>mq-pmm-bridge</artifactId>
+    <artifactId>bridge-diagnostics</artifactId>
     <packaging>jar</packaging>
 
-    <name>MQ-PMM Bridge</name>
+    <name>Bridge Diagnostics</name>
     <description>
-        IBM MQ (PMM canonical XML) to web-service POST to HDFS bridge. Extracts two
-        values from each XML message, renders a request template, submits it with an
-        STS token and lands the raw XML response in a 4-hourly HDFS folder.
+        Operational behaviour an application opts into explicitly: the readiness probes
+        behind validate-only mode, the read-only monitor mode Control-M schedules, and
+        the diagnostic JVM exit those modes use to hand an exit code to a scheduler.
+
+        This is a separate module precisely because it can terminate the JVM. Depending
+        on bridge-contract for message types must never drag that capability in with it,
+        so the code that can halt a process lives behind its own explicit dependency.
     </description>
 
-    <!-- bridge-core plus only the libraries this application's own code imports
-         directly: the JDK's hardened XML/XPath, the OkHttp POST client, and the Hadoop
-         Configuration its readiness check inspects. Notably absent - spring-kafka and
-         Jackson: the PMM pipeline publishes no notifications and parses no JSON. -->
     <dependencies>
         <dependency>
             <groupId>com.hcsc</groupId>
@@ -36,19 +36,17 @@
             <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.hcsc</groupId>
-            <artifactId>bridge-diagnostics</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>javax.jms</groupId>
-            <artifactId>javax.jms-api</artifactId>
-            <version>2.0.1</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>${okhttp.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
@@ -88,19 +86,8 @@
                 </exclusion>
             </exclusions>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
 
         <!-- Test -->
-        <dependency>
-            <groupId>com.hcsc</groupId>
-            <artifactId>bridge-contract</artifactId>
-            <version>${project.version}</version>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -130,16 +117,4 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <mainClass>com.hcsc.bridge.PmmBridgeApplication</mainClass>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
 </project>
