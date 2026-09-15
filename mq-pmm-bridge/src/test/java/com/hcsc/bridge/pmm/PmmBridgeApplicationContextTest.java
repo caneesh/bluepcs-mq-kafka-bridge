@@ -2,7 +2,7 @@ package com.hcsc.bridge.pmm;
 
 import com.hcsc.bridge.diagnostics.ReadinessCheckService;
 import com.hcsc.bridge.pmm.api.PmmApiClient;
-import com.hcsc.bridge.pmm.config.PmmReadinessCheckService;
+import com.hcsc.bridge.diagnostics.ReadinessCheck;
 import com.hcsc.bridge.pmm.local.LocalPmmApiClient;
 import com.hcsc.bridge.pmm.orchestrator.PmmOrchestrator;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +27,7 @@ class PmmBridgeApplicationContextTest {
     @Autowired private PmmOrchestrator orchestrator;
     @Autowired private PmmApiClient apiClient;
     @Autowired private ReadinessCheckService readinessCheckService;
+    @Autowired private java.util.List<ReadinessCheck> readinessChecks;
     @Autowired(required = false) private JmsListenerEndpointRegistry registry;
 
     @Test
@@ -34,7 +35,11 @@ class PmmBridgeApplicationContextTest {
     void wiresLocalPipeline() {
         assertThat(orchestrator).isNotNull();
         assertThat(apiClient).isInstanceOf(LocalPmmApiClient.class);
-        assertThat(readinessCheckService).isInstanceOf(PmmReadinessCheckService.class);
+        // The PMM bridge does not replace the shared readiness service: it publishes its own
+        // checks and the service composes whatever is on the classpath.
+        assertThat(readinessChecks).extracting(ReadinessCheck::name)
+                .contains("MQ_CONNECTION", "HDFS_CONNECTION", "OAUTH_TOKEN",
+                        "PMM_API_REACHABLE", "PMM_TEMPLATE");
         if (registry != null) {
             registry.getListenerContainers().forEach(c -> assertThat(c.isRunning()).isFalse());
         }

@@ -50,7 +50,7 @@ public class StartupConfigValidator {
     @Value("${bridge.kafka.topic:}")
     private String kafkaTopic;
 
-    // Default matches BridgeProperties.securityProtocol — a divergence here would let
+    // Default matches KafkaProperties.securityProtocol — a divergence here would let
     // validation judge a different protocol than the one the producer is built with
     @Value("${bridge.kafka.security-protocol:SASL_SSL}")
     private String kafkaSecurityProtocol;

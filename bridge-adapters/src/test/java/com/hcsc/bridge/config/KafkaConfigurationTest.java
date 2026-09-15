@@ -46,7 +46,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure timeout settings")
         void shouldConfigureTimeouts() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setDeliveryTimeoutMs(60000);
             kafkaProps.setRequestTimeoutMs(15000);
             KafkaConfiguration config = createConfiguration(kafkaProps);
@@ -61,7 +61,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure bootstrap servers")
         void shouldConfigureBootstrapServers() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setBootstrapServers("kafka1:9092,kafka2:9092");
             KafkaConfiguration config = createConfiguration(kafkaProps);
 
@@ -79,7 +79,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure SASL_SSL security")
         void shouldConfigureSaslSsl() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setSecurityProtocol("SASL_SSL");
             kafkaProps.setSaslMechanism("SCRAM-SHA-512");
             kafkaProps.setSaslJaasConfig("org.apache.kafka.common.security.scram.ScramLoginModule required;");
@@ -99,7 +99,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure Kerberos authentication")
         void shouldConfigureKerberos() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setSecurityProtocol("SASL_PLAINTEXT");
             kafkaProps.setSaslMechanism("GSSAPI");
             kafkaProps.setKerberosServiceName("kafka");
@@ -116,7 +116,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure SSL truststore with type")
         void shouldConfigureSslTruststore() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setSecurityProtocol("SSL");
             kafkaProps.setTruststoreLocation("/path/to/truststore.jks");
             kafkaProps.setTruststorePassword("truststore-pass");
@@ -135,7 +135,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should configure SSL keystore")
         void shouldConfigureSslKeystore() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setSecurityProtocol("SSL");
             kafkaProps.setTruststoreLocation("/path/to/truststore.jks");
             kafkaProps.setKeystoreLocation("/path/to/keystore.jks");
@@ -154,7 +154,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should not add SSL properties for PLAINTEXT")
         void shouldNotAddSslForPlaintext() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setSecurityProtocol("PLAINTEXT");
             kafkaProps.setTruststoreLocation("/path/to/truststore.jks");
             KafkaConfiguration config = createConfiguration(kafkaProps);
@@ -173,7 +173,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should expose topic name")
         void shouldExposeTopicName() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setTopic("custom-topic");
             KafkaConfiguration config = createConfiguration(kafkaProps);
 
@@ -183,7 +183,7 @@ class KafkaConfigurationTest {
         @Test
         @DisplayName("should expose audit topic name")
         void shouldExposeAuditTopicName() {
-            BridgeProperties.KafkaProperties kafkaProps = createKafkaProperties();
+            KafkaProperties kafkaProps = createKafkaProperties();
             kafkaProps.setAuditTopic("audit-events");
             KafkaConfiguration config = createConfiguration(kafkaProps);
 
@@ -195,14 +195,12 @@ class KafkaConfigurationTest {
         return createConfiguration(createKafkaProperties());
     }
 
-    private KafkaConfiguration createConfiguration(BridgeProperties.KafkaProperties kafkaProps) {
-        BridgeProperties bridgeProperties = new BridgeProperties();
-        bridgeProperties.setKafka(kafkaProps);
-        return new KafkaConfiguration(bridgeProperties);
+    private KafkaConfiguration createConfiguration(KafkaProperties kafkaProps) {
+        return new KafkaConfiguration(kafkaProps);
     }
 
-    private BridgeProperties.KafkaProperties createKafkaProperties() {
-        BridgeProperties.KafkaProperties props = new BridgeProperties.KafkaProperties();
+    private KafkaProperties createKafkaProperties() {
+        KafkaProperties props = new KafkaProperties();
         props.setBootstrapServers("localhost:9092");
         props.setTopic("test-topic");
         props.setAuditTopic("test-audit");

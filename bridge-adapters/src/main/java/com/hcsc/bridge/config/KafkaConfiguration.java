@@ -25,11 +25,11 @@ public class KafkaConfiguration {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaConfiguration.class);
 
-    private final BridgeProperties.KafkaProperties kafkaProps;
+    private final KafkaProperties kafkaProps;
     private final String bootstrapServers;
 
-    public KafkaConfiguration(BridgeProperties bridgeProperties) {
-        this.kafkaProps = bridgeProperties.getKafka();
+    public KafkaConfiguration(KafkaProperties kafkaProperties) {
+        this.kafkaProps = kafkaProperties;
         this.bootstrapServers = kafkaProps.getBootstrapServers();
     }
 

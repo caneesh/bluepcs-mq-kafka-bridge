@@ -33,10 +33,20 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void readinessCheckService_shouldReturnReport() {
-        ReadinessCheckService service = new ReadinessCheckService();
+        ReadinessCheckService service = new ReadinessCheckService(java.util.List.of(
+                new ReadinessCheck() {
+                    @Override
+                    public String name() {
+                        return "PROBE";
+                    }
 
-        // This will run checks but connections will fail (expected in unit test)
-        ReadinessCheckService.ReadinessReport report = service.runAllChecks();
+                    @Override
+                    public CheckResult run() {
+                        return CheckResult.skip("PROBE", "not configured");
+                    }
+                }));
+
+        ReadinessReport report = service.runAllChecks();
 
         assertNotNull(report);
         assertNotNull(report.getResults());
@@ -45,10 +55,10 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void checkResult_passShouldHaveCorrectStatus() {
-        ReadinessCheckService.CheckResult result = ReadinessCheckService.CheckResult.pass("TEST", "passed");
+        CheckResult result = CheckResult.pass("TEST", "passed");
 
         assertEquals("TEST", result.getName());
-        assertEquals(ReadinessCheckService.CheckResult.Status.PASS, result.getStatus());
+        assertEquals(CheckResult.Status.PASS, result.getStatus());
         assertEquals("passed", result.getMessage());
         assertTrue(result.isPassed());
         assertFalse(result.isFailed());
@@ -57,10 +67,10 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void checkResult_failShouldHaveCorrectStatus() {
-        ReadinessCheckService.CheckResult result = ReadinessCheckService.CheckResult.fail("TEST", "failed");
+        CheckResult result = CheckResult.fail("TEST", "failed");
 
         assertEquals("TEST", result.getName());
-        assertEquals(ReadinessCheckService.CheckResult.Status.FAIL, result.getStatus());
+        assertEquals(CheckResult.Status.FAIL, result.getStatus());
         assertEquals("failed", result.getMessage());
         assertFalse(result.isPassed());
         assertTrue(result.isFailed());
@@ -69,10 +79,10 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void checkResult_skipShouldHaveCorrectStatus() {
-        ReadinessCheckService.CheckResult result = ReadinessCheckService.CheckResult.skip("TEST", "skipped");
+        CheckResult result = CheckResult.skip("TEST", "skipped");
 
         assertEquals("TEST", result.getName());
-        assertEquals(ReadinessCheckService.CheckResult.Status.SKIP, result.getStatus());
+        assertEquals(CheckResult.Status.SKIP, result.getStatus());
         assertEquals("skipped", result.getMessage());
         assertFalse(result.isPassed());
         assertFalse(result.isFailed());
@@ -81,13 +91,13 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void readinessReport_shouldCalculateCorrectCounts() {
-        java.util.List<ReadinessCheckService.CheckResult> results = new java.util.ArrayList<>();
-        results.add(ReadinessCheckService.CheckResult.pass("A", "passed"));
-        results.add(ReadinessCheckService.CheckResult.pass("B", "passed"));
-        results.add(ReadinessCheckService.CheckResult.fail("C", "failed"));
-        results.add(ReadinessCheckService.CheckResult.skip("D", "skipped"));
+        java.util.List<CheckResult> results = new java.util.ArrayList<>();
+        results.add(CheckResult.pass("A", "passed"));
+        results.add(CheckResult.pass("B", "passed"));
+        results.add(CheckResult.fail("C", "failed"));
+        results.add(CheckResult.skip("D", "skipped"));
 
-        ReadinessCheckService.ReadinessReport report = new ReadinessCheckService.ReadinessReport(results);
+        ReadinessReport report = new ReadinessReport(results);
 
         assertEquals(2, report.getPassedCount());
         assertEquals(1, report.getFailedCount());
@@ -97,11 +107,11 @@ class ValidateOnlyRunnerTest {
 
     @Test
     void readinessReport_shouldPassWithNoFailures() {
-        java.util.List<ReadinessCheckService.CheckResult> results = new java.util.ArrayList<>();
-        results.add(ReadinessCheckService.CheckResult.pass("A", "passed"));
-        results.add(ReadinessCheckService.CheckResult.skip("B", "skipped"));
+        java.util.List<CheckResult> results = new java.util.ArrayList<>();
+        results.add(CheckResult.pass("A", "passed"));
+        results.add(CheckResult.skip("B", "skipped"));
 
-        ReadinessCheckService.ReadinessReport report = new ReadinessCheckService.ReadinessReport(results);
+        ReadinessReport report = new ReadinessReport(results);
 
         assertTrue(report.isPassed());
     }

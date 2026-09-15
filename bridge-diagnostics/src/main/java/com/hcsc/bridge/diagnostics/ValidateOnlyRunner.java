@@ -75,7 +75,7 @@ public class ValidateOnlyRunner implements ApplicationRunner {
 
     private int computeExitCode() {
         try {
-            ReadinessCheckService.ReadinessReport report = readinessCheckService.runAllChecks();
+            ReadinessReport report = readinessCheckService.runAllChecks();
 
             if (report.isPassed()) {
                 logger.info("============================================");
@@ -93,7 +93,7 @@ public class ValidateOnlyRunner implements ApplicationRunner {
                 logger.error("  Failed: {}", report.getFailedCount());
                 logger.error("============================================");
 
-                for (ReadinessCheckService.CheckResult result : report.getResults()) {
+                for (CheckResult result : report.getResults()) {
                     if (result.isFailed()) {
                         logger.error("[FAIL] {}: {}", result.getName(), result.getMessage());
                     }

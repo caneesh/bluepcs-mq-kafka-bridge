@@ -1,79 +1,84 @@
 package com.hcsc.bridge.diagnostics;
 
-import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 
-import java.net.ServerSocket;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
-@DisplayName("ReadinessCheckService HA nameservice probing")
+@DisplayName("ReadinessCheckService: composing whatever checks an application publishes")
 class ReadinessCheckServiceTest {
 
-    @SuppressWarnings("unchecked")
-    private ReadinessCheckService serviceWith(Configuration conf) {
-        ObjectProvider<Configuration> provider = mock(ObjectProvider.class);
-        when(provider.getIfAvailable()).thenReturn(conf);
-        return new ReadinessCheckService(provider);
+    private static ReadinessCheck check(String name, CheckResult result) {
+        return new ReadinessCheck() {
+            @Override
+            public String name() {
+                return name;
+            }
+
+            @Override
+            public CheckResult run() {
+                return result;
+            }
+        };
     }
 
     @Test
-    @DisplayName("passes when one namenode behind the nameservice is reachable")
-    void passesWhenOneNamenodeReachable() throws Exception {
-        try (ServerSocket listening = new ServerSocket(0)) {
-            Configuration conf = new Configuration(false);
-            conf.set("dfs.ha.namenodes.PRDODPHA", "nn1,nn2");
-            // nn1 unreachable (closed port on localhost), nn2 is our listening socket
-            conf.set("dfs.namenode.rpc-address.PRDODPHA.nn1", "localhost:1");
-            conf.set("dfs.namenode.rpc-address.PRDODPHA.nn2",
-                    "localhost:" + listening.getLocalPort());
+    @DisplayName("runs every check it was given and reports each result")
+    void runsEveryCheck() {
+        ReadinessReport report = new ReadinessCheckService(List.of(
+                check("A", CheckResult.pass("A", "ok")),
+                check("B", CheckResult.skip("B", "not configured")),
+                check("C", CheckResult.pass("C", "ok")))).runAllChecks();
 
-            ReadinessCheckService.CheckResult result =
-                    serviceWith(conf).checkHaNameservice("HDFS_CONNECTION", "PRDODPHA");
-
-            assertThat(result.getStatus()).isEqualTo(ReadinessCheckService.CheckResult.Status.PASS);
-            assertThat(result.getMessage()).contains("nn2");
-        }
+        assertThat(report.getResults()).extracting(CheckResult::getName).containsExactly("A", "B", "C");
+        assertThat(report.isPassed()).isTrue();
+        assertThat(report.getPassedCount()).isEqualTo(2);
+        assertThat(report.getSkippedCount()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("fails with an actionable message when the nameservice has no HA mapping")
-    void failsWithoutHaMapping() {
-        Configuration conf = new Configuration(false);
+    @DisplayName("one failing check fails the report; a skip never does")
+    void failureFailsTheReport() {
+        ReadinessReport report = new ReadinessCheckService(List.of(
+                check("A", CheckResult.pass("A", "ok")),
+                check("B", CheckResult.fail("B", "unreachable")))).runAllChecks();
 
-        ReadinessCheckService.CheckResult result =
-                serviceWith(conf).checkHaNameservice("HDFS_CONNECTION", "PRDODPHA");
-
-        assertThat(result.getStatus()).isEqualTo(ReadinessCheckService.CheckResult.Status.FAIL);
-        assertThat(result.getMessage()).contains("dfs.ha.namenodes.PRDODPHA");
-        assertThat(result.getMessage()).contains("HADOOP_CONF_DIR");
+        assertThat(report.isPassed()).isFalse();
+        assertThat(report.getFailedCount()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("fails when no namenode behind the nameservice is reachable")
-    void failsWhenNoNamenodeReachable() {
-        Configuration conf = new Configuration(false);
-        conf.set("dfs.ha.namenodes.PRDODPHA", "nn1");
-        conf.set("dfs.namenode.rpc-address.PRDODPHA.nn1", "localhost:1");
+    @DisplayName("a check that throws is reported as failed without hiding the others")
+    void throwingCheckIsContained() {
+        ReadinessCheck broken = new ReadinessCheck() {
+            @Override
+            public String name() {
+                return "BROKEN";
+            }
 
-        ReadinessCheckService.CheckResult result =
-                serviceWith(conf).checkHaNameservice("HDFS_CONNECTION", "PRDODPHA");
+            @Override
+            public CheckResult run() {
+                throw new IllegalStateException("probe bug");
+            }
+        };
 
-        assertThat(result.getStatus()).isEqualTo(ReadinessCheckService.CheckResult.Status.FAIL);
-        assertThat(result.getMessage()).contains("No namenode of HA nameservice PRDODPHA");
+        ReadinessReport report = new ReadinessCheckService(List.of(
+                broken, check("AFTER", CheckResult.pass("AFTER", "ok")))).runAllChecks();
+
+        assertThat(report.getResults()).extracting(CheckResult::getName).containsExactly("BROKEN", "AFTER");
+        assertThat(report.getResults().get(0).isFailed()).isTrue();
+        assertThat(report.getResults().get(0).getMessage()).contains("IllegalStateException").contains("probe bug");
+        assertThat(report.getResults().get(1).isPassed()).isTrue();
     }
 
     @Test
-    @DisplayName("fails cleanly when no Hadoop configuration is available")
-    void failsWithoutHadoopConfiguration() {
-        ReadinessCheckService.CheckResult result =
-                serviceWith(null).checkHaNameservice("HDFS_CONNECTION", "PRDODPHA");
+    @DisplayName("an application that publishes no checks gets an empty, passing report")
+    void noChecks() {
+        ReadinessReport report = new ReadinessCheckService(List.of()).runAllChecks();
 
-        assertThat(result.getStatus()).isEqualTo(ReadinessCheckService.CheckResult.Status.FAIL);
-        assertThat(result.getMessage()).contains("no Hadoop configuration");
+        assertThat(report.getResults()).isEmpty();
+        assertThat(report.isPassed()).isTrue();
     }
 }
