@@ -505,6 +505,7 @@ modes (validate-only, component-test, monitor) are exempt; a deliberate no-consu
 | Signal | What it catches | Where |
 |--------|-----------------|-------|
 | `mqListener` health indicator | Listener enabled but not running → overall health DOWN. Listener disabled → UP but with `"listenerEnabled": false` + warning detail (alert on this in prod). | `/actuator/health` |
+| `mqConsumer` health indicator | Listener **running but holding no consumer on the queue** (MQ connection refused, channel auth or `MQRC_NOT_AUTHORIZED` on the queue): the container retries forever and `mqListener` stays UP, this one goes DOWN. Deliberately not in the liveness group (a broker outage must not restart-loop the JVM); `monitor.sh` turns it into exit 2. | `/actuator/health` |
 | Queue depth (`CURDEPTH`) growth or `IPPROCS=0` on the input queue | **The definitive signal** — catches every failure mode incl. dead JVM and idle-but-healthy app | MQ queue manager (ask MQ admins to alert) |
 | Silence on the audit topic (`MESSAGE_RECEIVED` events stop) | Consumption stopped while traffic exists | Kafka audit topic |
 | `"JMS listener error"` log pattern | Listener-level failures during reconnect cycles | Application logs |
@@ -525,7 +526,7 @@ flows into existing ops alerting.
 |-----------|---------|---------------------------|
 | 0 | All checks passed | — |
 | 1 | Bridge unreachable, or its own `mqListener` component DOWN | Alert (systemd/watchdog is likely already restarting; page if it persists) |
-| 2 | Bridge up but MQ listener disabled — NOT consuming | Alert: someone forgot `listener-enabled=true` |
+| 2 | Bridge up but NOT consuming: listener disabled, **or** listener running with no consumer registered on the queue (`mqConsumer` DOWN: MQ connection/authorization failure) | Alert: check `listener-enabled=true`, then the `JMS listener error` log lines and the MQ channel/queue authorization |
 | 3 | HDFS landing-dir backlog (files older than threshold) | Alert the downstream consumer team — bridge is fine |
 | 4 | Monitor could not evaluate (e.g. HDFS/Kerberos access, hidden health details, monitor JVM failed to start) | Investigate the monitor/edge node |
 

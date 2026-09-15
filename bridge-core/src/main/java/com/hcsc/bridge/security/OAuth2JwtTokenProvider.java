@@ -231,6 +231,33 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
      * variants of the token field name.
      */
     private String extractToken(JsonNode json) {
+        String token = extractTokenField(json);
+        if (token != null) {
+            logger.info("Token extracted from response ({} chars, {} JWT segments); fields present: {}",
+                    token.length(), token.split("\\.").length, fieldNames(json));
+        }
+        return token;
+    }
+
+    /**
+     * The token carried by an STS response body, or null when no recognized field holds
+     * one. Public and static so validate-only mode applies EXACTLY the acceptance rule
+     * the runtime uses: a 2xx with an empty or unexpected body (e.g. {@code {}}) must not
+     * pass validation when this provider would reject it at the first message.
+     */
+    public static String tokenFrom(String responseBody) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            JsonNode json = new ObjectMapper().readTree(responseBody);
+            return json == null ? null : extractTokenField(json);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static String extractTokenField(JsonNode json) {
         // jwt_token first: it is the field the STS (sts/v5/jwt_token_internal) actually
         // returns; the rest are fallbacks for standard OAuth2-style responses
         for (String field : new String[]{"jwt_token", "jwtToken", "access_token", "accessToken",
@@ -243,9 +270,6 @@ public class OAuth2JwtTokenProvider implements JwtTokenProvider {
                 if (token.startsWith("Bearer ")) {
                     token = token.substring("Bearer ".length());
                 }
-                logger.info("Token extracted from response field '{}' ({} chars, {} JWT segments); "
-                                + "other fields present: {}",
-                        field, token.length(), token.split("\\.").length, fieldNames(json));
                 return token;
             }
         }

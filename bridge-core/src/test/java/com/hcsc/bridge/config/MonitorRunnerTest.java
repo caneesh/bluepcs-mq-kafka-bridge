@@ -65,6 +65,10 @@ class MonitorRunnerTest {
         mockServer.shutdown();
     }
 
+    private void enqueueHealthRaw(String body) {
+        enqueueHealth(body);
+    }
+
     private void enqueueHealth(String body) {
         mockServer.enqueue(new MockResponse()
                 .setBody(body)
@@ -83,7 +87,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("should pass when health is UP, listener enabled, and no backlog")
     void shouldPassWhenAllHealthy() throws IOException {
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"UP\","
                 + "\"details\":{\"listenerEnabled\":true,\"runningContainers\":1}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(freshFile()));
 
@@ -102,7 +106,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("should return 1 when the mqListener component itself is DOWN")
     void shouldFailWhenListenerComponentDown() throws IOException {
-        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqListener\":{\"status\":\"DOWN\","
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"DOWN\","
                 + "\"details\":{\"listenerEnabled\":true,\"runningContainers\":0}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
 
@@ -116,7 +120,7 @@ class MonitorRunnerTest {
         // run live probes per poll). The bridge is still consuming, so this must not be
         // reported as "bridge unreachable or health DOWN" — that was paging on-call for
         // a healthy bridge. Throughput loss is caught by MQ queue depth and the backlog check.
-        enqueueHealth("{\"status\":\"DOWN\",\"components\":{"
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},"
                 + "\"mqListener\":{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true,\"runningContainers\":1}},"
                 + "\"kafka\":{\"status\":\"DOWN\",\"details\":{\"error\":\"describeCluster timed out\"}},"
                 + "\"hdfs\":{\"status\":\"UP\",\"details\":{\"accessible\":true}}}}");
@@ -128,7 +132,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("should return 2 when up but the listener is disabled")
     void shouldFailWhenNotConsuming() throws IOException {
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"UP\","
                 + "\"details\":{\"listenerEnabled\":false,\"warning\":\"NOT consuming\"}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
 
@@ -138,7 +142,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("should return 3 when stale files exceed the backlog threshold")
     void shouldFailOnBacklog() throws IOException {
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"UP\","
                 + "\"details\":{\"listenerEnabled\":true}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile(), freshFile()));
 
@@ -148,7 +152,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("health failure outranks backlog failure")
     void healthFailureTakesPrecedence() throws IOException {
-        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqListener\":{\"status\":\"DOWN\","
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"DOWN\","
                 + "\"details\":{\"listenerEnabled\":true,\"runningContainers\":0}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile()));
 
@@ -158,7 +162,7 @@ class MonitorRunnerTest {
     @Test
     @DisplayName("should return 4 when the backlog check cannot be evaluated")
     void shouldReturnMonitorErrorWhenBacklogUnreadable() throws IOException {
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"UP\","
                 + "\"details\":{\"listenerEnabled\":true}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenThrow(new IOException("kerberos expired"));
 
@@ -180,7 +184,7 @@ class MonitorRunnerTest {
     @DisplayName("should skip the backlog check when no landing path is configured")
     void shouldSkipBacklogWithoutLandingPath() {
         ReflectionTestUtils.setField(runner, "landingPath", "");
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":"
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":"
                 + "{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true}}}}");
 
         assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_OK);
@@ -190,7 +194,7 @@ class MonitorRunnerTest {
     @DisplayName("should allow stale files up to backlog-max-files")
     void shouldRespectMaxFilesThreshold() throws IOException {
         ReflectionTestUtils.setField(runner, "backlogMaxFiles", 2);
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":"
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":"
                 + "{\"status\":\"UP\",\"details\":{\"listenerEnabled\":true}}}}");
         when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of(staleFile(), staleFile()));
 
@@ -210,11 +214,32 @@ class MonitorRunnerTest {
         ReflectionTestUtils.setField(scanned, "backlogAgeMinutes", 30L);
         ReflectionTestUtils.setField(scanned, "backlogMaxFiles", 0);
         ReflectionTestUtils.setField(scanned, "landingPath", LANDING_PATH);
-        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+        enqueueHealth("{\"status\":\"UP\",\"components\":{\"mqConsumer\":{\"status\":\"UP\"},\"mqListener\":{\"status\":\"UP\","
                 + "\"details\":{\"listenerEnabled\":true}}}}");
 
         assertThat(scanned.runChecks()).isEqualTo(MonitorRunner.EXIT_BACKLOG);
         verify(hdfsFileOperations, never()).listFiles(anyString());
+    }
+
+    @Test
+    @DisplayName("should return 2 when the listener runs but holds no consumer on the queue (mqConsumer DOWN)")
+    void shouldReturnNotConsumingWhenConsumerDown() throws IOException {
+        enqueueHealth("{\"status\":\"DOWN\",\"components\":{\"mqConsumer\":{\"status\":\"DOWN\","
+                + "\"details\":{\"registeredContainers\":0}},\"mqListener\":{\"status\":\"UP\","
+                + "\"details\":{\"listenerEnabled\":true}}}}");
+        lenient().when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
+
+        assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_NOT_CONSUMING);
+    }
+
+    @Test
+    @DisplayName("should exit 4 when the health payload has no mqConsumer component")
+    void shouldErrorWhenConsumerComponentMissing() throws IOException {
+        enqueueHealthRaw("{\"status\":\"UP\",\"components\":{\"mqListener\":{\"status\":\"UP\","
+                + "\"details\":{\"listenerEnabled\":true}}}}");
+        lenient().when(hdfsFileOperations.listFiles(anyString())).thenReturn(List.of());
+
+        assertThat(runner.runChecks()).isEqualTo(MonitorRunner.EXIT_MONITOR_ERROR);
     }
 
     // Regression: the guard once used substring matching ("test-env".contains("test")),

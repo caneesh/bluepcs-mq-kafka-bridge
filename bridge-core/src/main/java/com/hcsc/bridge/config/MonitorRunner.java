@@ -236,6 +236,26 @@ public class MonitorRunner implements ApplicationRunner {
             return EXIT_NOT_CONSUMING;
         }
 
+        // A running container is a lifecycle fact, not proof of consumption: the container
+        // keeps running (and mqListener stays UP) while it retries a failed connection or
+        // authorization forever. mqConsumer is UP only while a consumer is actually
+        // registered with the queue. It is deliberately NOT in the liveness group the
+        // supervisors poll (a broker outage must not restart-loop the JVM), so the monitor
+        // is where it turns into an alert.
+        JsonNode consumer = health.path("components").path("mqConsumer");
+        if (consumer.isMissingNode()) {
+            logger.error("MONITOR: health response carries no mqConsumer component — cannot verify the "
+                    + "bridge holds a consumer on the queue (bridge and monitor built from different versions?)");
+            return EXIT_MONITOR_ERROR;
+        }
+        String consumerStatus = consumer.path("status").asText("");
+        if (!"UP".equals(consumerStatus)) {
+            logger.error("MONITOR: mqConsumer component is {} — the listener is running but holds no consumer on "
+                    + "the queue (MQ connection or authorization failure). Details: {}",
+                    consumerStatus.isEmpty() ? "unknown" : consumerStatus, consumer.path("details"));
+            return EXIT_NOT_CONSUMING;
+        }
+
         // Dependency trouble is reported, never failed on: loss of throughput is caught
         // definitively by MQ queue depth and by the backlog check, and the supervisors
         // deliberately ignore it too (they poll the liveness group).
@@ -245,18 +265,18 @@ public class MonitorRunner implements ApplicationRunner {
                     + "Not failing the job — watch MQ queue depth for actual throughput loss.", degraded);
         }
 
-        logger.info("MONITOR: health check passed (mqListener UP and enabled; aggregate status {})",
+        logger.info("MONITOR: health check passed (mqListener UP and enabled, mqConsumer UP; aggregate status {})",
                 health.path("status").asText("unknown"));
         return EXIT_OK;
     }
 
-    /** Component names (excluding mqListener) whose status is not UP. */
+    /** Component names (excluding the two bridge-owned MQ components) whose status is not UP. */
     private List<String> degradedDependencies(JsonNode health) {
         List<String> degraded = new ArrayList<>();
         Iterator<Map.Entry<String, JsonNode>> components = health.path("components").fields();
         while (components.hasNext()) {
             Map.Entry<String, JsonNode> component = components.next();
-            if ("mqListener".equals(component.getKey())) {
+            if ("mqListener".equals(component.getKey()) || "mqConsumer".equals(component.getKey())) {
                 continue;
             }
             String status = component.getValue().path("status").asText("");

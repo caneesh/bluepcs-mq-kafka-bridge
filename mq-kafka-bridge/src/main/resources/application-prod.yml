@@ -185,6 +185,8 @@ management:
       # downstream dependency (Kafka/HDFS) has an outage — restarting a healthy JVM
       # every cycle during a broker incident is pure churn and destroys the diagnostic
       # signal. Humans and the Control-M monitor keep using the full aggregate endpoint.
+      # mqConsumer (consumer actually registered on the queue) is deliberately NOT in
+      # this group for the same reason; monitor.sh reports it as exit 2.
       group:
         liveness:
           include: mqListener,ping

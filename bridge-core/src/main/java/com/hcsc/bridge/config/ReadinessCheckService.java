@@ -295,7 +295,18 @@ public class ReadinessCheckService {
             ResponseEntity<String> response = restTemplate.postForEntity(oauthTokenUrl, request, String.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {
-                String message = "OAuth token acquired successfully";
+                // A 2xx alone proves nothing: an STS behind a gateway can answer 200 with
+                // {} or an HTML page. Apply the runtime provider's own acceptance rule so
+                // validate-only cannot approve a deployment whose first message would fail.
+                String token = com.hcsc.bridge.security.OAuth2JwtTokenProvider.tokenFrom(response.getBody());
+                if (token == null) {
+                    String message = "OAuth token endpoint answered " + response.getStatusCode()
+                            + " but the body carries no recognized token field (fields: "
+                            + responseFieldNames(response.getBody()) + ")";
+                    logger.error("[FAIL] {}: {}", name, message);
+                    return CheckResult.fail(name, message);
+                }
+                String message = "OAuth token acquired successfully (" + token.length() + " chars)";
                 logger.info("[PASS] {}: {}", name, message);
                 return CheckResult.pass(name, message);
             } else {
@@ -314,6 +325,21 @@ public class ReadinessCheckService {
             String message = "OAuth token acquisition failed - " + SecretMaskingUtil.maskSecrets(detail);
             logger.error("[FAIL] {}: {}", name, message);
             return CheckResult.fail(name, message);
+        }
+    }
+
+    /** Field NAMES of a JSON body for diagnostics (never values: one could be the token). */
+    private static String responseFieldNames(String body) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode json = new ObjectMapper().readTree(body == null ? "" : body);
+            if (json == null || !json.isObject()) {
+                return "<not a JSON object>";
+            }
+            List<String> names = new ArrayList<>();
+            json.fieldNames().forEachRemaining(names::add);
+            return names.isEmpty() ? "<none>" : String.join(",", names);
+        } catch (Exception e) {
+            return "<unparseable>";
         }
     }
 

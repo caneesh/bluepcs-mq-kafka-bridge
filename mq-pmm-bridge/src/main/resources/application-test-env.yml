@@ -79,6 +79,7 @@ management:
   endpoint:
     health:
       show-details: always
+      # mqConsumer is deliberately excluded (see the PMM+ prod profile); monitor.sh covers it
       group:
         liveness:
           include: mqListener,ping

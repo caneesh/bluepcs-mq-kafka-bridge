@@ -116,6 +116,7 @@ management:
     health:
       show-details: always
       # Supervisor liveness group — see application-prod.yml for the reasoning
+      # mqConsumer is deliberately excluded (see the PMM+ prod profile); monitor.sh covers it
       group:
         liveness:
           include: mqListener,ping
