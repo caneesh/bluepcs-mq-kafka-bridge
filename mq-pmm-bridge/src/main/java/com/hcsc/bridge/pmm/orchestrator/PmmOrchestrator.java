@@ -2,6 +2,7 @@ package com.hcsc.bridge.pmm.orchestrator;
 
 import com.hcsc.bridge.audit.AuditEvent;
 import com.hcsc.bridge.audit.AuditEventType;
+import com.hcsc.bridge.audit.AuditMetadata;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.core.ProcessingContext;
@@ -103,9 +104,9 @@ public class PmmOrchestrator {
                 originalMqMessageId, eventId, ctx.getBridgeMessageId(), pathResolver.windowLabel(anchor));
 
         publishAudit(ctx, AuditEventType.MESSAGE_RECEIVED, "Message received from MQ", null,
-                metadata("payloadBytes", payloadBytes(mqMessage.getPayload()),
-                        "anchorSource", anchorSource,
-                        "window", pathResolver.windowLabel(anchor)));
+                metadata(AuditMetadata.PAYLOAD_BYTES, payloadBytes(mqMessage.getPayload()),
+                        AuditMetadata.ANCHOR_SOURCE, anchorSource,
+                        AuditMetadata.WINDOW, pathResolver.windowLabel(anchor)));
 
         try {
             PmmExtractedValues values = extractor.extract(mqMessage.getPayload(), originalMqMessageId);
@@ -120,7 +121,7 @@ public class PmmOrchestrator {
                             eventId, existing);
                     publishAudit(ctx, AuditEventType.HDFS_WRITE_SKIPPED,
                             "Target file already present before the API call: " + existing, null,
-                            metadata("hdfsPath", existing, "reason", "target-exists-before-api-call"));
+                            metadata(AuditMetadata.HDFS_PATH, existing, AuditMetadata.REASON, "target-exists-before-api-call"));
                     publishAudit(ctx, AuditEventType.PROCESSING_COMPLETED,
                             "Message already landed (redelivery)", null, metadata());
                     return ProcessingResult.success(eventId, existing);
@@ -131,19 +132,19 @@ public class PmmOrchestrator {
             PmmApiResponse response = apiClient.submit(requestXml, eventId);
             publishAudit(ctx, AuditEventType.API_CALL_COMPLETED,
                     "PMM API responded " + response.getStatusCode(), null,
-                    metadata("statusCode", response.getStatusCode(),
-                            "responseBytes", payloadBytes(response.getBody()),
-                            "durationMs", response.getDurationMs()));
+                    metadata(AuditMetadata.STATUS_CODE, response.getStatusCode(),
+                            AuditMetadata.RESPONSE_BYTES, payloadBytes(response.getBody()),
+                            AuditMetadata.DURATION_MS, response.getDurationMs()));
 
             HdfsWriteResult hdfsResult = hdfsWriter.write(targetPath, response.getBody(), originalMqMessageId);
             AuditEventType hdfsEventType = hdfsResult.isAlreadyExists()
                     ? AuditEventType.HDFS_WRITE_SKIPPED
                     : AuditEventType.HDFS_WRITE_COMPLETED;
             publishAudit(ctx, hdfsEventType, "HDFS write completed: " + hdfsResult.getHdfsPath(), null,
-                    metadata("hdfsPath", hdfsResult.getHdfsPath(),
-                            "checksum", hdfsResult.getChecksum() != null ? hdfsResult.getChecksum() : "",
-                            "bytesWritten", hdfsResult.getBytesWritten(),
-                            "window", pathResolver.windowLabel(anchor)));
+                    metadata(AuditMetadata.HDFS_PATH, hdfsResult.getHdfsPath(),
+                            AuditMetadata.CHECKSUM, hdfsResult.getChecksum() != null ? hdfsResult.getChecksum() : "",
+                            AuditMetadata.BYTES_WRITTEN, hdfsResult.getBytesWritten(),
+                            AuditMetadata.WINDOW, pathResolver.windowLabel(anchor)));
 
             publishAudit(ctx, AuditEventType.PROCESSING_COMPLETED, "Message processed successfully", null,
                     metadata());
@@ -227,7 +228,7 @@ public class PmmOrchestrator {
      */
     private ProcessingResult handleApiFailure(ProcessingContext ctx, MqMessage mqMessage, PmmApiException e) {
         publishAudit(ctx, AuditEventType.API_CALL_FAILED, "PMM API call failure", e.getMessage(),
-                metadata("statusCode", e.getStatusCode(), "retryable", e.isRetryable()));
+                metadata(AuditMetadata.STATUS_CODE, e.getStatusCode(), AuditMetadata.RETRYABLE, e.isRetryable()));
 
         if (!e.isRetryable()) {
             logger.error("Non-retryable API failure for eventId {}: {} — quarantining", ctx.getEventId(), e.getMessage());
@@ -271,7 +272,7 @@ public class PmmOrchestrator {
                     ctx.getEventId(), errorCode, result.getHdfsPath());
             publishAudit(ctx, AuditEventType.MESSAGE_QUARANTINED,
                     description + "; raw payload quarantined to " + result.getHdfsPath(), errorMessage,
-                    metadata("errorCode", errorCode, "hdfsPath", result.getHdfsPath()));
+                    metadata(AuditMetadata.ERROR_CODE, errorCode, AuditMetadata.HDFS_PATH, result.getHdfsPath()));
             return ProcessingResult.quarantined(ctx.getEventId(), result.getHdfsPath(), errorCode, errorMessage);
         } catch (RuntimeException quarantineFailure) {
             logger.error("Quarantine write failed for eventId {} — message will stay on the queue for redelivery",
@@ -287,7 +288,7 @@ public class PmmOrchestrator {
      */
     static Map<String, Object> metadata(Object... keyValues) {
         Map<String, Object> map = new HashMap<>();
-        map.put("pipeline", PIPELINE);
+        map.put(AuditMetadata.PIPELINE, PIPELINE);
         for (int i = 0; i + 1 < keyValues.length; i += 2) {
             map.put(String.valueOf(keyValues[i]), keyValues[i + 1]);
         }

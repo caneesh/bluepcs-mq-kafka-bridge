@@ -6,6 +6,7 @@ import com.hcsc.bridge.api.MarketingPlanApiClient;
 import com.hcsc.bridge.api.MarketingPlanApiClient.EnrichmentResult;
 import com.hcsc.bridge.audit.AuditEvent;
 import com.hcsc.bridge.audit.AuditEventType;
+import com.hcsc.bridge.audit.AuditMetadata;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.core.ProcessingContext;
@@ -83,7 +84,7 @@ public class BridgeOrchestrator {
                 originalMqMessageId, eventId, ctx.getBridgeMessageId());
 
         publishAudit(ctx, null, AuditEventType.MESSAGE_RECEIVED, "Message received from MQ", null,
-                Map.of("payloadBytes", payloadBytes(mqMessage.getPayload())));
+                Map.of(AuditMetadata.PAYLOAD_BYTES, payloadBytes(mqMessage.getPayload())));
 
         try {
             ParsedPayload parsedPayload = messageParser.parse(mqMessage);
@@ -141,9 +142,9 @@ public class BridgeOrchestrator {
                     : AuditEventType.HDFS_WRITE_COMPLETED;
             publishAudit(ctx, enrichedPayload.getTransactionId(), hdfsEventType,
                     "HDFS write completed: " + hdfsResult.getHdfsPath(), null,
-                    Map.of("hdfsPath", hdfsResult.getHdfsPath(),
-                           "checksum", hdfsResult.getChecksum() != null ? hdfsResult.getChecksum() : "",
-                           "bytesWritten", hdfsResult.getBytesWritten()));
+                    Map.of(AuditMetadata.HDFS_PATH, hdfsResult.getHdfsPath(),
+                           AuditMetadata.CHECKSUM, hdfsResult.getChecksum() != null ? hdfsResult.getChecksum() : "",
+                           AuditMetadata.BYTES_WRITTEN, hdfsResult.getBytesWritten()));
 
             String notification = notificationFactory.buildNotification(
                     wrapper,
@@ -154,7 +155,7 @@ public class BridgeOrchestrator {
             String kafkaOffset = kafkaPublisher.publish(enrichedPayload.getEventId(), notification);
             publishAudit(ctx, enrichedPayload.getTransactionId(),
                     AuditEventType.KAFKA_PUBLISH_COMPLETED, "Published to Kafka, offset: " + kafkaOffset, null,
-                    Map.of("kafkaOffset", kafkaOffset));
+                    Map.of(AuditMetadata.KAFKA_OFFSET, kafkaOffset));
 
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.PROCESSING_COMPLETED, "Message processed successfully", null);
@@ -200,16 +201,16 @@ public class BridgeOrchestrator {
         EnrichmentWrapperFactory.WrapperResult wrapper = wrapperFactory.parse(landed.getContent());
         publishAudit(ctx, transactionId, AuditEventType.HDFS_WRITE_SKIPPED,
                 "Resumed from landed payload: " + landed.getPath(), null,
-                Map.of("hdfsPath", landed.getPath(),
-                       "checksum", landed.getChecksum() != null ? landed.getChecksum() : "",
-                       "bytesWritten", 0,
-                       "reason", reason));
+                Map.of(AuditMetadata.HDFS_PATH, landed.getPath(),
+                       AuditMetadata.CHECKSUM, landed.getChecksum() != null ? landed.getChecksum() : "",
+                       AuditMetadata.BYTES_WRITTEN, 0,
+                       AuditMetadata.REASON, reason));
 
         String notification = notificationFactory.buildNotification(
                 wrapper, parsedPayload.getEntityId(), landed.getPath(), landed.getChecksum(), ctx.getEventId());
         String kafkaOffset = kafkaPublisher.publish(ctx.getEventId(), notification);
         publishAudit(ctx, transactionId, AuditEventType.KAFKA_PUBLISH_COMPLETED,
-                "Published to Kafka, offset: " + kafkaOffset, null, Map.of("kafkaOffset", kafkaOffset));
+                "Published to Kafka, offset: " + kafkaOffset, null, Map.of(AuditMetadata.KAFKA_OFFSET, kafkaOffset));
         publishAudit(ctx, transactionId, AuditEventType.PROCESSING_COMPLETED,
                 "Message processed successfully (resumed)", null);
         return ProcessingResult.success(ctx.getEventId(), landed.getPath(), kafkaOffset);
@@ -300,8 +301,8 @@ public class BridgeOrchestrator {
             publishAudit(ctx, null, AuditEventType.MESSAGE_QUARANTINED,
                     description + "; raw payload quarantined to " + quarantineResult.getHdfsPath(),
                     errorMessage,
-                    Map.of("errorCode", errorCode,
-                           "hdfsPath", quarantineResult.getHdfsPath()));
+                    Map.of(AuditMetadata.ERROR_CODE, errorCode,
+                           AuditMetadata.HDFS_PATH, quarantineResult.getHdfsPath()));
             return ProcessingResult.quarantined(ctx.getEventId(), quarantineResult.getHdfsPath(),
                     errorCode, errorMessage);
         } catch (RuntimeException quarantineFailure) {

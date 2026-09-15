@@ -442,7 +442,7 @@ class MqMessageListenerTest {
             // not a durable copy. Leave it on the queue; the next delivery retries the quarantine.
             assertThatThrownBy(() -> listener.onMessage(textMessage))
                     .isInstanceOf(MqProcessingException.class)
-                    .hasMessageContaining("quarantined");
+                    .hasMessageContaining("POISON_QUARANTINE_FAILED");
 
             verify(textMessage, never()).acknowledge();
             verify(orchestrator, never()).process(any());

@@ -1,5 +1,6 @@
 package com.hcsc.bridge.mq;
 
+import com.hcsc.bridge.orchestrator.ProcessingResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -82,6 +83,62 @@ public final class JmsMessageSupport {
             logger.debug("Could not extract queue name from message", e);
         }
         return "UNKNOWN";
+    }
+
+    /**
+     * Applies {@link ProcessingResult}'s acknowledgement rule to the JMS message: the one
+     * place either bridge decides between "the broker's copy can go" and "leave it on the
+     * queue". Both listeners call this instead of branching on the status themselves, so a
+     * disposition decision cannot drift between the two pipelines.
+     *
+     * <p>An acknowledge failure is logged, never rethrown. Whatever made the result
+     * acknowledgeable is already durable, and throwing here would only cause a redelivery
+     * that both pipelines resolve idempotently anyway.
+     *
+     * @throws MqProcessingException when the result is not acknowledgeable, which is how the
+     *         listener container leaves the message unacknowledged for redelivery
+     */
+    public static void settle(Message message, ProcessingResult result, String messageId) {
+        if (!result.isAcknowledgeable()) {
+            logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
+            throw new MqProcessingException("Processing failed: " + result.getErrorCode(),
+                    messageId, result.getErrorMessage());
+        }
+        switch (result.getStatus()) {
+            case SUCCESS:
+                acknowledgeSettled(message, result, messageId,
+                        "processed successfully (eventId=" + result.getEventId() + ")");
+                break;
+            case QUARANTINED:
+                logger.warn("Message {} quarantined ({}): payload preserved at {}; acknowledging",
+                        messageId, result.getErrorCode(), result.getHdfsPath());
+                acknowledgeSettled(message, result, messageId, "quarantined");
+                break;
+            case DISCARDED:
+                if (result.getHdfsPath() != null) {
+                    logger.warn("Message {} discarded ({}): payload preserved at {}; acknowledging",
+                            messageId, result.getErrorCode(), result.getHdfsPath());
+                } else {
+                    logger.warn("Message {} discarded ({}) with no payload to preserve ({}); acknowledging",
+                            messageId, result.getErrorCode(), result.getNoEvidenceReason());
+                }
+                acknowledgeSettled(message, result, messageId, "discarded");
+                break;
+            default:
+                throw new IllegalStateException("Unhandled acknowledgeable status: " + result.getStatus());
+        }
+    }
+
+    private static void acknowledgeSettled(Message message, ProcessingResult result, String messageId,
+                                           String what) {
+        try {
+            message.acknowledge();
+            logger.info("Acknowledged message {}: {}", messageId, what);
+        } catch (JMSException e) {
+            logger.error("Message {} was {} but the acknowledge failed (eventId={}). The broker will "
+                            + "redeliver it; the redelivery resolves to the same durable outcome",
+                    messageId, what, result.getEventId(), e);
+        }
     }
 
     /**

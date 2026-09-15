@@ -1,6 +1,7 @@
 package com.hcsc.bridge.pmm.mq;
 
 import com.hcsc.bridge.audit.AuditEvent;
+import com.hcsc.bridge.audit.AuditMetadata;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
@@ -98,7 +99,12 @@ public class PmmMqMessageListener {
                 logger.error("Received unsupported message type {}, acknowledging to discard",
                         message.getClass().getName());
                 auditDiscardedUnsupportedMessage(message);
-                acknowledgeQuietly(message, "unsupported-message-type discard");
+                // No payload to preserve for a type this bridge cannot read; the disposition
+                // says so rather than leaving an unexplained acknowledgement.
+                JmsMessageSupport.settle(message, ProcessingResult.discardedWithoutPayload(
+                        discardIdentity(readHeaderQuietly(message::getJMSMessageID, "JMSMessageID")),
+                        "unsupported message type " + message.getClass().getName(),
+                        "UNSUPPORTED_TYPE", "Only TextMessage and BytesMessage are supported"), messageId);
                 return;
             }
 
@@ -147,17 +153,9 @@ public class PmmMqMessageListener {
 
             ProcessingResult result = orchestrator.process(mqMessage);
 
-            if (result.isSuccessful()) {
-                acknowledgeProcessedMessage(message, messageId, result.getEventId());
-            } else if (result.isQuarantined()) {
-                logger.warn("Message {} quarantined ({}): payload preserved at {}; acknowledging",
-                        messageId, result.getErrorCode(), result.getHdfsPath());
-                acknowledgeQuietly(message, "quarantined-message ack (messageId=" + messageId + ")");
-            } else {
-                logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
-                throw new MqProcessingException("Processing failed: " + result.getErrorCode(),
-                        messageId, result.getErrorMessage());
-            }
+            // One rule for every outcome, shared with the PMM+ bridge: acknowledge only what
+            // is terminal and durable, otherwise leave the message on the queue.
+            JmsMessageSupport.settle(message, result, messageId);
 
         } catch (JMSException e) {
             logger.error("JMS exception processing message: {}", messageId, e);
@@ -169,43 +167,55 @@ public class PmmMqMessageListener {
         }
     }
 
-    /**
-     * The work is durable once we get here; an ack failure is logged, never rethrown. The
-     * broker redelivers, and the orchestrator's exists() pre-check then skips the API call.
-     */
-    private void acknowledgeProcessedMessage(Message message, String messageId, String eventId) {
-        try {
-            message.acknowledge();
-            logger.info("Successfully processed and acknowledged message: eventId={}", eventId);
-        } catch (JMSException e) {
-            logger.error("Message processed successfully but acknowledge failed: messageId={}, eventId={}. "
-                    + "The broker will redeliver; the existing target file will be detected and no "
-                    + "second API call made", messageId, eventId, e);
-        }
-    }
-
     private void discardPoisonMessage(Message message, String messageId, String correlationId,
                                       String payload, String queueName, int deliveryCount) {
         String eventId = discardEventId(messageId, payload);
         String preservedAt = quarantineDiscardedPayload(eventId, messageId, payload);
-        if (payload != null && preservedAt == null) {
-            // The whole point of the guard is to unblock the queue WITHOUT losing the
-            // message. If the quarantine write failed (HDFS outage) there is no durable copy
-            // yet: leave the message on the queue — the next delivery retries the
-            // quarantine, and the redelivery backoff keeps the loop slow. An unreadable body
-            // (payload == null) has nothing to preserve and is discarded below; the queue
-            // manager's backout queue is the durable option for those.
+        String identity = discardIdentity(eventId != null ? eventId : messageId);
+        String detail = "Exceeded max delivery attempts (" + deliveryCount + ")";
+        ProcessingResult disposition;
+        if (payload == null) {
+            disposition = ProcessingResult.discardedWithoutPayload(identity,
+                    "message body was unreadable on every delivery", "POISON", detail);
+        } else if (preservedAt == null) {
+            // The guard exists to unblock the queue WITHOUT losing the message: with no durable
+            // copy the message stays on the queue and the next delivery retries the quarantine.
+            disposition = ProcessingResult.failure(identity, "POISON_QUARANTINE_FAILED",
+                    "quarantine write failed; message left on the queue");
+        } else {
+            disposition = ProcessingResult.discarded(identity, preservedAt, "POISON", detail);
+        }
+
+        if (disposition.isAcknowledgeable()) {
+            logger.error("POISON MESSAGE: discarding after {} delivery attempts (bridge.mq.max-delivery-attempts={}): "
+                            + "messageId={}, correlationId={}, queue={}. Payload preserved at: {}",
+                    deliveryCount, maxDeliveryAttempts, messageId, sanitizeForLog(correlationId),
+                    sanitizeForLog(queueName),
+                    preservedAt != null ? preservedAt : disposition.getNoEvidenceReason());
+            auditPoisonDiscard(disposition, eventId, messageId, correlationId, queueName, deliveryCount, preservedAt);
+        } else {
             logger.error("POISON MESSAGE: quarantine write failed for messageId={} on delivery {} — NOT "
                     + "acknowledging (no durable copy); will retry the quarantine on redelivery",
                     messageId, deliveryCount);
-            throw new MqProcessingException("Poison message could not be quarantined", messageId,
-                    "quarantine write failed; message left on the queue");
         }
-        logger.error("POISON MESSAGE: discarding after {} delivery attempts (bridge.mq.max-delivery-attempts={}): "
-                        + "messageId={}, correlationId={}, queue={}. Payload preserved at: {}",
-                deliveryCount, maxDeliveryAttempts, messageId, sanitizeForLog(correlationId),
-                sanitizeForLog(queueName), preservedAt);
+        JmsMessageSupport.settle(message, disposition, messageId);
+    }
+
+    private void auditPoisonDiscard(ProcessingResult disposition, String eventId, String messageId,
+                                    String correlationId, String queueName, int deliveryCount,
+                                    String preservedAt) {
         try {
+            Map<String, Object> metadata = new java.util.HashMap<>();
+            metadata.put(AuditMetadata.PIPELINE, PmmOrchestrator.PIPELINE);
+            metadata.put(AuditMetadata.ERROR_CODE, "POISON");
+            metadata.put(AuditMetadata.HDFS_PATH, preservedAt != null ? preservedAt : "");
+            if (disposition.getNoEvidenceReason() != null) {
+                metadata.put(AuditMetadata.NO_EVIDENCE_REASON, disposition.getNoEvidenceReason());
+            }
+            metadata.put(AuditMetadata.DELIVERY_COUNT, deliveryCount);
+            metadata.put(AuditMetadata.MAX_DELIVERY_ATTEMPTS, maxDeliveryAttempts);
+            metadata.put(AuditMetadata.SOURCE_QUEUE, queueName);
+            metadata.put(AuditMetadata.CORRELATION_ID, correlationId != null ? correlationId : "");
             auditPublisher.publishAsync(AuditEvent.builder()
                     .auditEventId(UUID.randomUUID().toString())
                     .eventId(eventId)
@@ -214,23 +224,17 @@ public class PmmMqMessageListener {
                     .eventType(AuditEventType.MESSAGE_DISCARDED)
                     .description("Poison message discarded after " + deliveryCount
                             + " delivery attempts (max " + maxDeliveryAttempts + ")")
-                    // eventId + errorCode make this the message's TERMINAL event for the gap
-                    // and balance checks (its earlier MESSAGE_RECEIVED would otherwise read
-                    // as stuck forever); hdfsPath says where the payload was preserved
-                    .metadata(Map.of(
-                            "errorCode", "POISON",
-                            "hdfsPath", preservedAt != null ? preservedAt : "",
-                            "pipeline", PmmOrchestrator.PIPELINE,
-                            "deliveryCount", deliveryCount,
-                            "maxDeliveryAttempts", maxDeliveryAttempts,
-                            "sourceQueue", queueName,
-                            "correlationId", correlationId != null ? correlationId : ""))
+                    .metadata(metadata)
                     .errorMessage("Exceeded max delivery attempts")
                     .build());
         } catch (RuntimeException e) {
             logger.error("Failed to publish MESSAGE_DISCARDED audit event for messageId={}", messageId, e);
         }
-        acknowledgeQuietly(message, "poison-message discard (messageId=" + messageId + ")");
+    }
+
+    /** A non-null identity for the disposition of a message we may not be able to identify. */
+    private static String discardIdentity(String candidate) {
+        return candidate != null && !candidate.isEmpty() ? candidate : "<unidentified-message>";
     }
 
     /** Same derivation as the orchestrator, so the discard event joins the message's other audit rows. */
@@ -286,7 +290,7 @@ public class PmmMqMessageListener {
                     .eventType(AuditEventType.MESSAGE_DISCARDED)
                     .description("Unsupported message type discarded: " + message.getClass().getName())
                     .metadata(Map.of(
-                            "pipeline", PmmOrchestrator.PIPELINE,
+                            AuditMetadata.PIPELINE, PmmOrchestrator.PIPELINE,
                             "messageClass", message.getClass().getName(),
                             "sourceQueue", extractQueueName(message)))
                     .errorMessage("Only TextMessage and BytesMessage are supported")

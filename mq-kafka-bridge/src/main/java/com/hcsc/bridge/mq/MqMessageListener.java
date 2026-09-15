@@ -1,6 +1,7 @@
 package com.hcsc.bridge.mq;
 
 import com.hcsc.bridge.audit.AuditEvent;
+import com.hcsc.bridge.audit.AuditMetadata;
 import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
@@ -17,6 +18,10 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
 
+import static com.hcsc.bridge.mq.JmsMessageSupport.extractQueueName;
+import static com.hcsc.bridge.mq.JmsMessageSupport.readHeaderQuietly;
+import static com.hcsc.bridge.mq.JmsMessageSupport.sanitizeForLog;
+
 import javax.jms.JMSException;
 import javax.jms.Message;
 import javax.jms.TextMessage;
@@ -30,7 +35,6 @@ public class MqMessageListener {
 
     private static final Logger logger = LoggerFactory.getLogger(MqMessageListener.class);
     private static final int MAX_LOGGED_PAYLOAD_CHARS = 500;
-    private static final String JMSX_DELIVERY_COUNT = "JMSXDeliveryCount";
 
     private final BridgeOrchestrator orchestrator;
     private final AuditPublisher auditPublisher;
@@ -78,9 +82,12 @@ public class MqMessageListener {
                 logger.error("Received unsupported message type {}, acknowledging to discard",
                         message.getClass().getName());
                 auditDiscardedNonTextMessage(message);
-                // Lenient ack: an ack failure while discarding must not trigger redelivery
-                // of a message we cannot process anyway.
-                acknowledgeQuietly(message, "unsupported-message-type discard");
+                // There is no payload to preserve for a type this bridge cannot read, which the
+                // disposition states explicitly rather than leaving as an unexplained ack.
+                JmsMessageSupport.settle(message, ProcessingResult.discardedWithoutPayload(
+                        discardIdentity(readHeaderQuietly(message::getJMSMessageID, "JMSMessageID")),
+                        "unsupported message type " + message.getClass().getName(),
+                        "UNSUPPORTED_TYPE", "Only TextMessage is supported"), messageId);
                 return;
             }
 
@@ -91,7 +98,7 @@ public class MqMessageListener {
             // message forever with the guard never consulted.
             messageId = readHeaderQuietly(textMessage::getJMSMessageID, "JMSMessageID");
             String correlationId = readHeaderQuietly(textMessage::getJMSCorrelationID, "JMSCorrelationID");
-            int deliveryCount = getDeliveryCount(message);
+            int deliveryCount = JmsMessageSupport.getDeliveryCount(message);
             String queueName = extractQueueName(message);
             boolean poison = maxDeliveryAttempts > 0 && deliveryCount > maxDeliveryAttempts;
 
@@ -147,20 +154,9 @@ public class MqMessageListener {
 
             ProcessingResult result = orchestrator.process(mqMessage);
 
-            if (result.isSuccessful()) {
-                acknowledgeProcessedMessage(message, messageId, result.getEventId());
-            } else if (result.isQuarantined()) {
-                // Permanent failure, payload preserved in the HDFS quarantine directory —
-                // acknowledge so the bad message cannot block the queue. Ack failure is
-                // tolerable: redelivery re-quarantines idempotently to the same file.
-                logger.warn("Message {} quarantined ({}): payload preserved at {}; acknowledging",
-                        messageId, result.getErrorCode(), result.getHdfsPath());
-                acknowledgeQuietly(message, "quarantined-message ack (messageId=" + messageId + ")");
-            } else {
-                logger.error("Processing failed for message {}: {}", messageId, result.getErrorMessage());
-                throw new MqProcessingException("Processing failed: " + result.getErrorCode(),
-                        messageId, result.getErrorMessage());
-            }
+            // One rule for every outcome, shared with the PMM bridge: acknowledge only what
+            // is terminal and durable, otherwise leave the message on the queue.
+            JmsMessageSupport.settle(message, result, messageId);
 
         } catch (JMSException e) {
             logger.error("JMS exception processing message: {}", messageId, e);
@@ -201,26 +197,61 @@ public class MqMessageListener {
                                       String payload, String queueName, int deliveryCount) {
         String eventId = discardEventId(messageId, payload);
         String preservedAt = quarantineDiscardedPayload(eventId, messageId, payload);
-        if (payload != null && preservedAt == null) {
-            // The whole point of the guard is to unblock the queue WITHOUT losing the
-            // message. If the quarantine write failed (HDFS outage) there is no durable copy
-            // yet: leave the message on the queue — the next delivery retries the
-            // quarantine, and the redelivery backoff keeps the loop slow. An unreadable body
-            // (payload == null) has nothing to preserve and is discarded below; the queue
-            // manager's backout queue is the durable option for those.
+        ProcessingResult disposition = poisonDisposition(eventId, messageId, payload, preservedAt, deliveryCount);
+
+        if (disposition.isAcknowledgeable()) {
+            logger.error("POISON MESSAGE: discarding after {} delivery attempts "
+                            + "(bridge.mq.max-delivery-attempts={}): messageId={}, correlationId={}, queue={}. "
+                            + "Payload preserved at: {}",
+                    deliveryCount, maxDeliveryAttempts, messageId, sanitizeForLog(correlationId),
+                    sanitizeForLog(queueName), preservedAt != null ? preservedAt : disposition.getNoEvidenceReason());
+            auditPoisonDiscard(disposition, eventId, messageId, correlationId, queueName, deliveryCount);
+        } else {
             logger.error("POISON MESSAGE: quarantine write failed for messageId={} on delivery {} — NOT "
                     + "acknowledging (no durable copy); will retry the quarantine on redelivery",
                     messageId, deliveryCount);
-            throw new MqProcessingException("Poison message could not be quarantined", messageId,
+        }
+        JmsMessageSupport.settle(message, disposition, messageId);
+    }
+
+    /**
+     * The disposition of a poison message. Acknowledging is only safe once the payload is
+     * durably preserved, or when there was no readable payload to preserve at all - the guard
+     * exists to unblock the queue without losing the message, so a failed quarantine write
+     * leaves it on the queue for the next delivery to retry.
+     */
+    private ProcessingResult poisonDisposition(String eventId, String messageId, String payload,
+                                               String preservedAt, int deliveryCount) {
+        String identity = discardIdentity(eventId != null ? eventId : messageId);
+        String detail = "Exceeded max delivery attempts (" + deliveryCount + ")";
+        if (payload == null) {
+            return ProcessingResult.discardedWithoutPayload(identity,
+                    "message body was unreadable on every delivery", "POISON", detail);
+        }
+        if (preservedAt == null) {
+            return ProcessingResult.failure(identity, "POISON_QUARANTINE_FAILED",
                     "quarantine write failed; message left on the queue");
         }
-        logger.error("POISON MESSAGE: discarding after {} delivery attempts "
-                        + "(bridge.mq.max-delivery-attempts={}): messageId={}, correlationId={}, queue={}. "
-                        + "Payload preserved at: {}",
-                deliveryCount, maxDeliveryAttempts, messageId, sanitizeForLog(correlationId),
-                sanitizeForLog(queueName), preservedAt);
+        return ProcessingResult.discarded(identity, preservedAt, "POISON", detail);
+    }
 
+    private void auditPoisonDiscard(ProcessingResult disposition, String eventId, String messageId,
+                                    String correlationId, String queueName, int deliveryCount) {
         try {
+            Map<String, Object> metadata = new java.util.HashMap<>();
+            // eventId + errorCode make this the message's TERMINAL event for the gap and balance
+            // checks (its earlier MESSAGE_RECEIVED would otherwise read as stuck forever);
+            // hdfsPath says where the payload was preserved, or why nothing could be.
+            metadata.put(AuditMetadata.ERROR_CODE, "POISON");
+            metadata.put(AuditMetadata.HDFS_PATH,
+                    disposition.getHdfsPath() != null ? disposition.getHdfsPath() : "");
+            if (disposition.getNoEvidenceReason() != null) {
+                metadata.put(AuditMetadata.NO_EVIDENCE_REASON, disposition.getNoEvidenceReason());
+            }
+            metadata.put(AuditMetadata.DELIVERY_COUNT, deliveryCount);
+            metadata.put(AuditMetadata.MAX_DELIVERY_ATTEMPTS, maxDeliveryAttempts);
+            metadata.put(AuditMetadata.SOURCE_QUEUE, queueName);
+            metadata.put(AuditMetadata.CORRELATION_ID, correlationId != null ? correlationId : "");
             auditPublisher.publishAsync(AuditEvent.builder()
                     .auditEventId(UUID.randomUUID().toString())
                     .eventId(eventId)
@@ -229,24 +260,18 @@ public class MqMessageListener {
                     .eventType(AuditEventType.MESSAGE_DISCARDED)
                     .description("Poison message discarded after " + deliveryCount
                             + " delivery attempts (max " + maxDeliveryAttempts + ")")
-                    // eventId + errorCode make this the message's TERMINAL event for the gap
-                    // and balance checks (its earlier MESSAGE_RECEIVED would otherwise read
-                    // as stuck forever); hdfsPath says where the payload was preserved
-                    .metadata(Map.of(
-                            "errorCode", "POISON",
-                            "hdfsPath", preservedAt != null ? preservedAt : "",
-                            "deliveryCount", deliveryCount,
-                            "maxDeliveryAttempts", maxDeliveryAttempts,
-                            "sourceQueue", queueName,
-                            "correlationId", correlationId != null ? correlationId : ""))
+                    .metadata(metadata)
                     .errorMessage("Exceeded max delivery attempts")
                     .build());
         } catch (RuntimeException e) {
-            // Never let audit failure prevent the acknowledge below.
+            // Never let audit failure prevent the acknowledge that unblocks the queue.
             logger.error("Failed to publish MESSAGE_DISCARDED audit event for messageId={}", messageId, e);
         }
+    }
 
-        acknowledgeQuietly(message, "poison-message discard (messageId=" + messageId + ")");
+    /** A non-null identity for the disposition of a message we may not be able to identify. */
+    private static String discardIdentity(String candidate) {
+        return candidate != null && !candidate.isEmpty() ? candidate : "<unidentified-message>";
     }
 
     /**
@@ -294,10 +319,10 @@ public class MqMessageListener {
      * persistently failing message, trading queue latency for not melting logs/audit.
      */
     private void throttleRedelivery(int deliveryCount, String messageId) {
-        if (redeliveryBackoffMs <= 0 || deliveryCount <= 1) {
+        long delay = JmsMessageSupport.redeliveryDelayMs(deliveryCount, redeliveryBackoffMs, redeliveryBackoffMaxMs);
+        if (delay <= 0) {
             return;
         }
-        long delay = Math.min((deliveryCount - 1) * redeliveryBackoffMs, redeliveryBackoffMaxMs);
         logger.info("Redelivery {} of message {}; backing off {} ms before processing",
                 deliveryCount, messageId, delay);
         try {
@@ -306,11 +331,6 @@ public class MqMessageListener {
             Thread.currentThread().interrupt();
             logger.warn("Redelivery backoff interrupted for message {}; continuing", messageId);
         }
-    }
-
-    /** Strips CR/LF from message-derived values so a crafted header cannot forge log lines. */
-    private static String sanitizeForLog(String value) {
-        return value == null ? null : value.replaceAll("[\\r\\n]", "_");
     }
 
     /**
@@ -342,65 +362,4 @@ public class MqMessageListener {
         }
     }
 
-    @FunctionalInterface
-    private interface HeaderReader {
-        String read() throws JMSException;
-    }
-
-    /**
-     * Header reads must never bypass the poison guard: a header that throws on every
-     * delivery (like a converted body can) would otherwise redeliver the message forever
-     * with the guard never consulted. WARN, not DEBUG — a missing JMSMessageID also
-     * changes eventId derivation (the payload-hash fallback takes over).
-     */
-    private String readHeaderQuietly(HeaderReader reader, String headerName) {
-        try {
-            return reader.read();
-        } catch (JMSException e) {
-            logger.warn("Could not read {} header; continuing without it: {}", headerName, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Reads JMSXDeliveryCount (1 = first delivery). Returns 1 when the property is missing or
-     * unreadable so that missing broker metadata can never cause a message to be discarded.
-     */
-    private int getDeliveryCount(Message message) {
-        try {
-            if (message.propertyExists(JMSX_DELIVERY_COUNT)) {
-                return message.getIntProperty(JMSX_DELIVERY_COUNT);
-            }
-        } catch (JMSException e) {
-            // WARN, not DEBUG: if this fails persistently the poison guard is silently
-            // inoperative, and the on-call engineer needs to see why a known-poison
-            // message is not being discarded.
-            logger.warn("Could not read {} from message; poison guard sees delivery count 1",
-                    JMSX_DELIVERY_COUNT, e);
-        }
-        return 1;
-    }
-
-    /**
-     * Acknowledges a message on a discard path. Failures are logged, never thrown: throwing here
-     * would trigger redelivery of a message we have already decided to drop.
-     */
-    private void acknowledgeQuietly(Message message, String context) {
-        try {
-            message.acknowledge();
-        } catch (JMSException e) {
-            logger.error("Acknowledge failed during {}; the broker may redeliver this message", context, e);
-        }
-    }
-
-    private String extractQueueName(Message message) {
-        try {
-            if (message.getJMSDestination() != null) {
-                return message.getJMSDestination().toString();
-            }
-        } catch (JMSException e) {
-            logger.debug("Could not extract queue name from message", e);
-        }
-        return "UNKNOWN";
-    }
 }
