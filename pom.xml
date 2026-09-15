@@ -20,8 +20,9 @@
     <description>
         Reactor for the BluePCS bridge applications. bridge-core is the shared library;
         every other module is a bootable Spring Boot application with its own JVM,
-        systemd unit and .env. The dependency list below is inherited by all modules
-        so each bootable jar carries exactly the same runtime classpath.
+        systemd unit and .env. This parent owns VERSIONS and plugins only: each module
+        declares the dependencies it actually uses, so the module graph is the real
+        boundary between shared infrastructure and an application's own concerns.
     </description>
 
     <modules>
@@ -146,288 +147,63 @@
                 <artifactId>zookeeper</artifactId>
                 <version>${zookeeper.version}</version>
             </dependency>
+            <!-- Transitive versions the old single-pom build fixed by declaration order
+                 (hadoop-client sat at depth 1 and won mediation). Pinned explicitly so the
+                 modules resolve the same classpath the deployed jars were validated with;
+                 upgrading any of them is a separate, testable change. -->
+            <dependency>
+                <groupId>commons-cli</groupId>
+                <artifactId>commons-cli</artifactId>
+                <version>1.2</version>
+            </dependency>
+            <dependency>
+                <groupId>commons-io</groupId>
+                <artifactId>commons-io</artifactId>
+                <version>2.8.0</version>
+            </dependency>
+            <dependency>
+                <groupId>com.thoughtworks.paranamer</groupId>
+                <artifactId>paranamer</artifactId>
+                <version>2.3</version>
+            </dependency>
+
+            <!-- Versions for the artifacts the modules declare. Modules choose WHICH
+                 dependencies they need; this block only decides WHICH VERSION, so the
+                 three jars can never disagree. -->
+            <dependency>
+                <groupId>javax.jms</groupId>
+                <artifactId>javax.jms-api</artifactId>
+                <version>2.0.1</version>
+            </dependency>
+            <dependency>
+                <groupId>com.ibm.mq</groupId>
+                <artifactId>mq-jms-spring-boot-starter</artifactId>
+                <version>${ibm.mq.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.ibm.mq</groupId>
+                <artifactId>com.ibm.mq.allclient</artifactId>
+                <version>9.3.4.1</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>mockwebserver</artifactId>
+                <version>${okhttp.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.assertj</groupId>
+                <artifactId>assertj-core</artifactId>
+                <version>${assertj.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <dependencies>
-        <!-- ================================================================== -->
-        <!-- Spring Boot Core -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-            <exclusions>
-                <!-- Exclude to avoid SLF4J binding conflicts -->
-                <exclusion>
-                    <groupId>org.apache.logging.log4j</groupId>
-                    <artifactId>log4j-to-slf4j</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- IBM MQ / JMS (javax.jms, NOT jakarta) -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-jms</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>javax.jms</groupId>
-            <artifactId>javax.jms-api</artifactId>
-            <version>2.0.1</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.ibm.mq</groupId>
-            <artifactId>mq-jms-spring-boot-starter</artifactId>
-            <version>${ibm.mq.version}</version>
-            <exclusions>
-                <!-- Exclude Jakarta - we use javax -->
-                <exclusion>
-                    <groupId>jakarta.jms</groupId>
-                    <artifactId>jakarta.jms-api</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- IBM MQ client for full functionality -->
-        <dependency>
-            <groupId>com.ibm.mq</groupId>
-            <artifactId>com.ibm.mq.allclient</artifactId>
-            <version>9.3.4.1</version>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- Kafka -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-            <exclusions>
-                <!-- Use our managed Kafka version -->
-                <exclusion>
-                    <groupId>org.apache.kafka</groupId>
-                    <artifactId>kafka-clients</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>kafka-clients</artifactId>
-            <version>${kafka.version}</version>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- Hadoop HDFS -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-client</artifactId>
-            <version>${hadoop.version}</version>
-            <exclusions>
-                <!-- Exclude all logging to avoid conflicts -->
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-log4j12</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-reload4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>log4j</groupId>
-                    <artifactId>log4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>ch.qos.reload4j</groupId>
-                    <artifactId>reload4j</artifactId>
-                </exclusion>
-                <!-- Exclude servlet API conflicts -->
-                <exclusion>
-                    <groupId>javax.servlet</groupId>
-                    <artifactId>servlet-api</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>javax.servlet.jsp</groupId>
-                    <artifactId>jsp-api</artifactId>
-                </exclusion>
-                <!-- Exclude Jersey (not needed, conflicts with Spring) -->
-                <exclusion>
-                    <groupId>com.sun.jersey</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-hdfs-client</artifactId>
-            <version>${hadoop.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-log4j12</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-reload4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>log4j</groupId>
-                    <artifactId>log4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>ch.qos.reload4j</groupId>
-                    <artifactId>reload4j</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Hadoop auth explicitly to ensure version alignment -->
-        <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-auth</artifactId>
-            <version>${hadoop.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-log4j12</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-reload4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>log4j</groupId>
-                    <artifactId>log4j</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>ch.qos.reload4j</groupId>
-                    <artifactId>reload4j</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- Jackson (use Spring Boot managed versions) -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- HTTP Client -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>${okhttp.version}</version>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- JWT -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>${jjwt.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- Kerberos Support -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.apache.kerby</groupId>
-            <artifactId>kerb-simplekdc</artifactId>
-            <version>2.0.3</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- ================================================================== -->
-        <!-- Test Dependencies -->
-        <!-- ================================================================== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.junit.vintage</groupId>
-                    <artifactId>junit-vintage-engine</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- No kafka-clients exclusion here: excluding the artifact also strips the
-             test-classified jar EmbeddedKafkaBroker needs (NoClassDefFound MockTime).
-             dependencyManagement already pins kafka-clients to ${kafka.version}. -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <version>${assertj.version}</version>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>mockwebserver</artifactId>
-            <version>${okhttp.version}</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- H2 for local testing -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
     <build>
         <pluginManagement>
             <plugins>
@@ -438,12 +214,21 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <configuration>
                         <excludes>
-                            <!-- Exclude test-only dependencies from final JAR -->
+                            <!-- Belt and braces on top of the dependency-level exclusions in
+                                 bridge-core: whatever the transitive graph does, the bootable
+                                 artifact ships no embedded Kerberos server and no netty
+                                 transport. Both are unreachable from the bridge's code paths
+                                 and neither was in the validated deployed jar. -->
                             <exclude>
                                 <groupId>org.apache.kerby</groupId>
                                 <artifactId>kerb-simplekdc</artifactId>
                             </exclude>
                         </excludes>
+                        <!-- Whatever the transitive graph does, no bootable artifact ships the
+                             netty transport: it arrives only through zookeeper (via hadoop-auth),
+                             the bridge talks to no ZooKeeper, and the validated deployed jar did
+                             not carry it. -->
+                        <excludeGroupIds>io.netty</excludeGroupIds>
                     </configuration>
                 </plugin>
             </plugins>
@@ -499,14 +284,18 @@
                 </configuration>
             </plugin>
 
-            <!-- Dependency analysis plugin -->
+            <!-- Architectural guard rails. The banned-dependency rules are hard
+                 failures: they are what keeps the module boundaries real. Version
+                 convergence across the Hadoop/Kafka/MQ trees is reported but not
+                 fatal - those trees disagree with each other by nature, and the
+                 dependencyManagement pins above decide the outcome. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
                 <version>3.4.1</version>
                 <executions>
                     <execution>
-                        <id>enforce-versions</id>
+                        <id>enforce-rules</id>
                         <goals>
                             <goal>enforce</goal>
                         </goals>
@@ -525,6 +314,17 @@
                                         <exclude>org.slf4j:slf4j-log4j12</exclude>
                                     </excludes>
                                 </bannedDependencies>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report-convergence</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
                                 <dependencyConvergence/>
                             </rules>
                             <fail>false</fail>
