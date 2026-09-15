@@ -268,6 +268,14 @@ and reuses the shared modules. See `CONFIGURATION_GUIDE.md` §11 and
 PMM_LOCAL_SAMPLE_MESSAGE=docs/sample-pmm-message.xml BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh
 ```
 
+## Configuration
+
+[docs/CONFIGURATION_REFERENCE.md](docs/CONFIGURATION_REFERENCE.md) lists every property both
+bridges read: what the PMM+ bridge needs added to its existing `.env` (three optional
+variables, all defaulting to the behaviour you want), and the eleven values the PMM bridge
+cannot start without. [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) is the step-by-step
+walkthrough behind it.
+
 ## Deployment Checklist
 
 See [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) for a step-by-step walkthrough

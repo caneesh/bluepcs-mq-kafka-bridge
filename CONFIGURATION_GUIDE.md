@@ -6,6 +6,10 @@ to the next component.
 
 ---
 
+> Looking for the complete list of every variable both bridges read, and what changed for
+> the already-deployed PMM+ bridge? See [docs/CONFIGURATION_REFERENCE.md](docs/CONFIGURATION_REFERENCE.md).
+> This guide is the walkthrough for setting one up; that is the checklist for auditing one.
+
 ## 1. How configuration works (read this first)
 
 **One rule explains everything:** every setting in the YAML files looks like
