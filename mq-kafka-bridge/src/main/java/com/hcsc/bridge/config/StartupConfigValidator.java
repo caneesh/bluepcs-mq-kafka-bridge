@@ -6,6 +6,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import com.hcsc.bridge.diagnostics.startup.HdfsStartupRules;
+import com.hcsc.bridge.diagnostics.startup.KafkaStartupRules;
+import com.hcsc.bridge.diagnostics.startup.MqStartupRules;
+import com.hcsc.bridge.diagnostics.startup.StsStartupRules;
+
 import javax.annotation.PostConstruct;
 import java.io.File;
 import java.util.ArrayList;
@@ -149,61 +154,7 @@ public class StartupConfigValidator {
     }
 
     private void validateMqConfig(List<String> errors, List<String> warnings) {
-        logger.info("Validating MQ configuration...");
-
-        if (isBlank(mqHost)) {
-            errors.add("[MQ] bridge.mq.host is required");
-        } else {
-            logger.info("[MQ] Host: {}", mqHost);
-        }
-
-        if (mqPort <= 0 || mqPort > 65535) {
-            errors.add("[MQ] bridge.mq.port must be between 1 and 65535");
-        } else {
-            logger.info("[MQ] Port: {}", mqPort);
-        }
-
-        if (isBlank(mqQueueManager)) {
-            errors.add("[MQ] bridge.mq.queue-manager is required");
-        } else {
-            logger.info("[MQ] Queue Manager: {}", mqQueueManager);
-        }
-
-        if (isBlank(mqChannel)) {
-            errors.add("[MQ] bridge.mq.channel is required");
-        } else {
-            logger.info("[MQ] Channel: {}", mqChannel);
-        }
-
-        if (isBlank(mqQueue)) {
-            errors.add("[MQ] bridge.mq.queue is required");
-        } else {
-            logger.info("[MQ] Queue: {}", mqQueue);
-        }
-
-        if (isBlank(mqUsername)) {
-            warnings.add("[MQ] bridge.mq.username not set - anonymous connection");
-        } else {
-            logger.info("[MQ] Username: {}", mqUsername);
-        }
-
-        if (isBlank(mqPassword) && !isBlank(mqUsername)) {
-            // Some queue managers authenticate by user id / channel auth only
-            warnings.add("[MQ] bridge.mq.username set without a password - connecting without MQCSP password authentication");
-        } else if (!isBlank(mqPassword)) {
-            logger.info("[MQ] Password: ********");
-        }
-
-        // SSL coherence: enabled without a cipher fails at connection-factory creation
-        // with an opaque error; a cipher without the flag works (legacy trigger) but is
-        // implicit — surface both at validation time.
-        if (mqSslEnabled && isBlank(mqSslCipherSuite)) {
-            errors.add("[MQ] bridge.mq.ssl.enabled=true requires bridge.mq.ssl.cipher-suite "
-                    + "(must match the SVRCONN channel's SSLCIPH)");
-        } else if (!mqSslEnabled && !isBlank(mqSslCipherSuite)) {
-            warnings.add("[MQ] bridge.mq.ssl.cipher-suite is set without bridge.mq.ssl.enabled=true "
-                    + "- SSL is still configured (legacy trigger); set enabled=true to be explicit");
-        }
+        mqRules().validateMqConfig(errors, warnings);
     }
 
     /**
@@ -215,63 +166,19 @@ public class StartupConfigValidator {
      * component-test, monitor) never consume by design and are exempt.
      */
     void validateListenerGate(List<String> errors, List<String> warnings) {
-        boolean diagnosticMode = validateOnly || monitorEnabled
-                || !isBlank(componentTestMode) || !isBlank(replayMode);
-        if (diagnosticMode) {
-            return;
-        }
-        if (requireListenerEnabled && !mqListenerEnabled) {
-            errors.add("[MQ] bridge.mq.require-listener-enabled=true but the MQ listener is disabled - "
-                    + "the app would run healthy while consuming nothing. Pass "
-                    + "--bridge.mq.listener-enabled=true for go-live, or "
-                    + "--bridge.mq.require-listener-enabled=false for a deliberate safe-start.");
-        } else if (!mqListenerEnabled) {
-            warnings.add("[MQ] listener disabled (safe-start): the app will report UP but consume nothing");
-        }
+        mqRules().validateListenerGate(errors, warnings);
     }
 
     private void validateKafkaConfig(List<String> errors, List<String> warnings) {
-        logger.info("Validating Kafka configuration...");
+        new KafkaStartupRules(kafkaBootstrapServers, kafkaSecurityProtocol, kafkaTruststoreLocation,
+                kafkaTruststorePassword, kafkaAcks).validateKafkaTransport(errors, warnings);
 
-        if (isBlank(kafkaBootstrapServers)) {
-            errors.add("[KAFKA] bridge.kafka.bootstrap-servers is required");
-        } else {
-            logger.info("[KAFKA] Bootstrap Servers: {}", kafkaBootstrapServers);
-        }
-
+        // This application publishes claim-check notifications, so it owns the topic it
+        // publishes to and the coherence between its publish wait and the producer's budget.
         if (isBlank(kafkaTopic)) {
             errors.add("[KAFKA] bridge.kafka.topic is required");
         } else {
             logger.info("[KAFKA] Topic: {}", kafkaTopic);
-        }
-
-        logger.info("[KAFKA] Security Protocol: {}", kafkaSecurityProtocol);
-
-        // KafkaConfiguration hard-enables idempotence, which the producer only accepts
-        // with acks=all. Any other value fails at FIRST SEND (lazy producer
-        // construction), not startup — surface it here instead.
-        if (!"all".equalsIgnoreCase(kafkaAcks) && !"-1".equals(kafkaAcks)) {
-            errors.add("[KAFKA] bridge.kafka.acks=" + kafkaAcks + " is invalid: the producer "
-                    + "runs with enable.idempotence=true, which requires acks=all");
-        }
-
-        if ("SASL_SSL".equals(kafkaSecurityProtocol) || "SSL".equals(kafkaSecurityProtocol)) {
-            if (isBlank(kafkaTruststoreLocation)) {
-                errors.add("[KAFKA] bridge.kafka.truststore-location is required for SSL");
-            } else {
-                File truststoreFile = new File(kafkaTruststoreLocation);
-                if (!truststoreFile.exists()) {
-                    errors.add("[KAFKA] Truststore file not found: " + kafkaTruststoreLocation);
-                } else {
-                    logger.info("[KAFKA] Truststore: {} (exists)", kafkaTruststoreLocation);
-                }
-            }
-
-            if (isBlank(kafkaTruststorePassword)) {
-                errors.add("[KAFKA] bridge.kafka.truststore-password is required for SSL (env: KAFKA_TRUSTSTORE_PASSWORD)");
-            } else {
-                logger.info("[KAFKA] Truststore Password: ********");
-            }
         }
 
         // Timeout coherence: the publisher's future.get() wait must exceed the producer's
@@ -292,44 +199,8 @@ public class StartupConfigValidator {
     }
 
     private void validateHdfsConfig(List<String> errors, List<String> warnings) {
-        logger.info("Validating HDFS configuration...");
-
-        if (isBlank(hdfsNamenode)) {
-            errors.add("[HDFS] bridge.hdfs.namenode is required");
-        } else {
-            logger.info("[HDFS] Namenode: {}", hdfsNamenode);
-        }
-
-        if (isBlank(hdfsBasePath)) {
-            errors.add("[HDFS] bridge.hdfs.base-path is required");
-        } else {
-            logger.info("[HDFS] Base Path: {}", hdfsBasePath);
-        }
-
-        if (hdfsKerberosEnabled) {
-            logger.info("[HDFS] Kerberos: ENABLED");
-
-            if (isBlank(hdfsKerberosPrincipal)) {
-                errors.add("[HDFS] bridge.hdfs.kerberos.principal is required when Kerberos is enabled");
-            } else {
-                logger.info("[HDFS] Kerberos Principal: {}", hdfsKerberosPrincipal);
-            }
-
-            if (isBlank(hdfsKerberosKeytab)) {
-                errors.add("[HDFS] bridge.hdfs.kerberos.keytab is required when Kerberos is enabled");
-            } else {
-                File keytabFile = new File(hdfsKerberosKeytab);
-                if (!keytabFile.exists()) {
-                    errors.add("[HDFS] Keytab file not found: " + hdfsKerberosKeytab);
-                } else if (!keytabFile.canRead()) {
-                    errors.add("[HDFS] Keytab file not readable: " + hdfsKerberosKeytab);
-                } else {
-                    logger.info("[HDFS] Keytab: {} (exists, readable)", hdfsKerberosKeytab);
-                }
-            }
-        } else {
-            logger.info("[HDFS] Kerberos: DISABLED");
-        }
+        new HdfsStartupRules(hdfsNamenode, hdfsBasePath, hdfsKerberosEnabled,
+                hdfsKerberosPrincipal, hdfsKerberosKeytab).validateHdfsConfig(errors, warnings);
     }
 
     private void validateApiConfig(List<String> errors, List<String> warnings) {
@@ -347,29 +218,8 @@ public class StartupConfigValidator {
     }
 
     private void validateOAuthConfig(List<String> errors, List<String> warnings) {
-        logger.info("Validating OAuth configuration...");
-
-        if (isBlank(oauthTokenUrl)) {
-            errors.add("[OAUTH] bridge.security.token-url is required");
-        } else {
-            if (!oauthTokenUrl.startsWith("http://") && !oauthTokenUrl.startsWith("https://")) {
-                errors.add("[OAUTH] bridge.security.token-url must start with http:// or https://");
-            } else {
-                logger.info("[OAUTH] Token URL: {}", oauthTokenUrl);
-            }
-        }
-
-        if (isBlank(oauthClientId)) {
-            errors.add("[OAUTH] bridge.security.client-id is required");
-        } else {
-            logger.info("[OAUTH] Client ID: {}", oauthClientId);
-        }
-
-        if (isBlank(oauthClientSecret)) {
-            errors.add("[OAUTH] bridge.security.client-secret is required (env: OAUTH_CLIENT_SECRET)");
-        } else {
-            logger.info("[OAUTH] Client Secret: ********");
-        }
+        new StsStartupRules(oauthTokenUrl, oauthClientId, oauthClientSecret)
+                .validateOAuthConfig(errors, warnings);
     }
 
     private void logValidationSummary(List<String> errors, List<String> warnings) {
@@ -380,6 +230,19 @@ public class StartupConfigValidator {
         for (String warning : warnings) {
             logger.warn(warning);
         }
+    }
+
+    /**
+     * The MQ rules, with this application's notion of a diagnostic JVM: validate-only,
+     * component-test, monitor and replay modes never consume by design, so the go-live gate
+     * does not apply to them.
+     */
+    private MqStartupRules mqRules() {
+        boolean diagnosticMode = validateOnly || monitorEnabled
+                || !isBlank(componentTestMode) || !isBlank(replayMode);
+        return new MqStartupRules(mqHost, mqPort, mqQueueManager, mqChannel, mqQueue, mqUsername,
+                mqPassword, mqSslEnabled, mqSslCipherSuite, mqListenerEnabled, requireListenerEnabled,
+                diagnosticMode, " (env: MQ_QUEUE)");
     }
 
     private boolean isBlank(String value) {

@@ -8,6 +8,11 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
 
+import com.hcsc.bridge.diagnostics.startup.HdfsStartupRules;
+import com.hcsc.bridge.diagnostics.startup.KafkaStartupRules;
+import com.hcsc.bridge.diagnostics.startup.MqStartupRules;
+import com.hcsc.bridge.diagnostics.startup.StsStartupRules;
+
 import javax.annotation.PostConstruct;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
@@ -48,6 +53,8 @@ public class PmmStartupConfigValidator {
     @Value("${bridge.kafka.security-protocol:SASL_SSL}") private String kafkaSecurityProtocol;
     @Value("${bridge.kafka.truststore-location:}") private String kafkaTruststoreLocation;
     @Value("${bridge.kafka.truststore-password:}") private String kafkaTruststorePassword;
+    // Needed by the shared transport rule: the producer runs with idempotence enabled.
+    @Value("${bridge.kafka.acks:all}") private String kafkaAcks;
 
     @Value("${bridge.hdfs.namenode:}") private String hdfsNamenode;
     @Value("${bridge.hdfs.base-path:}") private String hdfsBasePath;
@@ -103,91 +110,36 @@ public class PmmStartupConfigValidator {
     }
 
     void validateMqConfig(List<String> errors, List<String> warnings) {
-        if (isBlank(mqHost)) errors.add("[MQ] bridge.mq.host is required");
-        if (mqPort < 1 || mqPort > 65535) errors.add("[MQ] bridge.mq.port must be between 1 and 65535");
-        if (isBlank(mqQueueManager)) errors.add("[MQ] bridge.mq.queue-manager is required");
-        if (isBlank(mqChannel)) errors.add("[MQ] bridge.mq.channel is required");
-        if (isBlank(mqQueue)) {
-            errors.add("[MQ] bridge.mq.queue is required (env: PMM_MQ_QUEUE) - the PMM bridge never falls back to the PMM+ queue");
-        } else {
-            logger.info("[MQ] Queue: {} on {}:{} ({}/{})", mqQueue, mqHost, mqPort, mqQueueManager, mqChannel);
-        }
-        if (isBlank(mqUsername)) {
-            warnings.add("[MQ] bridge.mq.username not set - anonymous connection");
-        } else if (isBlank(mqPassword)) {
-            warnings.add("[MQ] bridge.mq.username set without a password - connecting without MQCSP password authentication");
-        }
-        if (mqSslEnabled && isBlank(mqSslCipherSuite)) {
-            errors.add("[MQ] bridge.mq.ssl.enabled=true requires bridge.mq.ssl.cipher-suite");
-        }
+        mqRules().validateMqConfig(errors, warnings);
     }
 
     /** Go-live gate, identical semantics to the PMM+ bridge; diagnostic JVMs are exempt. */
     void validateListenerGate(List<String> errors, List<String> warnings) {
-        if (validateOnly || monitorEnabled) {
-            return;
-        }
-        if (requireListenerEnabled && !mqListenerEnabled) {
-            errors.add("[MQ] bridge.mq.require-listener-enabled=true but the MQ listener is disabled - "
-                    + "the app would run healthy while consuming nothing. Pass "
-                    + "--bridge.mq.listener-enabled=true for go-live, or "
-                    + "--bridge.mq.require-listener-enabled=false for a deliberate safe-start.");
-        } else if (!mqListenerEnabled) {
-            warnings.add("[MQ] listener disabled (safe-start): the app will report UP but consume nothing");
-        }
+        mqRules().validateListenerGate(errors, warnings);
     }
 
     void validateKafkaConfig(List<String> errors, List<String> warnings) {
+        // This bridge uses Kafka for the audit stream only, so the transport rules apply
+        // exactly when audit events are published to it.
         if (!"kafka".equalsIgnoreCase(auditPublisher)) {
             logger.info("[KAFKA] audit publisher is '{}' - Kafka configuration not required", auditPublisher);
             return;
         }
-        if (isBlank(kafkaBootstrapServers)) errors.add("[KAFKA] bridge.kafka.bootstrap-servers is required for the audit stream");
-        if (isBlank(kafkaAuditTopic)) errors.add("[KAFKA] bridge.kafka.audit-topic is required");
-        if ("SASL_SSL".equalsIgnoreCase(kafkaSecurityProtocol) || "SSL".equalsIgnoreCase(kafkaSecurityProtocol)) {
-            if (isBlank(kafkaTruststoreLocation)) {
-                errors.add("[KAFKA] bridge.kafka.truststore-location is required for SSL");
-            } else if (!new File(kafkaTruststoreLocation).exists()) {
-                errors.add("[KAFKA] Truststore file not found: " + kafkaTruststoreLocation);
-            }
-            if (isBlank(kafkaTruststorePassword)) {
-                errors.add("[KAFKA] bridge.kafka.truststore-password is required for SSL (env: KAFKA_TRUSTSTORE_PASSWORD)");
-            }
+        new KafkaStartupRules(kafkaBootstrapServers, kafkaSecurityProtocol, kafkaTruststoreLocation,
+                kafkaTruststorePassword, kafkaAcks).validateKafkaTransport(errors, warnings);
+        if (isBlank(kafkaAuditTopic)) {
+            errors.add("[KAFKA] bridge.kafka.audit-topic is required");
         }
     }
 
     void validateHdfsConfig(List<String> errors, List<String> warnings) {
-        if (isBlank(hdfsNamenode)) errors.add("[HDFS] bridge.hdfs.namenode is required");
-        if (isBlank(hdfsBasePath)) {
-            errors.add("[HDFS] bridge.hdfs.base-path is required (env: PMM_HDFS_BASE_PATH)");
-        } else {
-            logger.info("[HDFS] Landing tree root: {}", hdfsBasePath);
-        }
-        if (hdfsKerberosEnabled) {
-            if (isBlank(hdfsKerberosPrincipal)) {
-                errors.add("[HDFS] bridge.hdfs.kerberos.principal is required when Kerberos is enabled");
-            }
-            if (isBlank(hdfsKerberosKeytab)) {
-                errors.add("[HDFS] bridge.hdfs.kerberos.keytab is required when Kerberos is enabled");
-            } else {
-                File keytab = new File(hdfsKerberosKeytab);
-                if (!keytab.exists()) {
-                    errors.add("[HDFS] Keytab file not found: " + hdfsKerberosKeytab);
-                } else if (!keytab.canRead()) {
-                    errors.add("[HDFS] Keytab file not readable: " + hdfsKerberosKeytab);
-                }
-            }
-        }
+        new HdfsStartupRules(hdfsNamenode, hdfsBasePath, hdfsKerberosEnabled,
+                hdfsKerberosPrincipal, hdfsKerberosKeytab).validateHdfsConfig(errors, warnings);
     }
 
     void validateOAuthConfig(List<String> errors, List<String> warnings) {
-        if (isBlank(oauthTokenUrl)) {
-            errors.add("[OAUTH] bridge.security.token-url is required (env: PMM_OAUTH_TOKEN_URL)");
-        } else if (!isHttpUrl(oauthTokenUrl)) {
-            errors.add("[OAUTH] bridge.security.token-url must start with http:// or https://");
-        }
-        if (isBlank(oauthClientId)) errors.add("[OAUTH] bridge.security.client-id is required (env: OAUTH_CLIENT_ID)");
-        if (isBlank(oauthClientSecret)) errors.add("[OAUTH] bridge.security.client-secret is required (env: OAUTH_CLIENT_SECRET)");
+        new StsStartupRules(oauthTokenUrl, oauthClientId, oauthClientSecret)
+                .validateOAuthConfig(errors, warnings);
     }
 
     void validatePmmConfig(List<String> errors, List<String> warnings) {
@@ -226,6 +178,14 @@ public class PmmStartupConfigValidator {
         } catch (DateTimeException e) {
             errors.add("[PMM] bridge.pmm.hdfs.window-zone is not a valid zone id: " + windowZone);
         }
+    }
+
+    /** The MQ rules, with this application's diagnostic modes exempt from the go-live gate. */
+    private MqStartupRules mqRules() {
+        boolean diagnosticMode = validateOnly || monitorEnabled;
+        return new MqStartupRules(mqHost, mqPort, mqQueueManager, mqChannel, mqQueue, mqUsername,
+                mqPassword, mqSslEnabled, mqSslCipherSuite, mqListenerEnabled, requireListenerEnabled,
+                diagnosticMode, " (env: PMM_MQ_QUEUE) - the PMM bridge never falls back to the PMM+ queue");
     }
 
     private void validateXpath(List<String> errors, String key, String env, String expression) {
