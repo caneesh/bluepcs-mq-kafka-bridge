@@ -35,7 +35,7 @@ public class LocalMarketingPlanApiClient implements MarketingPlanApiClient {
 
     private JsonNode buildRawResponse(String entityId) {
         Map<String, Object> planIdentification = new HashMap<>();
-        planIdentification.put("marketingPlanIdentifier", "LOCAL-MP-" + entityId);
+        planIdentification.put("marketingPlanIdentifier", entityId);
         planIdentification.put("planName", "Local Mock Plan");
 
         Map<String, Object> changeEvent = new HashMap<>();

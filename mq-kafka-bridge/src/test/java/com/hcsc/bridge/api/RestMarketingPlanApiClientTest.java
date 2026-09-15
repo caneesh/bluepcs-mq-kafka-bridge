@@ -334,37 +334,56 @@ class RestMarketingPlanApiClientTest {
     class ResponseParsing {
 
         @Test
-        @DisplayName("should throw non-retryable on empty body")
-        void shouldThrowOnEmptyBody() {
-            mockServer.enqueue(new MockResponse()
-                    .setResponseCode(200)
-                    .setBody(""));
+        @DisplayName("should treat an empty 2xx body as retryable and recover on the next attempt")
+        void shouldRetryEmptyBody() {
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(""));
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(planResponseBody("ENT-011")));
 
             client = createClient();
 
-            assertThatThrownBy(() -> client.enrich(createPayload("ENT-011")))
-                    .isInstanceOf(EnrichmentException.class)
-                    .satisfies(e -> {
-                        EnrichmentException ex = (EnrichmentException) e;
-                        assertThat(ex.isRetryable()).isFalse();
-                    });
+            assertThat(client.enrich(createPayload("ENT-011")).getMarketingPlanId()).isEqualTo("ENT-011");
+            assertThat(mockServer.getRequestCount()).isEqualTo(2);
         }
 
         @Test
-        @DisplayName("should throw non-retryable on invalid JSON")
-        void shouldThrowOnInvalidJson() {
-            mockServer.enqueue(new MockResponse()
-                    .setResponseCode(200)
-                    .setBody("not-valid-json"));
+        @DisplayName("should treat malformed JSON in a 2xx body as retryable and use the subsequent valid response")
+        void shouldRetryInvalidJson() {
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody("not-valid-json"));
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(planResponseBody("ENT-012")));
 
             client = createClient();
 
-            assertThatThrownBy(() -> client.enrich(createPayload("ENT-012")))
+            assertThat(client.enrich(createPayload("ENT-012")).getMarketingPlanId()).isEqualTo("ENT-012");
+            assertThat(mockServer.getRequestCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("should never quarantine for a persistently malformed 2xx: retryable after the attempts are exhausted")
+        void persistentlyMalformedStaysRetryable() {
+            for (int i = 0; i < 3; i++) {
+                mockServer.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
+            }
+
+            client = createClient();
+
+            assertThatThrownBy(() -> client.enrich(createPayload("ENT-013")))
                     .isInstanceOf(EnrichmentException.class)
-                    .satisfies(e -> {
-                        EnrichmentException ex = (EnrichmentException) e;
-                        assertThat(ex.isRetryable()).isFalse();
-                    });
+                    .hasMessageContaining("PlanResponse")
+                    .satisfies(e -> assertThat(((EnrichmentException) e).isRetryable()).isTrue());
+            assertThat(mockServer.getRequestCount()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("should reject a 2xx document without a PlanResponse object")
+        void requiresPlanResponse() {
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody("{\"status\":\"ok\"}"));
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody("{\"PlanResponse\":{}}"));
+            mockServer.enqueue(new MockResponse().setResponseCode(200).setBody(planResponseBody("ENT-014")));
+
+            client = createClient();
+
+            assertThat(client.enrich(createPayload("ENT-014")).getMarketingPlanId()).isEqualTo("ENT-014");
+            assertThat(mockServer.getRequestCount()).isEqualTo(3);
         }
     }
 

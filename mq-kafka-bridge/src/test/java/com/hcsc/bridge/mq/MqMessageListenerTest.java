@@ -429,8 +429,8 @@ class MqMessageListenerTest {
         }
 
         @Test
-        @DisplayName("should still discard and acknowledge when the quarantine write fails")
-        void shouldStillDiscardWhenQuarantineWriteFails() throws JMSException {
+        @DisplayName("should NOT acknowledge a poison message whose quarantine write failed (no durable copy)")
+        void shouldNotAckWhenQuarantineWriteFails() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
             stubTextMessage("MSG-POISON-Q2", 4);
             org.mockito.Mockito.lenient().when(eventIdGenerator.generateEventId(any(String.class)))
@@ -438,12 +438,15 @@ class MqMessageListenerTest {
             when(payloadWriter.writeQuarantine(any(), any(), any()))
                     .thenThrow(new RuntimeException("HDFS down"));
 
-            // The discard must complete anyway — an unbounded redelivery loop is worse
-            // than falling back to the masked log copy.
-            listener.onMessage(textMessage);
+            // Acknowledging here would be message loss: the masked log copy is forensics,
+            // not a durable copy. Leave it on the queue; the next delivery retries the quarantine.
+            assertThatThrownBy(() -> listener.onMessage(textMessage))
+                    .isInstanceOf(MqProcessingException.class)
+                    .hasMessageContaining("quarantined");
 
-            verify(textMessage).acknowledge();
+            verify(textMessage, never()).acknowledge();
             verify(orchestrator, never()).process(any());
+            verify(auditPublisher, never()).publishAsync(any());
         }
 
         @Test

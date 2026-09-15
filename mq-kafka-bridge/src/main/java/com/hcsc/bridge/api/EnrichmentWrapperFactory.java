@@ -117,6 +117,26 @@ public class EnrichmentWrapperFactory {
         }
     }
 
+    /**
+     * Rebuilds the {@link WrapperResult} from a wrapper JSON that landed on an earlier
+     * delivery, so a redelivery can republish the claim-check notification without
+     * calling the API again. The stored bytes are authoritative: the two derived fields
+     * are read back from the document, never re-derived.
+     */
+    public WrapperResult parse(String wrapperJson) {
+        try {
+            JsonNode wrapper = objectMapper.readTree(wrapperJson);
+            if (wrapper == null || !wrapper.isObject() || !wrapper.has("RestAPIResponse")) {
+                throw new IllegalStateException("Landed payload is not an enrichment wrapper");
+            }
+            return new WrapperResult(wrapperJson,
+                    wrapper.path("changeEventTimeStamp").asText(DEFAULT_CHANGE_EVENT_TIMESTAMP),
+                    wrapper.path("changeEventTypeName").asText(DEFAULT_CHANGE_EVENT_TYPE_NAME));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Landed payload is not valid JSON: " + e.getOriginalMessage(), e);
+        }
+    }
+
     /** The wrapper JSON plus the two derived fields it embeds. */
     public static final class WrapperResult {
         private final String wrapperJson;

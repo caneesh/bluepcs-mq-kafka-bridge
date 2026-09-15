@@ -208,14 +208,26 @@ class RestPmmApiClientTest {
         }
 
         @Test
-        @DisplayName("an empty 2xx body is permanent")
-        void emptyBody() {
+        @DisplayName("an empty 2xx body is retried and the next non-empty response is used")
+        void emptyBodyRetried() {
             server.enqueue(new MockResponse().setResponseCode(200));
+            server.enqueue(new MockResponse().setBody(RESPONSE));
+
+            assertThat(client.submit(REQUEST, "evt-1").getBody()).isEqualTo(RESPONSE);
+            assertThat(server.getRequestCount()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("a persistently empty 2xx body stays retryable (message remains on the queue)")
+        void emptyBodyPersistent() {
+            for (int i = 0; i < 3; i++) {
+                server.enqueue(new MockResponse().setResponseCode(200));
+            }
 
             assertThatThrownBy(() -> client.submit(REQUEST, "evt-1"))
                     .isInstanceOf(PmmApiException.class)
                     .hasMessageContaining("Empty")
-                    .satisfies(e -> assertThat(((PmmApiException) e).isRetryable()).isFalse());
+                    .satisfies(e -> assertThat(((PmmApiException) e).isRetryable()).isTrue());
         }
 
         @Test

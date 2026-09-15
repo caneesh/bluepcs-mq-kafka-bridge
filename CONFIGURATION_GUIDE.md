@@ -244,6 +244,8 @@ the LB isn't forwarding port 8020.
 
 | Variable | Default | Only change if... |
 |---|---|---|
+| `API_PLAN_ID_MISMATCH` | `reject` | the gateway is known to return a reformatted `marketingPlanIdentifier`; `warn` logs instead of quarantining |
+| `HDFS_ARCHIVE_PATH` | `<HDFS_BASE_PATH>/archive` | the consumer moves processed files somewhere else — a redelivery that finds its file there is treated as complete |
 | `AUDIT_HIVE_TABLE` | `bluepcs_mq_listener` | audit table name changes |
 | `LOG_DIRECTORY` | `/datalakedm/prod/gold/integration/logs/product/bluepcs/talend` | logs should go elsewhere (dir must be writable) |
 

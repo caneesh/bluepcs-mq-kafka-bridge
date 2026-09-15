@@ -200,6 +200,19 @@ public class MqMessageListener {
     private void discardPoisonMessage(Message message, String messageId, String correlationId,
                                       String payload, String queueName, int deliveryCount) {
         String preservedAt = quarantineDiscardedPayload(messageId, payload);
+        if (payload != null && preservedAt == null) {
+            // The whole point of the guard is to unblock the queue WITHOUT losing the
+            // message. If the quarantine write failed (HDFS outage) there is no durable copy
+            // yet: leave the message on the queue — the next delivery retries the
+            // quarantine, and the redelivery backoff keeps the loop slow. An unreadable body
+            // (payload == null) has nothing to preserve and is discarded below; the queue
+            // manager's backout queue is the durable option for those.
+            logger.error("POISON MESSAGE: quarantine write failed for messageId={} on delivery {} — NOT "
+                    + "acknowledging (no durable copy); will retry the quarantine on redelivery",
+                    messageId, deliveryCount);
+            throw new MqProcessingException("Poison message could not be quarantined", messageId,
+                    "quarantine write failed; message left on the queue");
+        }
         logger.error("POISON MESSAGE: discarding after {} delivery attempts "
                         + "(bridge.mq.max-delivery-attempts={}): messageId={}, correlationId={}, queue={}. "
                         + "Payload preserved at: {}",
@@ -230,9 +243,9 @@ public class MqMessageListener {
     }
 
     /**
-     * Preserves a to-be-discarded payload in the HDFS quarantine directory and returns its path.
-     * Falls back to a masked, truncated log dump only when the quarantine write fails — losing
-     * the payload entirely would be worse than a bounded, masked log line.
+     * Preserves a to-be-discarded payload in the HDFS quarantine directory and returns its path,
+     * or null when the write failed (a masked, truncated log copy is emitted for forensics, but
+     * it is NOT a durable copy — the caller must not acknowledge on null).
      */
     private String quarantineDiscardedPayload(String messageId, String payload) {
         if (payload == null) {
@@ -253,7 +266,7 @@ public class MqMessageListener {
             }
             logger.error("Last (masked, truncated) copy of discarded payload for messageId={}:\n{}",
                     messageId, masked);
-            return "<quarantine write failed - see log>";
+            return null;
         }
     }
 

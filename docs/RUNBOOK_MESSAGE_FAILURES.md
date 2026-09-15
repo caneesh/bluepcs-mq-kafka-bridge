@@ -73,6 +73,13 @@ Two things to know:
   orchestrator), so they sit **outside** the audited funnel and carry a null `event_id`.
   The ABC balance check reports them as a separate INFO line rather than a drain.
 
+**Preservation before acknowledgement (both bridges):** the guard acknowledges only after
+the payload was durably written to the quarantine directory. If that write fails (HDFS
+outage) the message is left on the queue and the next delivery retries the quarantine;
+the masked, truncated log copy is forensics, not a durable copy. Only a body that cannot
+be read at all (charset conversion failure on every delivery) is discarded without a copy,
+because there is nothing to preserve; use the queue manager's backout queue for those.
+
 ## 4. API errors and "no data"
 
 Retry policy: `bridge.api.retry-attempts` = 3, `bridge.api.timeout-seconds` = 30,
@@ -185,6 +192,32 @@ silently replacing a file that downstream may already have consumed is worse tha
    difference is understood), then let the redelivery re-write it.
 4. Confirm recovery: the next delivery should produce `HDFS_WRITE_COMPLETED` (or
    `HDFS_WRITE_SKIPPED`) followed by `PROCESSING_COMPLETED`.
+
+### 6a. Redelivery resumes from the landed file (why the wedge no longer forms)
+
+Since September 2026 the orchestrator looks for `<base-path>/<eventId>.json` and
+`<archive-path>/<eventId>.json` **before** calling the enrichment API. A redelivery
+after a Kafka failure or an ack failure therefore never asks the API again (which
+could return a newer plan version that the writer would refuse against the landed
+bytes): it republishes the claim-check notification from the landed file with that
+file's checksum (`HDFS_WRITE_SKIPPED`, `reason=resumed-from-landing`). A file the
+consumer has already moved to the archive means the message is complete
+(`reason=already-archived`): no re-land, no republish. `bridge.hdfs.archive-path`
+must therefore point where the consumer moves processed files (default
+`<base-path>/archive`, the same as the retention sweep).
+
+The checksum wedge in §6 can now only arise if someone replaces a landed file by hand.
+
+### 6b. Wrong plan, empty or malformed API answers
+
+- The API's `marketingPlanIdentifier` must equal the one the MQ notification asked
+  for. A different one is quarantined with `errorCode=ENRICHMENT_ERROR`
+  (`bridge.api.plan-id-mismatch=reject`, the default); `warn` restores the old log-only
+  behaviour for a gateway known to reformat identifiers.
+- A 2xx with an empty body, malformed JSON or no `PlanResponse` object is the
+  gateway's fault, not the message's: it is retried within the attempt budget and, if
+  it persists, the message stays on the queue (no ack) instead of being quarantined.
+  The same applies to an empty 2xx from the PMM web service.
 
 ## 7. Clearing a stuck message — options and trade-offs
 

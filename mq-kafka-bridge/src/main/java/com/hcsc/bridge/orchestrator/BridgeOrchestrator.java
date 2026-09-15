@@ -22,6 +22,7 @@ import com.hcsc.bridge.parser.MessageParseException;
 import com.hcsc.bridge.parser.MessageParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -43,6 +44,16 @@ public class BridgeOrchestrator {
     private final KafkaEnvelopePublisher kafkaPublisher;
     private final EventIdGenerator eventIdGenerator;
     private final AuditPublisher auditPublisher;
+
+    /**
+     * What to do when the API's marketingPlanIdentifier differs from the one the MQ
+     * notification asked for: {@code reject} (default) quarantines the message for review,
+     * because the notification would otherwise advertise MP-001 for a file holding MP-999;
+     * {@code warn} keeps the old log-only behaviour for environments whose gateway is
+     * known to reformat identifiers.
+     */
+    @Value("${bridge.api.plan-id-mismatch:reject}")
+    private String planIdMismatchPolicy = "reject";
 
     public BridgeOrchestrator(
             MessageParser messageParser,
@@ -79,6 +90,15 @@ public class BridgeOrchestrator {
             publishAudit(ctx, parsedPayload.getTransactionId(),
                     AuditEventType.MESSAGE_PARSED, "Message parsed successfully", null);
 
+            // Redelivery: if this message's payload already landed (Kafka or the ack failed
+            // last time), resume from the stored bytes. Calling the API again could return
+            // a different version, which the writer would refuse against the existing file
+            // and the message would never get past the write again.
+            HdfsSafePayloadWriter.LandedPayload landed = hdfsWriter.findLanded(eventId);
+            if (landed != null) {
+                return resumeFromLanded(ctx, parsedPayload, landed);
+            }
+
             EnrichmentResult enrichmentResult = apiClient.enrich(parsedPayload);
             EnrichedPayload enrichedPayload = buildEnrichedPayload(parsedPayload, ctx, enrichmentResult);
             publishAudit(ctx, parsedPayload.getTransactionId(),
@@ -91,9 +111,18 @@ public class BridgeOrchestrator {
             String apiPlanId = enrichmentResult.getMarketingPlanId();
             if (apiPlanId != null && !apiPlanId.isEmpty()
                     && !apiPlanId.equals(parsedPayload.getEntityId())) {
-                logger.warn("Enrichment plan-id mismatch for eventId {}: MQ says '{}' but the "
-                                + "API response says '{}' — verify gateway routing",
-                        ctx.getEventId(), parsedPayload.getEntityId(), apiPlanId);
+                if ("warn".equalsIgnoreCase(planIdMismatchPolicy)) {
+                    logger.warn("Enrichment plan-id mismatch for eventId {}: MQ says '{}' but the "
+                                    + "API response says '{}' — verify gateway routing",
+                            ctx.getEventId(), parsedPayload.getEntityId(), apiPlanId);
+                } else {
+                    // Landing MP-999 while advertising MP-001 would be wrong data published as
+                    // success. Permanent (quarantine + ack): the same request yields the same
+                    // wrong plan until someone fixes the gateway routing.
+                    throw new EnrichmentException("Enrichment returned plan '" + apiPlanId
+                            + "' for requested plan '" + parsedPayload.getEntityId() + "'",
+                            parsedPayload.getEntityId(), 0, false);
+                }
             }
 
             // The full wrapper document goes to HDFS (it can exceed the broker's ~1 MB
@@ -148,6 +177,51 @@ public class BridgeOrchestrator {
             // redelivery loop. Audit it and return a failure so redelivery stays visible.
             return handleUnexpectedFailure(ctx, e);
         }
+    }
+
+    /**
+     * Completes a redelivered message from the payload that already landed. A file still
+     * in the landing directory means the consumer has not processed it yet: republish the
+     * claim-check notification from the stored wrapper (at-least-once; the consumer dedupes
+     * on eventId). A file already in the archive means the consumer has processed it (or
+     * the retention sweep aged it out, after which the consumer treats a re-land as an
+     * already-processed duplicate anyway): nothing to republish.
+     */
+    private ProcessingResult resumeFromLanded(ProcessingContext ctx, ParsedPayload parsedPayload,
+                                              HdfsSafePayloadWriter.LandedPayload landed) {
+        String transactionId = parsedPayload.getTransactionId();
+        if (landed.isArchived()) {
+            logger.info("Redelivery of eventId {}: payload already archived at {} — nothing to do",
+                    ctx.getEventId(), landed.getPath());
+            publishAudit(ctx, transactionId, AuditEventType.HDFS_WRITE_SKIPPED,
+                    "Payload already archived downstream: " + landed.getPath(), null,
+                    Map.of("hdfsPath", landed.getPath(),
+                           "checksum", landed.getChecksum() != null ? landed.getChecksum() : "",
+                           "bytesWritten", 0,
+                           "reason", "already-archived"));
+            publishAudit(ctx, transactionId, AuditEventType.PROCESSING_COMPLETED,
+                    "Message already processed downstream (redelivery)", null);
+            return ProcessingResult.success(ctx.getEventId(), landed.getPath(), null);
+        }
+
+        logger.info("Redelivery of eventId {}: resuming from landed payload {} without calling the API",
+                ctx.getEventId(), landed.getPath());
+        EnrichmentWrapperFactory.WrapperResult wrapper = wrapperFactory.parse(landed.getContent());
+        publishAudit(ctx, transactionId, AuditEventType.HDFS_WRITE_SKIPPED,
+                "Resumed from landed payload: " + landed.getPath(), null,
+                Map.of("hdfsPath", landed.getPath(),
+                       "checksum", landed.getChecksum() != null ? landed.getChecksum() : "",
+                       "bytesWritten", 0,
+                       "reason", "resumed-from-landing"));
+
+        String notification = notificationFactory.buildNotification(
+                wrapper, parsedPayload.getEntityId(), landed.getPath(), landed.getChecksum(), ctx.getEventId());
+        String kafkaOffset = kafkaPublisher.publish(ctx.getEventId(), notification);
+        publishAudit(ctx, transactionId, AuditEventType.KAFKA_PUBLISH_COMPLETED,
+                "Published to Kafka, offset: " + kafkaOffset, null, Map.of("kafkaOffset", kafkaOffset));
+        publishAudit(ctx, transactionId, AuditEventType.PROCESSING_COMPLETED,
+                "Message processed successfully (resumed)", null);
+        return ProcessingResult.success(ctx.getEventId(), landed.getPath(), kafkaOffset);
     }
 
     /**

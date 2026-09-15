@@ -54,6 +54,10 @@ bridge:
     base-path: ${HDFS_BASE_PATH:/data/bridge/payloads}
     # Quarantine dir for unparseable messages; empty = <base-path>/errors
     error-path: ${HDFS_ERROR_PATH:}
+    # Where the consumer moves processed files (and the sweep moves aged ones); empty =
+    # <base-path>/archive. A redelivery that finds its file here is complete: no API call,
+    # no re-land, no republish.
+    archive-path: ${HDFS_ARCHIVE_PATH:}
     temp-suffix: .tmp
     replication: ${HDFS_REPLICATION:3}
     namenode: ${HDFS_NAMENODE:hdfs://localhost:9000}
@@ -68,6 +72,10 @@ bridge:
   api:
     base-url: ${API_BASE_URL:http://localhost:8080}
     timeout-seconds: ${API_TIMEOUT_SECONDS:30}
+    # reject (default): an API response whose marketingPlanIdentifier differs from the one
+    # the MQ notification asked for is quarantined instead of landed + published.
+    # warn: log only (legacy behaviour).
+    plan-id-mismatch: ${API_PLAN_ID_MISMATCH:reject}
 
   # OAuth2/JWT Security - must be provided by deployment team
   security:

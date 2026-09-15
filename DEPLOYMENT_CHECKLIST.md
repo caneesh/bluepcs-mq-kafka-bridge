@@ -915,6 +915,10 @@ cleanup sweep   ->  landing files older than LANDING_RETENTION_DAYS (default 7)
                 ->  orphaned *.json.tmp older than 1 day deleted
 ```
 
+- The bridge also READS these locations on redelivery: a file still in landing means
+  "republish the notification from it, do not call the API again"; a file in
+  `<archive-path>` means "already processed, do nothing". `HDFS_ARCHIVE_PATH` must be
+  where the consumer moves files (default `<base-path>/archive`).
 - Because the consumer moves processed files promptly, a landing file older than
   ~30 minutes means the consumer has stalled — that is exactly what the Control-M
   monitor's exit-3 backlog check alerts on (section 4 above).

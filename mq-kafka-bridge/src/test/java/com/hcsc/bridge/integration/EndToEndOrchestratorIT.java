@@ -306,6 +306,57 @@ class EndToEndOrchestratorIT {
     }
 
     @Nested
+    @DisplayName("Redelivery after a Kafka failure (real landing directory)")
+    class RedeliveryAfterKafkaFailure {
+
+        @Test
+        @DisplayName("resumes from the landed file: one API call in total, republished checksum matches the file")
+        void resumesWithoutSecondApiCall() throws Exception {
+            when(kafkaPublisher.publish(anyString(), anyString()))
+                    .thenThrow(new com.hcsc.bridge.kafka.KafkaPublishException("broker down", "x", "topic"))
+                    .thenReturn("7");
+            MqMessage message = messageGenerator.generateMessageWithId("MSG-RESUME-001");
+
+            ProcessingResult first = orchestrator.process(message);
+            ProcessingResult second = orchestrator.process(messageGenerator.generateMessageWithId("MSG-RESUME-001"));
+
+            assertThat(first.isFailed()).isTrue();
+            assertThat(second.isSuccessful()).isTrue();
+            assertThat(apiClient.getCallCount()).isEqualTo(1);
+            String landed = hdfsOperations.readFile(second.getHdfsPath());
+            ArgumentCaptor<String> notification = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher, org.mockito.Mockito.times(2)).publish(anyString(), notification.capture());
+            String expectedChecksum = com.hcsc.bridge.core.DigestUtil.sha256Hex(
+                    landed.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertThat(notification.getAllValues().get(1)).contains("\"checksum\":\"" + expectedChecksum + "\"");
+            assertThat(auditPublisher.getEventsByType(AuditEventType.HDFS_WRITE_SKIPPED))
+                    .anySatisfy(e -> assertThat(e.getMetadata()).containsEntry("reason", "resumed-from-landing"));
+        }
+
+        @Test
+        @DisplayName("a file the consumer already archived completes the redelivery without landing or publishing")
+        void archivedFileCompletesRedelivery() throws Exception {
+            MqMessage message = messageGenerator.generateMessageWithId("MSG-ARCHIVE-001");
+            ProcessingResult first = orchestrator.process(message);
+            assertThat(first.isSuccessful()).isTrue();
+            // The consumer moves processed files out of landing
+            String archived = "/data/bridge/payloads/archive/" + first.getEventId() + ".json";
+            hdfsOperations.mkdirs("/data/bridge/payloads/archive");
+            hdfsOperations.rename(first.getHdfsPath(), archived);
+            auditPublisher.clear();
+
+            ProcessingResult second = orchestrator.process(messageGenerator.generateMessageWithId("MSG-ARCHIVE-001"));
+
+            assertThat(second.isSuccessful()).isTrue();
+            assertThat(second.getHdfsPath()).isEqualTo(archived);
+            assertThat(apiClient.getCallCount()).isEqualTo(1);
+            assertThat(hdfsOperations.exists(first.getHdfsPath())).isFalse();
+            verify(kafkaPublisher, org.mockito.Mockito.times(1)).publish(anyString(), anyString());
+            assertThat(auditPublisher.hasEventOfType(AuditEventType.PROCESSING_COMPLETED)).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("Kafka Failure Handling")
     class KafkaFailureHandling {
 

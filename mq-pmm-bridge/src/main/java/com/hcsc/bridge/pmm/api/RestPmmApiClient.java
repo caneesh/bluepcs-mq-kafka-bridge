@@ -199,8 +199,9 @@ public class RestPmmApiClient implements PmmApiClient {
         try {
             String body = response.body() != null ? response.body().string() : "";
             if (body.isEmpty()) {
-                // Retrying yields the same empty body; nothing to land
-                throw new PmmApiException("Empty response body", eventId, response.code(), false);
+                // A 200 with no body is the gateway's state, not this message's: retry, and
+                // if it persists leave the message on the queue rather than quarantine + ack
+                throw new PmmApiException("Empty response body", eventId, response.code(), true);
             }
             logger.debug("PMM API responded {} for eventId {} in {} ms ({} chars)",
                     response.code(), eventId, durationMs, body.length());

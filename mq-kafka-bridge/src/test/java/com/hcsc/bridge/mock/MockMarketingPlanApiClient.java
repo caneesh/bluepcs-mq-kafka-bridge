@@ -48,7 +48,7 @@ public class MockMarketingPlanApiClient implements MarketingPlanApiClient {
 
     private JsonNode buildRawResponse(ParsedPayload payload) {
         Map<String, Object> planIdentification = new HashMap<>();
-        planIdentification.put("marketingPlanIdentifier", "MP-" + payload.getTransactionId());
+        planIdentification.put("marketingPlanIdentifier", payload.getEntityId());
         planIdentification.put("planName", "Mock Plan for " + payload.getEntityId());
 
         Map<String, Object> changeEvent = new HashMap<>();

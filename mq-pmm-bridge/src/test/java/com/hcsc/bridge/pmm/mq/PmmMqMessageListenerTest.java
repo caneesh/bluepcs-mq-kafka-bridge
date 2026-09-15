@@ -192,6 +192,23 @@ class PmmMqMessageListenerTest {
         }
 
         @Test
+        @DisplayName("does not acknowledge a poison message whose quarantine write failed")
+        void quarantineFailureLeavesMessageOnQueue() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 2);
+            when(textMessage.propertyExists("JMSXDeliveryCount")).thenReturn(true);
+            when(textMessage.getIntProperty("JMSXDeliveryCount")).thenReturn(3);
+            when(eventIdGenerator.generateEventId("MSG-1")).thenReturn("evt");
+            when(pathResolver.quarantinePath("evt")).thenReturn("/data/pmm/errors/evt.xml");
+            when(hdfsWriter.write("/data/pmm/errors/evt.xml", XML, "MSG-1"))
+                    .thenThrow(new com.hcsc.bridge.hdfs.HdfsWriteException("hdfs down", "/data/pmm/errors/evt.xml", "MSG-1"));
+
+            assertThatThrownBy(() -> listener.onMessage(textMessage)).isInstanceOf(MqProcessingException.class);
+
+            verify(textMessage, never()).acknowledge();
+            verify(orchestrator, never()).process(any());
+        }
+
+        @Test
         @DisplayName("processes normally below the threshold")
         void belowThreshold() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 5);

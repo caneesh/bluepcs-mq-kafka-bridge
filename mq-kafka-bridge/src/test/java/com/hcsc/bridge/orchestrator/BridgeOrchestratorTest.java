@@ -11,6 +11,7 @@ import com.hcsc.bridge.audit.AuditEventType;
 import com.hcsc.bridge.audit.AuditPublisher;
 import com.hcsc.bridge.core.EventIdGenerator;
 import com.hcsc.bridge.hdfs.HdfsSafePayloadWriter;
+import org.springframework.test.util.ReflectionTestUtils;
 import com.hcsc.bridge.hdfs.HdfsWriteException;
 import com.hcsc.bridge.kafka.KafkaEnvelopePublisher;
 import com.hcsc.bridge.kafka.KafkaNotificationFactory;
@@ -84,7 +85,7 @@ class BridgeOrchestratorTest {
     }
 
     private static EnrichmentResult enrichmentResult() {
-        return new EnrichmentResult("MP-001", null, Map.of(), rawResponse());
+        return new EnrichmentResult("ENT-001", null, Map.of(), rawResponse());
     }
 
     private static JsonNode rawResponse() {
@@ -99,48 +100,156 @@ class BridgeOrchestratorTest {
     }
 
     @Nested
-    @DisplayName("redelivery after acknowledgement failure (at-least-once)")
-    class RedeliveryAfterAckFailure {
+    @DisplayName("redelivery resumes from the landed payload")
+    class RedeliveryResumesFromLandedPayload {
+
+        private static final String LANDED_WRAPPER = "{\"changeEventTimeStamp\":\"20260710T162108.143 CDT\","
+                + "\"RestAPIResponse\":{\"PlanResponse\":{\"planIdentification\":{\"marketingPlanIdentifier\":\"ENT-001\"}}},"
+                + "\"changeEventTypeName\":\"Update\"}";
 
         /**
-         * The sequence behind review finding P0-2: HDFS write succeeds, Kafka publish
-         * succeeds, the MQ acknowledge fails (the listener deliberately does not undo any
-         * work — see MqMessageListener.acknowledgeProcessedMessage), and the broker
-         * redelivers the same JMS message id. The redelivery must be idempotent on HDFS
-         * and explicitly duplicate on Kafka: this bridge is at-least-once, not exactly-once.
+         * The sequence behind the "temporary Kafka failure blocks forever" finding: the API
+         * answers version A, HDFS lands it, Kafka fails. On redelivery the API might answer
+         * version B, which the writer would refuse against the landed A. So the redelivery
+         * must NOT call the API: it republishes from the landed bytes.
          */
         @Test
-        @DisplayName("redelivery reuses the eventId, skips the HDFS rewrite, and republishes to Kafka")
-        void redeliveryIsIdempotentOnHdfsAndDuplicateOnKafka() {
-            MqMessage first = createMqMessage("MSG-REDELIVER-001");
-            MqMessage redelivered = createMqMessage("MSG-REDELIVER-001"); // same JMS message id
+        @DisplayName("after a Kafka failure the redelivery republishes from the landed file without calling the API")
+        void kafkaFailureThenResume() {
             ParsedPayload parsed = createParsedPayload("MSG-REDELIVER-001", "TXN-001");
-
             when(eventIdGenerator.generateEventId("MSG-REDELIVER-001")).thenReturn("stable-event-id");
             when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
             when(apiClient.enrich(parsed)).thenReturn(enrichmentResult());
-            // First delivery writes the file; the redelivery finds the identical file in place
+            when(hdfsWriter.findLanded("stable-event-id"))
+                    .thenReturn(null)
+                    .thenReturn(new HdfsSafePayloadWriter.LandedPayload("/path/stable-event-id.json",
+                            LANDED_WRAPPER, "landed-checksum", false));
             when(hdfsWriter.write(any(EnrichedPayload.class), anyString()))
-                    .thenReturn(HdfsWriteResult.success("/path/stable-event-id.json", "checksum", 1024))
-                    .thenReturn(HdfsWriteResult.alreadyExists("/path/stable-event-id.json", "checksum"));
-            when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("100", "101");
+                    .thenReturn(HdfsWriteResult.success("/path/stable-event-id.json", "landed-checksum", 1024));
+            when(kafkaPublisher.publish(anyString(), anyString()))
+                    .thenThrow(new KafkaPublishException("broker down", "stable-event-id", "topic"))
+                    .thenReturn("101");
             doNothing().when(auditPublisher).publishAsync(any());
 
-            ProcessingResult firstResult = orchestrator.process(first);
-            ProcessingResult redeliveredResult = orchestrator.process(redelivered);
+            ProcessingResult first = orchestrator.process(createMqMessage("MSG-REDELIVER-001"));
+            ProcessingResult redelivered = orchestrator.process(createMqMessage("MSG-REDELIVER-001"));
 
-            assertThat(firstResult.isSuccessful()).isTrue();
-            assertThat(redeliveredResult.isSuccessful()).isTrue();
-            // Event id is stable across deliveries of the same JMS message id
-            assertThat(firstResult.getEventId()).isEqualTo("stable-event-id");
-            assertThat(redeliveredResult.getEventId()).isEqualTo("stable-event-id");
-            // Same advertised HDFS path both times; the second write was the idempotent skip
-            assertThat(redeliveredResult.getHdfsPath()).isEqualTo(firstResult.getHdfsPath());
-            // Kafka IS published twice with the same key: duplicates are explicit and expected;
-            // downstream consumers dedupe on eventId
-            ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
-            verify(kafkaPublisher, times(2)).publish(keys.capture(), anyString());
-            assertThat(keys.getAllValues()).containsExactly("stable-event-id", "stable-event-id");
+            assertThat(first.isFailed()).isTrue();
+            assertThat(first.getErrorCode()).isEqualTo("KAFKA_ERROR");
+            assertThat(redelivered.isSuccessful()).isTrue();
+            assertThat(redelivered.getHdfsPath()).isEqualTo("/path/stable-event-id.json");
+            assertThat(redelivered.getKafkaOffset()).isEqualTo("101");
+            // Exactly one API call across both deliveries, and no second HDFS write
+            verify(apiClient, times(1)).enrich(parsed);
+            verify(hdfsWriter, times(1)).write(any(EnrichedPayload.class), anyString());
+            // The republished notification advertises the LANDED file's checksum and the MQ plan id
+            ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher, times(2)).publish(eq("stable-event-id"), value.capture());
+            assertThat(value.getAllValues().get(1)).contains("\"checksum\":\"landed-checksum\"")
+                    .contains("\"marketingPlanIdentifier\":\"ENT-001\"")
+                    .contains("\"changeEventTypeName\":\"Update\"");
+            verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
+            assertThat(auditEventCaptor.getAllValues())
+                    .filteredOn(e -> e.getEventType() == AuditEventType.HDFS_WRITE_SKIPPED)
+                    .anySatisfy(e -> assertThat(e.getMetadata()).containsEntry("reason", "resumed-from-landing"));
+        }
+
+        /**
+         * The "archiving breaks the notification" finding: once the consumer moved the file
+         * out of landing, a redelivery must not re-land different bytes under the same name
+         * (the checksum in the notification the consumer already processed would no longer
+         * match) — it is complete.
+         */
+        @Test
+        @DisplayName("a redelivery whose file was already archived does nothing and succeeds")
+        void archivedFileMeansDone() {
+            ParsedPayload parsed = createParsedPayload("MSG-ARCHIVED-001", "TXN-001");
+            when(eventIdGenerator.generateEventId("MSG-ARCHIVED-001")).thenReturn("archived-event-id");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(hdfsWriter.findLanded("archived-event-id")).thenReturn(
+                    new HdfsSafePayloadWriter.LandedPayload("/path/archive/archived-event-id.json", null, "sum", true));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(createMqMessage("MSG-ARCHIVED-001"));
+
+            assertThat(result.isSuccessful()).isTrue();
+            assertThat(result.getHdfsPath()).isEqualTo("/path/archive/archived-event-id.json");
+            verify(apiClient, never()).enrich(any());
+            verify(hdfsWriter, never()).write(any(EnrichedPayload.class), anyString());
+            verify(kafkaPublisher, never()).publish(anyString(), anyString());
+            verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
+            assertThat(auditEventCaptor.getAllValues())
+                    .filteredOn(e -> e.getEventType() == AuditEventType.HDFS_WRITE_SKIPPED)
+                    .anySatisfy(e -> assertThat(e.getMetadata()).containsEntry("reason", "already-archived"));
+            assertThat(auditEventCaptor.getAllValues()).extracting(AuditEvent::getEventType)
+                    .contains(AuditEventType.PROCESSING_COMPLETED);
+        }
+
+        @Test
+        @DisplayName("an HDFS failure while looking for the landed file is retryable (no ack)")
+        void lookupFailureIsRetryable() {
+            ParsedPayload parsed = createParsedPayload("MSG-LOOKUP-001", "TXN-001");
+            when(eventIdGenerator.generateEventId("MSG-LOOKUP-001")).thenReturn("lookup-event-id");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(hdfsWriter.findLanded("lookup-event-id"))
+                    .thenThrow(new HdfsWriteException("namenode down", "/path", "MSG-LOOKUP-001"));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(createMqMessage("MSG-LOOKUP-001"));
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.getErrorCode()).isEqualTo("HDFS_ERROR");
+            verify(apiClient, never()).enrich(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("plan-id cross-check")
+    class PlanIdCrossCheck {
+
+        private EnrichmentResult wrongPlan() {
+            try {
+                JsonNode raw = MAPPER.readTree("{\"PlanResponse\":{\"planIdentification\":"
+                        + "{\"marketingPlanIdentifier\":\"MP-999\"}}}");
+                return new EnrichmentResult("MP-999", null, Map.of(), raw);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Test
+        @DisplayName("quarantines (and never lands or publishes) a response for a different plan than requested")
+        void rejectsMismatchByDefault() {
+            ParsedPayload parsed = createParsedPayload("MSG-MISMATCH-001", "TXN-001"); // asks for ENT-001
+            when(eventIdGenerator.generateEventId("MSG-MISMATCH-001")).thenReturn("mismatch-event-id");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(apiClient.enrich(parsed)).thenReturn(wrongPlan());
+            when(hdfsWriter.writeQuarantine(eq("mismatch-event-id"), anyString(), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/errors/mismatch-event-id.json", "q", 10));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(createMqMessage("MSG-MISMATCH-001"));
+
+            assertThat(result.isQuarantined()).isTrue();
+            assertThat(result.getErrorCode()).isEqualTo("ENRICHMENT_ERROR");
+            verify(hdfsWriter, never()).write(any(EnrichedPayload.class), anyString());
+            verify(kafkaPublisher, never()).publish(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("only warns when bridge.api.plan-id-mismatch=warn")
+        void warnPolicyKeepsLegacyBehaviour() {
+            ReflectionTestUtils.setField(orchestrator, "planIdMismatchPolicy", "warn");
+            ParsedPayload parsed = createParsedPayload("MSG-MISMATCH-002", "TXN-001");
+            when(eventIdGenerator.generateEventId("MSG-MISMATCH-002")).thenReturn("mismatch-event-id-2");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(apiClient.enrich(parsed)).thenReturn(wrongPlan());
+            when(hdfsWriter.write(any(EnrichedPayload.class), anyString()))
+                    .thenReturn(HdfsWriteResult.success("/path/x.json", "c", 1));
+            when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("1");
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            assertThat(orchestrator.process(createMqMessage("MSG-MISMATCH-002")).isSuccessful()).isTrue();
         }
     }
 

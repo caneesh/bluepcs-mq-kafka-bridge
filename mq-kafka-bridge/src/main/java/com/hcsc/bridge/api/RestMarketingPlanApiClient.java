@@ -250,13 +250,22 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
         try {
             String body = response.body() != null ? response.body().string() : "";
             if (body.isEmpty()) {
-                throw new EnrichmentException("Empty response body", entityId, 200, false);
+                // A 200 with no body is a gateway hiccup, not a property of this message:
+                // retry, and if it persists leave the message on the queue (no ack)
+                throw new EnrichmentException("Empty response body", entityId, 200, true);
             }
 
             // Parse the response body once into its unmodified root. This node (whose single
             // child is PlanResponse) is carried through as rawResponse and later attached
             // verbatim to the published wrapper.
             JsonNode root = objectMapper.readTree(body);
+            JsonNode planResponse = root.path("PlanResponse");
+            if (!planResponse.isObject() || planResponse.isEmpty()) {
+                // {} or an unrelated document: nothing here can be landed as a plan. Retryable
+                // for the same reason as an empty body — a health page or an error document
+                // served with 200 is the gateway's state, not the message's.
+                throw new EnrichmentException("Response carries no PlanResponse object", entityId, 200, true);
+            }
 
             // marketingPlanId is extracted null-safely from the real response structure.
             // campaignId has no source in the real response; additionalData's only consumer
@@ -273,8 +282,10 @@ public class RestMarketingPlanApiClient implements MarketingPlanApiClient {
             return new EnrichmentResult(marketingPlanId, null, new HashMap<>(), root);
 
         } catch (JsonProcessingException e) {
-            // Malformed JSON in a 2xx body is permanent — retrying gets the same bytes
-            throw new EnrichmentException("Failed to parse response", entityId, e, false);
+            // Malformed JSON in a 2xx body: retried within the loop (a truncated proxy
+            // response is transient); if it persists the message stays on the queue rather
+            // than being quarantined and acked for a fault that is not its own
+            throw new EnrichmentException("Failed to parse response", entityId, e, true);
         } catch (IOException e) {
             // A stream error reading a 2xx body (connection reset mid-body) is the same
             // transient network fault class as a reset before the headers — retryable
