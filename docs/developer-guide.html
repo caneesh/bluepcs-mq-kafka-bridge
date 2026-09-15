@@ -147,103 +147,103 @@ mocks — no MQ, Kafka, HDFS, or credentials needed.</p>
 <p>One message, one pass. Each stage throws a typed exception the orchestrator maps to an
 audit event and a redelivery/quarantine decision.</p>
 <ol class="stages">
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a>
+  <li><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a>
       — JMS listener, CLIENT_ACKNOWLEDGE; poison-message guard; acks only on terminal outcomes.</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
+  <li><a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
       — drives the stages, owns error mapping and the quarantine fallback.</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a>
+  <li><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a>
       — validates the planNotification payload; failure ⇒ quarantine, not redelivery.</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
+  <li><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
       — enrichment GET with retry/backoff; bearer token from
-      <a data-code href="../src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a>
+      <a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a>
       (STS contract: credential <em>headers</em> + JSON body).</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a>
+  <li><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a>
       — wraps the raw API response in the output contract the consumer expects.</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
+  <li><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
       — flat landing dir, temp-write → checksum-verify → rename; idempotent by eventId.</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+  <li><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
       — builds the claim-check notification (<code>hdfsPath</code>, <code>checksum</code>,
       <code>eventId</code>, <code>source</code>, <code>schemaVersion</code>).</li>
-  <li><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a>
+  <li><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a>
       — synchronous publish, idempotent producer, <code>acks=all</code>; only then is MQ acked.</li>
 </ol>
 
 <h2 id="invariants">Invariants — do not break these<a class="anchor" href="#invariants">#</a></h2>
 <div class="rule"><b>Ack only after success.</b> The MQ message is acknowledged only on
   PROCESSING_COMPLETED, MESSAGE_QUARANTINED, or MESSAGE_DISCARDED — anything else redelivers.
-  <a data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
+  <a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
 <div class="rule"><b>Deterministic eventId.</b> SHA-256 of the JMS message id (payload hash
   when the id is null) names the HDFS file, keys both Kafka topics, and is the dedup handle
-  everywhere. <a data-code href="../src/main/java/com/hcsc/bridge/core/EventIdGenerator.java">EventIdGenerator</a></div>
+  everywhere. <a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/core/EventIdGenerator.java">EventIdGenerator</a></div>
 <div class="rule"><b>Checksum-verify BEFORE rename.</b> Corrupt bytes must never reach the
   landing path — a renamed-then-failed file would satisfy the idempotency check forever.
-  <a data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a></div>
+  <a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a></div>
 <div class="rule"><b>Claim-check + schemaVersion.</b> Kafka carries a pointer, HDFS carries
   the document; <code>schemaVersion</code> presence is how consumers distinguish bridge
   messages from legacy Talend — bump it on any breaking change.
-  <a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a></div>
+  <a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a></div>
 <div class="rule"><b>At-least-once, everywhere.</b> Redelivery re-runs the whole pipeline
   with the same eventId; every downstream must tolerate duplicates.</div>
 <div class="rule"><b>Quarantine permanent failures.</b> Unparseable payloads are preserved
   in HDFS <code>errors/</code> and acked — never looped, never silently dropped.
-  <a data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a></div>
+  <a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a></div>
 <div class="rule"><b>Audit never breaks processing.</b> All emit paths are best-effort and
-  swallowed. <a data-code href="../src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
+  swallowed. <a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
 <div class="rule"><b>Audit timestamp is an ISO-8601 string</b> — a wire contract pinned by
   test; the Hive partitioning and gap check depend on it.
-  <a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">KafkaAuditPublisherTest</a></div>
+  <a data-code href="../bridge-contract/src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">KafkaAuditPublisherTest</a></div>
 <div class="rule"><b>MQ concurrency stays 1.</b> The HDFS exists-check/write/rename sequence
   is not atomic; concurrent listeners race and duplicate Kafka events.
-  <a data-code href="../src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a></div>
+  <a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a></div>
 
 <h2 id="components">Component index<a class="anchor" href="#components">#</a></h2>
 <div class="grid">
   <div class="card"><h3>mq/</h3><p>JMS listener, poison guard, discard audit.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/mq/MqMessageListener.java">MqMessageListener</a></div>
   <div class="card"><h3>orchestrator/</h3><p>Stage driver, error → outcome mapping.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/orchestrator/ProcessingResult.java">ProcessingResult</a></div>
+    <a class="chip" data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/orchestrator/BridgeOrchestrator.java">BridgeOrchestrator</a>
+    <a class="chip" data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/orchestrator/ProcessingResult.java">ProcessingResult</a></div>
   <div class="card"><h3>parser/</h3><p>planNotification JSON → ParsedPayload.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a></div>
+    <a class="chip" data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/parser/JsonMessageParser.java">JsonMessageParser</a></div>
   <div class="card"><h3>api/</h3><p>Enrichment REST client + output wrapper.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a></div>
+    <a class="chip" data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a>
+    <a class="chip" data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a></div>
   <div class="card"><h3>security/</h3><p>STS token: credential headers + JSON body, cached.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a></div>
+    <a class="chip" data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/security/OAuth2JwtTokenProvider.java">OAuth2JwtTokenProvider</a></div>
   <div class="card"><h3>hdfs/</h3><p>Safe landing-dir writes; quarantine writes.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/hdfs/HadoopFileOperations.java">HadoopFileOperations</a></div>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/hdfs/HdfsSafePayloadWriter.java">HdfsSafePayloadWriter</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/hdfs/HadoopFileOperations.java">HadoopFileOperations</a></div>
   <div class="card"><h3>kafka/</h3><p>Claim-check notification + publisher.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a></div>
+    <a class="chip" data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+    <a class="chip" data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaEnvelopePublisher.java">KafkaEnvelopePublisher</a></div>
   <div class="card"><h3>audit/</h3><p>Per-message event trail; kafka or log publisher.</p>
     <a class="chip" href="./AUDIT.md">AUDIT.md</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
+    <a class="chip" data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a>
+    <a class="chip" data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/audit/SafeAuditPublisher.java">SafeAuditPublisher</a></div>
   <div class="card"><h3>config/</h3><p>Properties, factories, startup validation, run modes.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/KafkaConfiguration.java">KafkaConfiguration</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/HdfsConfiguration.java">HdfsConfiguration</a></div>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/KafkaProperties.java">KafkaProperties</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/KafkaConfiguration.java">KafkaConfiguration</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/MqConfiguration.java">MqConfiguration</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/HdfsConfiguration.java">HdfsConfiguration</a></div>
   <div class="card"><h3>health/</h3><p>Actuator indicators incl. listener state.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">MqListenerHealthIndicator</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/KafkaHealthIndicator.java">KafkaHealthIndicator</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/health/HdfsHealthIndicator.java">HdfsHealthIndicator</a></div>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">MqListenerHealthIndicator</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/health/KafkaHealthIndicator.java">KafkaHealthIndicator</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/health/HdfsHealthIndicator.java">HdfsHealthIndicator</a></div>
   <div class="card"><h3>local/</h3><p>Full mock stack — zero external infra.</p>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/local/LocalFileSystemHdfsOperations.java">LocalFileSystemHdfsOperations</a>
-    <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/local/LocalMarketingPlanApiClient.java">LocalMarketingPlanApiClient</a></div>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/local/LocalFileSystemHdfsOperations.java">LocalFileSystemHdfsOperations</a>
+    <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/local/LocalMarketingPlanApiClient.java">LocalMarketingPlanApiClient</a></div>
 </div>
 
 <h2 id="config">Configuration<a class="anchor" href="#config">#</a></h2>
 <div class="tablewrap"><table>
   <tr><th>Profile</th><th>Use</th><th>File</th></tr>
   <tr><td><code>local</code></td><td>Dev machine, all mocks</td>
-      <td><a data-code href="../src/main/resources/application-local.yml">application-local.yml</a></td></tr>
+      <td><a data-code href="../mq-kafka-bridge/src/main/resources/application-local.yml">application-local.yml</a></td></tr>
   <tr><td><code>test-env</code></td><td>UAT edge node; passwordless MQ</td>
-      <td><a data-code href="../src/main/resources/application-test-env.yml">application-test-env.yml</a></td></tr>
+      <td><a data-code href="../mq-kafka-bridge/src/main/resources/application-test-env.yml">application-test-env.yml</a></td></tr>
   <tr><td><code>prod</code></td><td>Production; fail-fast on missing secrets</td>
-      <td><a data-code href="../src/main/resources/application-prod.yml">application-prod.yml</a></td></tr>
+      <td><a data-code href="../mq-kafka-bridge/src/main/resources/application-prod.yml">application-prod.yml</a></td></tr>
 </table></div>
 <p>test-env needs exactly four secrets in <code>.env</code>:
 <code>KAFKA_TRUSTSTORE_PASSWORD</code>, <code>OAUTH_CLIENT_ID</code>,
@@ -252,8 +252,8 @@ defaults carried from the Talend <code>.prm</code>.</p>
 <p>
   <a class="chip" data-code href="../CONFIGURATION_GUIDE.md">CONFIGURATION_GUIDE.md</a>
   <a class="chip" data-code href="../.env.template">.env.template</a>
-  <a class="chip" data-code href="../src/main/resources/application.yml">application.yml</a>
-  <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties.java</a>
+  <a class="chip" data-code href="../mq-kafka-bridge/src/main/resources/application.yml">application.yml</a>
+  <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/KafkaProperties.java">KafkaProperties.java</a>
 </p>
 
 <h2 id="modes">Run modes &amp; scripts<a class="anchor" href="#modes">#</a></h2>
@@ -263,13 +263,13 @@ defaults carried from the Talend <code>.prm</code>.</p>
       <code>--bridge.mq.listener-enabled=true</code></td>
       <td><a data-code href="../scripts/run-test-env.sh">run-test-env.sh</a></td></tr>
   <tr><td>validate-only</td><td>Connectivity + OAuth checks, exit 0/1/2, consumes nothing</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/ValidateOnlyRunner.java">ValidateOnlyRunner</a> ·
+      <td><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/ValidateOnlyRunner.java">ValidateOnlyRunner</a> ·
           <a data-code href="../scripts/validate-only.sh">validate-only.sh</a></td></tr>
   <tr><td>component-test</td><td>Exercise hdfs / api / kafka / mq in isolation against real infra</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/ComponentTestRunner.java">ComponentTestRunner</a> ·
+      <td><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/ComponentTestRunner.java">ComponentTestRunner</a> ·
           <a data-code href="../scripts/component-test.sh">component-test.sh</a></td></tr>
   <tr><td>monitor</td><td>Read-only Control-M probe: health + landing-dir backlog, exit 0–5</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/MonitorRunner.java">MonitorRunner</a> ·
+      <td><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/MonitorRunner.java">MonitorRunner</a> ·
           <a data-code href="../scripts/monitor.sh">monitor.sh</a></td></tr>
   <tr><td>audit gap check</td><td>Hive audit table: load gaps, stuck messages, quarantines; exit 0–4</td>
       <td><a data-code href="../scripts/audit-gap-check.sh">audit-gap-check.sh</a></td></tr>
@@ -291,7 +291,7 @@ The definitive external signal is MQ-side queue depth (<code>CURDEPTH</code>).</
   <a class="chip" data-code href="../deploy/mq-kafka-bridge.service">mq-kafka-bridge.service</a>
   <a class="chip" data-code href="../deploy/mq-kafka-bridge-watchdog.sh">watchdog.sh</a>
   <a class="chip" data-code href="../deploy/mq-kafka-bridge-watchdog.timer">watchdog.timer</a>
-  <a class="chip" data-code href="../src/main/java/com/hcsc/bridge/config/KerberosTicketRenewer.java">KerberosTicketRenewer</a>
+  <a class="chip" data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/KerberosTicketRenewer.java">KerberosTicketRenewer</a>
   <a class="chip" data-code href="../DEPLOYMENT_CHECKLIST.md">DEPLOYMENT_CHECKLIST.md § Running 24/7</a>
 </p>
 
@@ -323,9 +323,9 @@ emits the consumer-stage audit events. Consumers must dedupe on <code>eventId</c
 <p>Unit tests run under surefire (<code>mvn test</code>, no infra); <code>*IT</code> classes
 run under failsafe (<code>mvn verify</code>) with an embedded Kafka broker and local-FS HDFS.
 Reusable fakes live in
-<a data-code href="../src/test/java/com/hcsc/bridge/mock/FakeMqMessageGenerator.java">test/mock/</a>.
+<a data-code href="../mq-kafka-bridge/src/test/java/com/hcsc/bridge/mock/FakeMqMessageGenerator.java">test/mock/</a>.
 When a change touches a cross-system contract, pin the wire format —
-<a data-code href="../src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">the
+<a data-code href="../bridge-contract/src/test/java/com/hcsc/bridge/audit/KafkaAuditPublisherTest.java">the
 timestamp pinning test</a> exists because nothing pinned it and an epoch-vs-ISO mismatch
 slipped through.</p>
 
@@ -333,26 +333,26 @@ slipped through.</p>
 <div class="tablewrap"><table>
   <tr><th>Task</th><th>Touch these</th></tr>
   <tr><td>Add a config property</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/config/BridgeProperties.java">BridgeProperties</a> ·
-          <a data-code href="../src/main/resources/application.yml">application.yml</a> ·
+      <td><a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/KafkaProperties.java">KafkaProperties</a> ·
+          <a data-code href="../mq-kafka-bridge/src/main/resources/application.yml">application.yml</a> ·
           profile ymls · <a data-code href="../config/application-prod-template.yml">config/ templates</a> ·
-          <a data-code href="../src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a> if required</td></tr>
+          <a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/config/StartupConfigValidator.java">StartupConfigValidator</a> if required</td></tr>
   <tr><td>Change the notification schema</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
+      <td><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a>
           (bump <code>SCHEMA_VERSION</code>) ·
           <a data-code href="../docs/consumer/BridgeMessageResolver.scala">BridgeMessageResolver</a> ·
-          <a data-code href="../src/test/java/com/hcsc/bridge/integration/KafkaPublisherIT.java">KafkaPublisherIT</a></td></tr>
+          <a data-code href="../mq-kafka-bridge/src/test/java/com/hcsc/bridge/integration/KafkaPublisherIT.java">KafkaPublisherIT</a></td></tr>
   <tr><td>Add an audit event type</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a> ·
+      <td><a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/audit/AuditEventType.java">AuditEventType</a> ·
           <a href="./AUDIT.md">AUDIT.md catalog</a> · gap-check queries if terminal</td></tr>
   <tr><td>Add a health check</td>
       <td>Copy the pattern in
-          <a data-code href="../src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">health/</a>;
+          <a data-code href="../bridge-adapters/src/main/java/com/hcsc/bridge/health/MqListenerHealthIndicator.java">health/</a>;
           remember <code>@Profile("!local")</code> and the smoke test's UP requirement</td></tr>
   <tr><td>Change enrichment request/response</td>
-      <td><a data-code href="../src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a> ·
-          <a data-code href="../src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a> ·
-          <a data-code href="../src/test/java/com/hcsc/bridge/api/RestMarketingPlanApiClientTest.java">its MockWebServer tests</a></td></tr>
+      <td><a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/RestMarketingPlanApiClient.java">RestMarketingPlanApiClient</a> ·
+          <a data-code href="../mq-kafka-bridge/src/main/java/com/hcsc/bridge/api/EnrichmentWrapperFactory.java">EnrichmentWrapperFactory</a> ·
+          <a data-code href="../mq-kafka-bridge/src/test/java/com/hcsc/bridge/api/RestMarketingPlanApiClientTest.java">its MockWebServer tests</a></td></tr>
   <tr><td>Debug a message in test/prod</td>
       <td>Find its eventId in the audit trail (<a href="./AUDIT.md">AUDIT.md</a> · consuming
           section) → HDFS file <code>&lt;landing&gt;/&lt;eventId&gt;.json</code> → quarantine

@@ -367,6 +367,30 @@ not Kerberos.</p>
 <h2 id="decisions">Design decisions record<a class="anchor" href="#decisions">#</a></h2>
 <div class="tablewrap"><table>
   <tr><th>Decision</th><th>Why</th><th>Where</th></tr>
+  <tr><td>Completion is evidenced, not inferred</td>
+      <td>Acknowledging an MQ message destroys the broker's copy, so it happens only on an outcome
+          that carries evidence: a landed payload (with its checksum), or a durably preserved copy
+          for a quarantine or discard. <code>ProcessingResult</code>'s factories refuse to build
+          those outcomes without a path, and one <code>settle()</code> applies the rule for both
+          bridges. There is deliberately NO per-message state store: the evidence is the HDFS file
+          plus the audit stream, and a redelivery re-derives its position by looking for the file
+          rather than trusting a recorded stage. If explicit per-stage records are ever wanted, that
+          is a durable state store to be reintroduced knowingly - the ledger removed in Sept 2026
+          was exactly that, unused and unwritten by the live path.</td>
+      <td><a data-code href="../bridge-contract/src/main/java/com/hcsc/bridge/orchestrator/ProcessingResult.java">ProcessingResult</a></td></tr>
+  <tr><td>Module boundaries carry the design</td>
+      <td>Dependencies run one way: contract (identity, outcomes, audit contract) then adapters
+          (infrastructure) then diagnostics (modes that can exit the JVM) then the applications.
+          Importing a message type cannot drag in a JVM exit, and the compiler enforces it - the
+          split immediately caught a health indicator reaching back into diagnostics. The enforcer's
+          banned-dependency rules fail the build; version convergence stays advisory.</td>
+      <td><a data-code href="../pom.xml">pom.xml</a></td></tr>
+  <tr><td>The audit contract is checked against its consumers</td>
+      <td>The reconciliation scripts name event types and metadata keys as strings in HQL. A test
+          parses both scripts and fails the build if they count an event type absent from
+          <code>AuditEventType</code> or read a key absent from <code>AuditMetadata</code>, so a
+          rename can no longer silently turn an equation into a no-op.</td>
+      <td><a data-code href="../bridge-contract/src/test/java/com/hcsc/bridge/audit/AuditContractTest.java">AuditContractTest</a></td></tr>
   <tr><td>Claim-check over inline payload</td><td>Broker message-size limit; consumers fetch by path and verify checksum</td>
       <td><a data-code href="../src/main/java/com/hcsc/bridge/kafka/KafkaNotificationFactory.java">KafkaNotificationFactory</a></td></tr>
   <tr><td>MQ concurrency pinned to 1</td><td>HDFS exists/write/rename isn't atomic; parallel listeners race → duplicate events</td>

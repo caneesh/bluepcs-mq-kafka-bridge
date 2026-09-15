@@ -265,7 +265,7 @@ Other PMM-specific behaviours to know:
   follows a `Location`, because that would replay the request body and the gateway
   credentials to another host.
 - **`AUDIT_PUBLISHER=log`**: the Kafka producer and its health indicator still start
-  (they are part of bridge-core), so the aggregate `/actuator/health` shows the Kafka
+  (they are part of bridge-adapters), so the aggregate `/actuator/health` shows the Kafka
   component DOWN when no broker is reachable. The liveness group (`mqListener,ping`),
   the watchdog and `monitor.sh` are unaffected; this is cosmetic.
 - **`MQ_MAX_MESSAGE_BYTES`** (default 64 MiB): a larger `BytesMessage` is refused

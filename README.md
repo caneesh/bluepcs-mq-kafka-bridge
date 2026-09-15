@@ -33,9 +33,9 @@ either bridge's message path used them. Do not reintroduce them without a new re
 
 ## Building
 
-The repository is a Maven reactor. `bridge-core` is a shared library; every other
-module is a bootable Spring Boot application that builds into
-`<module>/target/<module>-*.jar` and runs as its own JVM.
+The repository is a Maven reactor: three library modules and two bootable
+applications. Each application builds into `<module>/target/<module>-*.jar` and runs as
+its own JVM.
 
 ```bash
 mvn clean package -DskipTests                       # all modules
@@ -43,8 +43,8 @@ mvn -pl mq-kafka-bridge -am package -DskipTests     # one application + its depe
 ```
 
 Use `-DskipTests`, not `-Dmaven.test.skip=true`: the latter also skips test *compilation*,
-and the applications' tests depend on the `bridge-core` test-jar (shared fakes), so the
-build fails resolving it.
+and the applications' tests depend on the `bridge-contract` test-jar (shared fakes), so
+the build fails resolving it.
 
 ## Running
 
@@ -190,49 +190,68 @@ mvn test jacoco:report
 | `scripts/validate-only.sh` | Run validation mode |
 | `scripts/smoke-test.sh` | Start app, verify health, exit |
 
+## Who owns what
+
+Dependencies run one way, and the module a class lives in states what it is allowed to
+know about:
+
+| Module | Owns | Must not |
+|---|---|---|
+| `bridge-contract` | Message identity (`MqMessage`, `ProcessingContext`, the deterministic event id), the outcome of processing and the rule for when acknowledging is safe (`ProcessingResult`), the audit event and metadata contract, and the interfaces an adapter implements | Depend on MQ, Kafka, Hadoop, an HTTP client, or anything that can end a process. Its only dependency is a Spring annotation |
+| `bridge-adapters` | The implementations that talk to infrastructure: MQ connection and listener factory, HDFS operations and the safe writer, the STS token provider, audit publishers, Kerberos renewal, health indicators, local-profile stand-ins | Decide what a message means or what should happen to one |
+| `bridge-diagnostics` | Operational behaviour an application opts into: validate-only and monitor modes, the readiness checks, the shared startup rules, and the diagnostic JVM exit that hands an exit code to a scheduler | Be pulled in by accident. It is a separate module precisely because it can terminate the JVM |
+| `mq-kafka-bridge` | The PMM+ workflow: JSON parsing, REST enrichment, response validation, the claim-check notification | Reimplement a shared rule (acknowledgement, quarantine durability, startup validation) |
+| `mq-pmm-bridge` | The PMM workflow: XML extraction, request rendering, the 4-hourly landing layout | The same |
+
+Two things are deliberately shared, because each is one decision: **when acknowledging an
+MQ message is safe** (`ProcessingResult` plus `JmsMessageSupport.settle`) and **what a valid
+configuration is** (`bridge-diagnostics/startup`). Two things are deliberately not shared,
+because forcing them together would be worse than the duplication: JSON versus XML
+processing, and GET-enrichment versus POST-submission semantics. Each application has its
+own orchestrator and neither subclasses the other.
+
 ## Project Structure
 
 ```
-pom.xml                          # reactor parent: versions, plugins, shared dependency list
-bridge-core/                     # shared library (no application class, no application*.yml)
+pom.xml                          # reactor: versions and plugins only; modules declare their own dependencies
+bridge-contract/                 # what the bridges agree on (no infrastructure, no JVM exit)
   src/main/java/com/hcsc/bridge/
-  ├── audit/         # Audit event publishing
-  ├── config/        # MQ/HDFS/Kafka/Kerberos configuration, readiness + monitor + validate-only runners
-  ├── core/          # Core utilities (event ID, digest, secrets)
-  ├── hdfs/          # HDFS file operations
-  ├── health/        # Actuator health indicators
-  ├── local/         # Local-profile implementations (token, HDFS)
-  ├── model/         # Generic value objects (MqMessage, HdfsWriteResult)
+  ├── audit/         # AuditEvent, AuditEventType, AuditMetadata, AuditPublisher
+  ├── core/          # event id, digest, processing context, secret masking
+  ├── hdfs/          # HdfsFileOperations (interface), HdfsWriteException
+  ├── model/         # MqMessage, HdfsWriteResult
   ├── mq/            # MqProcessingException
-  ├── orchestrator/  # ProcessingResult
-  └── security/      # STS/JWT token provider
-  src/test/java/com/hcsc/bridge/mock/   # reusable test fakes (published as a test-jar)
+  ├── orchestrator/  # ProcessingResult: the acknowledgement rule and its evidence invariants
+  └── security/      # JwtTokenProvider (interface)
+  src/test/java/com/hcsc/bridge/mock/   # reusable fakes, published as a test-jar
+bridge-adapters/                 # the implementations
+  src/main/java/com/hcsc/bridge/
+  ├── audit/         # Kafka and file audit publishers
+  ├── config/        # MQ, HDFS, Kafka and Kerberos configuration; KafkaProperties
+  ├── hdfs/          # Hadoop operations, SafeHdfsWriter
+  ├── health/        # actuator indicators, including mqConsumer
+  ├── local/         # local-profile stand-ins
+  ├── mq/            # JmsMessageSupport: header helpers and settle()
+  └── security/      # OAuth2JwtTokenProvider
+bridge-diagnostics/              # opt-in operational behaviour
+  src/main/java/com/hcsc/bridge/diagnostics/
+  ├── startup/       # the startup rules both applications share
+  └── ...            # readiness checks, validate-only, monitor, DiagnosticJvmExit
 mq-kafka-bridge/                 # PMM+ JSON bridge application (this README)
   src/main/java/com/hcsc/bridge/
   ├── MqKafkaBridgeApplication.java
-  ├── api/           # REST API client for enrichment
-  ├── config/        # Startup validator, component-test and quarantine-replay runners
-  ├── hdfs/          # HdfsSafePayloadWriter (flat landing directory)
-  ├── kafka/         # Kafka envelope publishing
-  ├── local/         # Local-profile API client
+  ├── api/           # REST enrichment client and response validation
+  ├── config/        # startup validator, component-test and quarantine-replay runners
+  ├── hdfs/          # HdfsSafePayloadWriter (flat landing directory, landed-payload lookup)
+  ├── kafka/         # claim-check notification and publisher
   ├── model/         # ParsedPayload, EnrichedPayload
-  ├── mq/            # IBM MQ listener
-  ├── orchestrator/  # Message processing orchestration
-  └── parser/        # Message parsing
+  ├── mq/            # MQ listener
+  ├── orchestrator/  # BridgeOrchestrator
+  └── parser/        # JSON message parsing
   src/main/resources/application*.yml
 mq-pmm-bridge/                   # PMM canonical-XML bridge application (see below)
-  src/main/java/com/hcsc/bridge/
-  ├── PmmBridgeApplication.java
-  └── pmm/
-      ├── xml/           # hardened XML parsing + XPath extraction
-      ├── template/      # request template loading/rendering
-      ├── api/           # POST client with token refresh + retry
-      ├── hdfs/          # 4-hourly window path resolver, backlog scanner
-      ├── orchestrator/  # PmmOrchestrator
-      ├── mq/            # PMM queue listener (Text + Bytes messages)
-      ├── config/        # startup validator, readiness checks
-      └── local/         # local-profile API stub + sample runner
 audit-hive-consumer/             # standalone Spark/Hive consumer for the audit topic
+scripts/test/                    # Hive-to-SQLite harness for the reconciliation scripts
 ```
 
 ## PMM bridge (`mq-pmm-bridge`)
@@ -241,7 +260,7 @@ A second bootable application in the same reactor for the BluePCS **PMM** canoni
 feed: MQ (XML) → two XPath values → XML request template → `POST` with the STS token →
 raw XML response landed as `<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml` (new folder every
 4 hours) → audit only. It runs as its own JVM (port 8081, own `.env`, own systemd unit)
-and reuses everything in `bridge-core`. See `CONFIGURATION_GUIDE.md` §11 and
+and reuses the shared modules. See `CONFIGURATION_GUIDE.md` §11 and
 `DEPLOYMENT_CHECKLIST.md` "Second application".
 
 ```bash

@@ -38,7 +38,7 @@ mvn clean package -DskipTests   # faster, jar only
 # The repo is a Maven reactor: the bridge jar is built into
 # mq-kafka-bridge/target/mq-kafka-bridge-*.jar (bridge-core is a library it embeds).
 # Only -DskipTests is supported as a skip switch (-Dmaven.test.skip=true breaks the
-# bridge-core test-jar the application tests depend on).
+# bridge-contract test-jar the application tests depend on).
 ```
 
 Integration tests (`*IT.java`) only run under `mvn verify`, so a plain
