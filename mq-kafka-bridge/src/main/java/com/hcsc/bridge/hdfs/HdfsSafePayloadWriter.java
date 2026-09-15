@@ -87,7 +87,8 @@ public class HdfsSafePayloadWriter {
                         hdfsFileOperations.getFileChecksum(landing), false);
             }
             if (hdfsFileOperations.exists(archived)) {
-                return new LandedPayload(archived, null, hdfsFileOperations.getFileChecksum(archived), true);
+                return new LandedPayload(archived, hdfsFileOperations.readUtf8(archived),
+                        hdfsFileOperations.getFileChecksum(archived), true);
             }
             return null;
         } catch (IOException e) {
@@ -113,8 +114,7 @@ public class HdfsSafePayloadWriter {
             return path;
         }
 
-        /** The wrapper JSON as landed; null for an archived file (never re-read). */
-        @Nullable
+        /** The wrapper JSON as landed. */
         public String getContent() {
             return content;
         }
@@ -123,7 +123,7 @@ public class HdfsSafePayloadWriter {
             return checksum;
         }
 
-        /** True when the consumer (or the sweep) has already moved the file out of landing. */
+        /** True when the file was found in the archive rather than the landing directory. */
         public boolean isArchived() {
             return archived;
         }

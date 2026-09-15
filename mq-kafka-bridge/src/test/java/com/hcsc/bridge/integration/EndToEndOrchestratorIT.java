@@ -334,7 +334,7 @@ class EndToEndOrchestratorIT {
         }
 
         @Test
-        @DisplayName("a file the consumer already archived completes the redelivery without landing or publishing")
+        @DisplayName("a file the consumer already archived is republished from the archive path without re-landing")
         void archivedFileCompletesRedelivery() throws Exception {
             MqMessage message = messageGenerator.generateMessageWithId("MSG-ARCHIVE-001");
             ProcessingResult first = orchestrator.process(message);
@@ -351,7 +351,10 @@ class EndToEndOrchestratorIT {
             assertThat(second.getHdfsPath()).isEqualTo(archived);
             assertThat(apiClient.getCallCount()).isEqualTo(1);
             assertThat(hdfsOperations.exists(first.getHdfsPath())).isFalse();
-            verify(kafkaPublisher, org.mockito.Mockito.times(1)).publish(anyString(), anyString());
+            ArgumentCaptor<String> notification = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher, org.mockito.Mockito.times(2)).publish(anyString(), notification.capture());
+            assertThat(notification.getAllValues().get(1)).contains("\"hdfsPath\":\"" + archived + "\"");
+            assertThat(auditPublisher.hasEventOfType(AuditEventType.KAFKA_PUBLISH_COMPLETED)).isTrue();
             assertThat(auditPublisher.hasEventOfType(AuditEventType.PROCESSING_COMPLETED)).isTrue();
         }
     }

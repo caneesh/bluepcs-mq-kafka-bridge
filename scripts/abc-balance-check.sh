@@ -32,6 +32,8 @@
 #                                 still-in-flight events read as loss.
 #   ABC_TOLERANCE_PCT_HIVE_LOAD   allowed % variance on the consumer stage,
 #                                 default 2
+#   ABC_PIPELINE                  bridge (default, the PMM+ funnel) or pmm
+#   ABC_EMPTY_WINDOW              warn (default) or pass when nothing was received
 #
 # Exit codes (deliberately distinct from audit-gap-check.sh's):
 #   0 - all equations PASS (or INFO only)
@@ -85,59 +87,102 @@ RUN_DT="$(date -u '+%Y-%m-%d')"
 STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S')"
 HOSTNAME_SAFE="$(hostname 2>/dev/null || echo unknown)"
 
-# --- Counts -----------------------------------------------------------------
-# One round trip. Reads the DEDUPED view: audit rows arrive at-least-once, and
+# --- Pipeline ---------------------------------------------------------------
 # The audit topic is shared by every bridge application. Each PMM-bridge event
 # carries metadata.pipeline='pmm'; PMM+ bridge events carry no key (COALESCE ->
-# 'bridge'). Without this filter the PMM traffic (no ENRICHMENT_*/KAFKA_PUBLISH_*
-# stages) would fail equations 2-5 as POSSIBLE_LOSS. The PMM funnel has its own
-# equations (docs/AUDIT_BALANCE_CONTROL.md, "PMM bridge") and is checked by a
-# separate run with ABC_PIPELINE=pmm.
+# 'bridge'). Each pipeline has its own funnel and equation set below.
 ABC_PIPELINE="${ABC_PIPELINE:-bridge}"
+# What to do with a window that received nothing: warn (default, exit 2) because an
+# empty audit table also looks exactly like this during an audit outage; pass for
+# queues that are legitimately idle for hours.
+ABC_EMPTY_WINDOW="${ABC_EMPTY_WINDOW:-warn}"
 
-# a replayed Spark batch would otherwise inflate counts into a false variance.
+# --- Counts -----------------------------------------------------------------
+# COHORT semantics: the window selects the messages RECEIVED in it (their
+# MESSAGE_RECEIVED timestamp); every later stage of those messages is then counted
+# wherever in time it happened, up to one day after the window. Filtering each
+# stage by its own timestamp would split a message that was received at 09:59 and
+# completed at 10:01 across two windows and report loss in both.
 #
-# COUNT(DISTINCT event_id) per stage: a redelivered message re-emits its stage
-# events with the SAME deterministic event_id, so distinct-counting collapses
-# redeliveries to the single message they represent.
+# PER-EVENT flags, not per-stage distinct counts: a stage is "reached" if the message
+# has at least one such event. This is what makes redeliveries harmless (the same
+# event_id re-emits stages) and what stops overlapping sets from cancelling out — a
+# message that was both loaded and later skipped as a duplicate is one loaded
+# message, while a message that was skipped and never loaded is a loss.
 #
-# MESSAGE_DISCARDED is counted as ROWS: both discard paths (non-TextMessage and
-# poison-threshold) run in the listener BEFORE the orchestrator emits
-# MESSAGE_RECEIVED, so those messages carry a null event_id and never enter the
-# audited funnel. They are reported as INFO, never as a drain from received.
+# Reads the DEDUPED view: audit rows arrive at-least-once and a replayed Spark batch
+# would otherwise inflate counts.
+#
+# MESSAGE_DISCARDED without an event_id (unsupported message type) never entered the
+# funnel and is reported as INFO; poison discards carry an event_id and appear as a
+# terminal state of their message.
+PART_TO_EXT="$(date -u -d "${WINDOW_END}Z +1 day" '+%Y-%m-%d')"
+PIPELINE_FILTER="COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${ABC_PIPELINE}'"
 QUERY_COUNTS="
+WITH cohort AS (
+  SELECT DISTINCT event_id
+  FROM ${DEDUPED_VIEW}
+  WHERE event_dt >= '${PART_FROM}' AND event_dt <= '${PART_TO}'
+    AND event_timestamp >= '${WINDOW_START}'
+    AND event_timestamp <  '${WINDOW_END}'
+    AND event_type = 'MESSAGE_RECEIVED'
+    AND event_id IS NOT NULL
+    AND ${PIPELINE_FILTER}
+),
+flags AS (
+  SELECT v.event_id,
+    max(CASE WHEN v.event_type = 'MESSAGE_PARSED'          THEN 1 ELSE 0 END) AS parsed,
+    max(CASE WHEN v.event_type = 'ENRICHMENT_COMPLETED'    THEN 1 ELSE 0 END) AS enriched,
+    max(CASE WHEN v.event_type = 'API_CALL_COMPLETED'      THEN 1 ELSE 0 END) AS api_called,
+    max(CASE WHEN v.event_type IN ('HDFS_WRITE_COMPLETED','HDFS_WRITE_SKIPPED') THEN 1 ELSE 0 END) AS landed,
+    max(CASE WHEN v.event_type = 'KAFKA_PUBLISH_COMPLETED' THEN 1 ELSE 0 END) AS published,
+    max(CASE WHEN v.event_type = 'PROCESSING_COMPLETED'    THEN 1 ELSE 0 END) AS completed,
+    max(CASE WHEN v.event_type = 'HIVE_LOAD_COMPLETED'     THEN 1 ELSE 0 END) AS loaded,
+    max(CASE WHEN v.event_type = 'CLAIM_CHECK_SKIPPED'     THEN 1 ELSE 0 END) AS skipped,
+    max(CASE WHEN v.event_type = 'MESSAGE_QUARANTINED'
+              AND COALESCE(get_json_object(v.metadata_json, '\$.errorCode'),
+                    CASE WHEN v.description LIKE 'Unparseable%' THEN 'PARSE_ERROR' END) = 'PARSE_ERROR'
+             THEN 1 ELSE 0 END) AS q_parse,
+    max(CASE WHEN v.event_type = 'MESSAGE_QUARANTINED'
+              AND COALESCE(get_json_object(v.metadata_json, '\$.errorCode'),
+                    CASE WHEN v.description LIKE 'Non-retryable enrichment%' THEN 'ENRICHMENT_ERROR' END) = 'ENRICHMENT_ERROR'
+             THEN 1 ELSE 0 END) AS q_enrich,
+    max(CASE WHEN v.event_type = 'MESSAGE_QUARANTINED'
+              AND get_json_object(v.metadata_json, '\$.errorCode') = 'API_ERROR'
+             THEN 1 ELSE 0 END) AS q_api,
+    max(CASE WHEN v.event_type = 'MESSAGE_DISCARDED'       THEN 1 ELSE 0 END) AS discarded
+  FROM ${DEDUPED_VIEW} v
+  JOIN cohort c ON v.event_id = c.event_id
+  WHERE v.event_dt >= '${PART_FROM}' AND v.event_dt <= '${PART_TO_EXT}'
+    AND ${PIPELINE_FILTER}
+  GROUP BY v.event_id
+)
 SELECT
-  COUNT(DISTINCT CASE WHEN event_type = 'MESSAGE_RECEIVED'        THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'MESSAGE_PARSED'          THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'ENRICHMENT_COMPLETED'    THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type IN ('HDFS_WRITE_COMPLETED',
-                                          'HDFS_WRITE_SKIPPED')   THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'KAFKA_PUBLISH_COMPLETED' THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'PROCESSING_COMPLETED'    THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'HIVE_LOAD_COMPLETED'     THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'CLAIM_CHECK_SKIPPED'     THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'MESSAGE_QUARANTINED'
-                       AND COALESCE(get_json_object(metadata_json, '\$.errorCode'),
-                             CASE WHEN description LIKE 'Unparseable%' THEN 'PARSE_ERROR' END)
-                           = 'PARSE_ERROR'                        THEN event_id END),
-  COUNT(DISTINCT CASE WHEN event_type = 'MESSAGE_QUARANTINED'
-                       AND COALESCE(get_json_object(metadata_json, '\$.errorCode'),
-                             CASE WHEN description LIKE 'Non-retryable enrichment%'
-                                  THEN 'ENRICHMENT_ERROR' END)
-                           = 'ENRICHMENT_ERROR'                   THEN event_id END),
-  SUM(CASE WHEN event_type = 'MESSAGE_DISCARDED' THEN 1 ELSE 0 END)
+  COUNT(*),
+  SUM(parsed), SUM(enriched), SUM(api_called), SUM(landed), SUM(published), SUM(completed),
+  SUM(loaded), SUM(skipped), SUM(q_parse), SUM(q_enrich), SUM(q_api), SUM(discarded),
+  SUM(CASE WHEN skipped = 1 AND loaded = 0 THEN 1 ELSE 0 END)
+FROM flags
+"
+
+# Discards that never entered the funnel (no event_id): rows in the window.
+QUERY_DISCARDED_OUTSIDE="
+SELECT COUNT(*)
 FROM ${DEDUPED_VIEW}
 WHERE event_dt >= '${PART_FROM}' AND event_dt <= '${PART_TO}'
   AND event_timestamp >= '${WINDOW_START}'
   AND event_timestamp <  '${WINDOW_END}'
-  AND COALESCE(get_json_object(metadata_json, '\$.pipeline'), 'bridge') = '${ABC_PIPELINE}'
+  AND event_type = 'MESSAGE_DISCARDED'
+  AND event_id IS NULL
+  AND ${PIPELINE_FILTER}
 "
 
 echo "============================================"
 echo "ABC Balance Check"
 echo "============================================"
 echo "Run id:      ${RUN_ID}"
-echo "Window:      ${WINDOW_START} (incl) .. ${WINDOW_END} (excl) UTC"
+echo "Pipeline:    ${ABC_PIPELINE}"
+echo "Window:      ${WINDOW_START} (incl) .. ${WINDOW_END} (excl) UTC  (cohort = messages RECEIVED in the window)"
 echo "Source view: ${DEDUPED_VIEW}"
 echo "Control:     ${ABC_CONTROL_TABLE}"
 echo ""
@@ -147,6 +192,8 @@ if [ "$DRY_RUN" = true ]; then
     echo "Would run via: ${HIVE_CMD} <query>"
     echo "--- counts query:"
     echo "${QUERY_COUNTS}"
+    echo "--- discarded-outside-funnel query:"
+    echo "${QUERY_DISCARDED_OUTSIDE}"
     echo "--- control insert: INSERT INTO TABLE ${ABC_CONTROL_TABLE} PARTITION (run_dt='${RUN_DT}') VALUES (...)"
     exit 0
 fi
@@ -162,12 +209,22 @@ fi
 
 # Last non-empty line, tab separated
 COUNTS_LINE="$(echo "${COUNTS_RAW}" | sed '/^[[:space:]]*$/d' | tail -1)"
-IFS=$'\t' read -r RECEIVED PARSED ENRICHED HDFS_WRITTEN KAFKA_PUBLISHED COMPLETED \
-    HIVE_LOADED CLAIM_SKIPPED QUAR_PARSE QUAR_ENRICH DISCARDED <<< "${COUNTS_LINE}"
+IFS=$'\t' read -r RECEIVED PARSED ENRICHED API_CALLED LANDED KAFKA_PUBLISHED COMPLETED \
+    HIVE_LOADED CLAIM_SKIPPED QUAR_PARSE QUAR_ENRICH QUAR_API DISCARDED_IN_FUNNEL SKIPPED_UNLOADED <<< "${COUNTS_LINE}"
+
+# shellcheck disable=SC2086
+DISCARDED_RAW="$(${HIVE_CMD} "${QUERY_DISCARDED_OUTSIDE}" 2>"$ERR_FILE")"
+if [ $? -ne 0 ]; then
+    echo "ERROR: could not read discard counts" >&2
+    sed 's/^/  hive: /' "$ERR_FILE" | tail -10 >&2
+    echo "RESULT: COULD NOT EVALUATE (exit 3)"
+    exit 3
+fi
+DISCARDED="$(echo "${DISCARDED_RAW}" | sed '/^[[:space:]]*$/d' | tail -1)"
 
 # Hive prints NULL for SUM over no rows; normalise everything to an integer.
-for v in RECEIVED PARSED ENRICHED HDFS_WRITTEN KAFKA_PUBLISHED COMPLETED \
-         HIVE_LOADED CLAIM_SKIPPED QUAR_PARSE QUAR_ENRICH DISCARDED; do
+for v in RECEIVED PARSED ENRICHED API_CALLED LANDED KAFKA_PUBLISHED COMPLETED \
+         HIVE_LOADED CLAIM_SKIPPED QUAR_PARSE QUAR_ENRICH QUAR_API DISCARDED_IN_FUNNEL SKIPPED_UNLOADED DISCARDED; do
     val="${!v:-0}"
     case "$val" in
         ''|NULL|null) val=0 ;;
@@ -177,10 +234,11 @@ for v in RECEIVED PARSED ENRICHED HDFS_WRITTEN KAFKA_PUBLISHED COMPLETED \
     printf -v "$v" '%s' "$val"
 done
 
-echo "Counts: received=${RECEIVED} parsed=${PARSED} enriched=${ENRICHED} hdfs=${HDFS_WRITTEN}"
-echo "        kafka=${KAFKA_PUBLISHED} completed=${COMPLETED} hive_loaded=${HIVE_LOADED}"
-echo "        quarantined(parse)=${QUAR_PARSE} quarantined(enrich)=${QUAR_ENRICH}"
-echo "        claim_check_skipped=${CLAIM_SKIPPED} discarded_outside_funnel=${DISCARDED}"
+echo "Counts: received=${RECEIVED} parsed=${PARSED} enriched=${ENRICHED} api_called=${API_CALLED} landed=${LANDED}"
+echo "        kafka=${KAFKA_PUBLISHED} completed=${COMPLETED} hive_loaded=${HIVE_LOADED} claim_check_skipped=${CLAIM_SKIPPED}"
+echo "        quarantined(parse)=${QUAR_PARSE} quarantined(enrich)=${QUAR_ENRICH} quarantined(api)=${QUAR_API}"
+echo "        poison_discarded_in_funnel=${DISCARDED_IN_FUNNEL} discarded_outside_funnel=${DISCARDED}"
+echo "        skipped_without_load=${SKIPPED_UNLOADED}"
 echo ""
 
 # --- Equation evaluation ----------------------------------------------------
@@ -229,36 +287,79 @@ evaluate() {
 }
 
 # Drains are subtracted where they actually occur; see the DDL comments and
-# docs/AUDIT_BALANCE_CONTROL.md for why each term is where it is.
-evaluate 1 "MESSAGE_RECEIVED" "MESSAGE_PARSED" \
-    $(( RECEIVED - QUAR_PARSE )) "${PARSED}" 0 \
-    "received minus parse-quarantined should equal parsed"
+# docs/AUDIT_BALANCE_CONTROL.md for why each term is where it is. A poison discard
+# (a message given up on after N deliveries) is a terminal drain at whatever stage
+# it kept failing; it is subtracted from the first equation since it never parsed.
+NO_DATA=false
+if [ "${RECEIVED}" -eq 0 ]; then
+    NO_DATA=true
+fi
 
-evaluate 2 "MESSAGE_PARSED" "ENRICHMENT_COMPLETED" \
-    $(( PARSED - QUAR_ENRICH )) "${ENRICHED}" 0 \
-    "parsed minus enrichment-quarantined should equal enriched"
+if [ "${ABC_PIPELINE}" = "pmm" ]; then
+    evaluate 1 "MESSAGE_RECEIVED" "MESSAGE_PARSED" \
+        $(( RECEIVED - QUAR_PARSE - DISCARDED_IN_FUNNEL )) "${PARSED}" 0 \
+        "received minus parse-quarantined and poison-discarded should equal parsed"
 
-evaluate 3 "ENRICHMENT_COMPLETED" "HDFS_WRITE_COMPLETED+SKIPPED" \
-    "${ENRICHED}" "${HDFS_WRITTEN}" 0 \
-    "every enriched message must land in HDFS"
+    evaluate 2 "MESSAGE_PARSED" "HDFS_WRITE_COMPLETED+SKIPPED" \
+        $(( PARSED - QUAR_API )) "${LANDED}" 0 \
+        "parsed minus api-quarantined must land (via the API call or the redelivery pre-check)"
 
-evaluate 4 "HDFS_WRITE_COMPLETED+SKIPPED" "KAFKA_PUBLISH_COMPLETED" \
-    "${HDFS_WRITTEN}" "${KAFKA_PUBLISHED}" 0 \
-    "every landed payload must be announced on Kafka"
+    evaluate 3 "HDFS_WRITE_COMPLETED+SKIPPED" "PROCESSING_COMPLETED" \
+        "${LANDED}" "${COMPLETED}" 0 \
+        "every landed payload must reach the terminal bridge state"
 
-evaluate 5 "KAFKA_PUBLISH_COMPLETED" "PROCESSING_COMPLETED" \
-    "${KAFKA_PUBLISHED}" "${COMPLETED}" 0 \
-    "every published message must reach the terminal bridge state"
+    printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
+        "-" "MESSAGE_PARSED" "API_CALL_COMPLETED" "-" "${API_CALLED}" "-" "INFO" "web-service calls (redeliveries skip it)"
+else
+    evaluate 1 "MESSAGE_RECEIVED" "MESSAGE_PARSED" \
+        $(( RECEIVED - QUAR_PARSE - DISCARDED_IN_FUNNEL )) "${PARSED}" 0 \
+        "received minus parse-quarantined and poison-discarded should equal parsed"
 
-evaluate 6 "PROCESSING_COMPLETED" "HIVE_LOAD_COMPLETED" \
-    $(( COMPLETED - CLAIM_SKIPPED )) "${HIVE_LOADED}" "${ABC_TOLERANCE_PCT_HIVE_LOAD}" \
-    "bridge-completed minus consumer-skipped should be loaded into Hive"
+    evaluate 2 "MESSAGE_PARSED" "ENRICHMENT_COMPLETED+RESUMED" \
+        $(( PARSED - QUAR_ENRICH )) "${LANDED}" 0 \
+        "parsed minus enrichment-quarantined must land (enriched now, or resumed from an earlier landing)"
+
+    evaluate 3 "HDFS_WRITE_COMPLETED+SKIPPED" "KAFKA_PUBLISH_COMPLETED" \
+        "${LANDED}" "${KAFKA_PUBLISHED}" 0 \
+        "every landed payload must be announced on Kafka"
+
+    evaluate 4 "KAFKA_PUBLISH_COMPLETED" "PROCESSING_COMPLETED" \
+        "${KAFKA_PUBLISHED}" "${COMPLETED}" 0 \
+        "every published message must reach the terminal bridge state"
+
+    evaluate 5 "PROCESSING_COMPLETED" "HIVE_LOAD_COMPLETED" \
+        "${COMPLETED}" "${HIVE_LOADED}" "${ABC_TOLERANCE_PCT_HIVE_LOAD}" \
+        "every bridge-completed message must be loaded into Hive (a skip is never a substitute for a load)"
+
+    # A consumer skip on a message that was never loaded means the file was gone
+    # before the load: that is a loss, and it must not hide inside the tolerance.
+    if [ "${SKIPPED_UNLOADED}" -gt 0 ]; then
+        STATUS6="FAIL"; REASON6="POSSIBLE_LOSS"; ANY_FAIL=true
+    else
+        STATUS6="PASS"; REASON6="OK"
+    fi
+    printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
+        "6" "CLAIM_CHECK_SKIPPED" "HIVE_LOAD_COMPLETED" "0" "${SKIPPED_UNLOADED}" "${SKIPPED_UNLOADED}" "${STATUS6}" "${REASON6}"
+    ENDED6="$(date -u '+%Y-%m-%dT%H:%M:%S')"
+    VALUES="${VALUES},('${RUN_ID}','BALANCE_STAGE',6,'CLAIM_CHECK_SKIPPED','HIVE_LOAD_COMPLETED','${WINDOW_START}','${WINDOW_END}',0,${SKIPPED_UNLOADED},${SKIPPED_UNLOADED},0.0,0,'${STATUS6}','${REASON6}','messages the consumer skipped without ever loading: payload missing before the load','${HOSTNAME_SAFE}','${STARTED_AT}','${ENDED6}')"
+
+    printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
+        "-" "MESSAGE_PARSED" "ENRICHMENT_COMPLETED" "-" "${ENRICHED}" "-" "INFO" "enrichment calls (redeliveries resume without one)"
+    printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
+        "-" "HIVE_LOAD_COMPLETED" "CLAIM_CHECK_SKIPPED" "-" "${CLAIM_SKIPPED}" "-" "INFO" "consumer duplicate skips (benign only when also loaded)"
+fi
 
 # Informational: messages discarded before entering the audited funnel.
 ENDED_AT="$(date -u '+%Y-%m-%dT%H:%M:%S')"
 VALUES="${VALUES},('${RUN_ID}','DISCARDED_OUTSIDE_FUNNEL',NULL,'MQ','MESSAGE_DISCARDED','${WINDOW_START}','${WINDOW_END}',0,${DISCARDED},0,0.0,0,'INFO','INFO','discarded before MESSAGE_RECEIVED - never entered the funnel','${HOSTNAME_SAFE}','${STARTED_AT}','${ENDED_AT}')"
 printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
     "-" "MQ" "MESSAGE_DISCARDED" "-" "${DISCARDED}" "-" "INFO" "outside funnel"
+if [ "$NO_DATA" = true ]; then
+    VALUES="${VALUES},('${RUN_ID}','NO_DATA',NULL,'MESSAGE_RECEIVED','-','${WINDOW_START}','${WINDOW_END}',0,0,0,0.0,0,'WARN','NO_DATA','no messages received in the window - idle bridge or audit outage','${HOSTNAME_SAFE}','${STARTED_AT}','${ENDED_AT}')"
+    printf "%-3s %-28s %-28s %9s %9s %9s %-6s %s\n" \
+        "-" "MESSAGE_RECEIVED" "-" "-" "0" "-" "WARN" "NO_DATA: nothing received - idle, or the audit stream is down"
+    [ "${ABC_EMPTY_WINDOW}" != "pass" ] && ANY_WARN=true
+fi
 echo ""
 
 # --- Persist ----------------------------------------------------------------
@@ -281,8 +382,9 @@ if [ "$ANY_FAIL" = true ]; then
     echo "============================================"
     exit 1
 elif [ "$ANY_WARN" = true ]; then
-    echo "RESULT: WARN - audit-stream loss or within-tolerance drift (exit 2)"
-    echo "A negative variance means audit events were dropped, not messages."
+    echo "RESULT: WARN - audit-stream loss, within-tolerance drift, or no data in the window (exit 2)"
+    echo "A negative variance means audit events were dropped, not messages; NO_DATA means the audit"
+    echo "stream itself may be down (check the bridge's <log>-audit.jsonl fallback and the monitor)."
     echo "============================================"
     exit 2
 fi

@@ -100,14 +100,11 @@ public class BridgeOrchestrator {
             }
 
             EnrichmentResult enrichmentResult = apiClient.enrich(parsedPayload);
-            EnrichedPayload enrichedPayload = buildEnrichedPayload(parsedPayload, ctx, enrichmentResult);
-            publishAudit(ctx, parsedPayload.getTransactionId(),
-                    AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
-            // Cross-check: the notification advertises the MQ-supplied plan id; the API's
-            // response carries its own. They should always agree — a mismatch means the
-            // gateway routed to (or returned) the wrong plan, which would otherwise ship
-            // silently because only the MQ value is published downstream.
+            // Cross-check BEFORE the stage is audited as completed: the notification
+            // advertises the MQ-supplied plan id; the API's response carries its own. A
+            // mismatch means the gateway routed to (or returned) the wrong plan, which
+            // would otherwise ship silently because only the MQ value is published.
             String apiPlanId = enrichmentResult.getMarketingPlanId();
             if (apiPlanId != null && !apiPlanId.isEmpty()
                     && !apiPlanId.equals(parsedPayload.getEntityId())) {
@@ -124,6 +121,10 @@ public class BridgeOrchestrator {
                             parsedPayload.getEntityId(), 0, false);
                 }
             }
+
+            EnrichedPayload enrichedPayload = buildEnrichedPayload(parsedPayload, ctx, enrichmentResult);
+            publishAudit(ctx, parsedPayload.getTransactionId(),
+                    AuditEventType.ENRICHMENT_COMPLETED, "Payload enriched successfully", null);
 
             // The full wrapper document goes to HDFS (it can exceed the broker's ~1 MB
             // message limit); Kafka carries only a small claim-check notification with
@@ -180,39 +181,29 @@ public class BridgeOrchestrator {
     }
 
     /**
-     * Completes a redelivered message from the payload that already landed. A file still
-     * in the landing directory means the consumer has not processed it yet: republish the
-     * claim-check notification from the stored wrapper (at-least-once; the consumer dedupes
-     * on eventId). A file already in the archive means the consumer has processed it (or
-     * the retention sweep aged it out, after which the consumer treats a re-land as an
-     * already-processed duplicate anyway): nothing to republish.
+     * Completes a redelivered message from the payload that already landed, wherever it
+     * now is. The claim-check notification is republished from the stored wrapper with
+     * the file's current path and checksum. This is deliberately the same for a file in
+     * the landing directory and one in the archive: an archived file might have been
+     * moved by the consumer after a successful load (the duplicate notification is then
+     * deduplicated downstream on eventId) or by the retention sweep after the earlier
+     * publish never happened — the bridge cannot tell, and only a publish makes the
+     * "processed" claim true in both cases. No stage is ever recorded as completed on
+     * the strength of a file's location alone.
      */
     private ProcessingResult resumeFromLanded(ProcessingContext ctx, ParsedPayload parsedPayload,
                                               HdfsSafePayloadWriter.LandedPayload landed) {
         String transactionId = parsedPayload.getTransactionId();
-        if (landed.isArchived()) {
-            logger.info("Redelivery of eventId {}: payload already archived at {} — nothing to do",
-                    ctx.getEventId(), landed.getPath());
-            publishAudit(ctx, transactionId, AuditEventType.HDFS_WRITE_SKIPPED,
-                    "Payload already archived downstream: " + landed.getPath(), null,
-                    Map.of("hdfsPath", landed.getPath(),
-                           "checksum", landed.getChecksum() != null ? landed.getChecksum() : "",
-                           "bytesWritten", 0,
-                           "reason", "already-archived"));
-            publishAudit(ctx, transactionId, AuditEventType.PROCESSING_COMPLETED,
-                    "Message already processed downstream (redelivery)", null);
-            return ProcessingResult.success(ctx.getEventId(), landed.getPath(), null);
-        }
-
-        logger.info("Redelivery of eventId {}: resuming from landed payload {} without calling the API",
-                ctx.getEventId(), landed.getPath());
+        String reason = landed.isArchived() ? "resumed-from-archive" : "resumed-from-landing";
+        logger.info("Redelivery of eventId {}: resuming from landed payload {} ({}) without calling the API",
+                ctx.getEventId(), landed.getPath(), reason);
         EnrichmentWrapperFactory.WrapperResult wrapper = wrapperFactory.parse(landed.getContent());
         publishAudit(ctx, transactionId, AuditEventType.HDFS_WRITE_SKIPPED,
                 "Resumed from landed payload: " + landed.getPath(), null,
                 Map.of("hdfsPath", landed.getPath(),
                        "checksum", landed.getChecksum() != null ? landed.getChecksum() : "",
                        "bytesWritten", 0,
-                       "reason", "resumed-from-landing"));
+                       "reason", reason));
 
         String notification = notificationFactory.buildNotification(
                 wrapper, parsedPayload.getEntityId(), landed.getPath(), landed.getChecksum(), ctx.getEventId());

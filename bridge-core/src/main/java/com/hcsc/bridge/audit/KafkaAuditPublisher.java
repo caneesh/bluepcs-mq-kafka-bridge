@@ -26,6 +26,13 @@ public class KafkaAuditPublisher implements AuditPublisher {
     private final ObjectMapper objectMapper;
     private final int timeoutSeconds;
     private final long failureCooldownMs;
+    /**
+     * Where an event goes when Kafka cannot take it (send failure, or the cooldown after
+     * one): the JSON-lines audit file. Without this, every event during a broker outage
+     * or an ACL wait was silently dropped and an audit outage read as a healthy, idle
+     * system in the gap and balance checks. Null disables the fallback.
+     */
+    private final AuditPublisher fallback;
 
     /**
      * Cooldown for failures that cannot clear on their own (missing topic / ACL not
@@ -44,11 +51,32 @@ public class KafkaAuditPublisher implements AuditPublisher {
      */
     private volatile long suppressUntil = 0L;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public KafkaAuditPublisher(
             KafkaTemplate<String, String> kafkaTemplate,
             @Value("${bridge.kafka.audit-topic:bridge-audit}") String auditTopic,
             @Value("${bridge.kafka.audit-timeout-seconds:5}") int timeoutSeconds,
-            @Value("${bridge.audit.failure-cooldown-ms:60000}") long failureCooldownMs) {
+            @Value("${bridge.audit.failure-cooldown-ms:60000}") long failureCooldownMs,
+            @org.springframework.beans.factory.annotation.Qualifier("loggingAuditPublisher") AuditPublisher fallback,
+            @Value("${bridge.audit.file-fallback:true}") boolean fileFallback) {
+        this(kafkaTemplate, auditTopic, timeoutSeconds, failureCooldownMs, fileFallback ? fallback : null);
+    }
+
+    public KafkaAuditPublisher(
+            KafkaTemplate<String, String> kafkaTemplate,
+            String auditTopic,
+            int timeoutSeconds,
+            long failureCooldownMs) {
+        this(kafkaTemplate, auditTopic, timeoutSeconds, failureCooldownMs, null);
+    }
+
+    public KafkaAuditPublisher(
+            KafkaTemplate<String, String> kafkaTemplate,
+            String auditTopic,
+            int timeoutSeconds,
+            long failureCooldownMs,
+            AuditPublisher fallback) {
+        this.fallback = fallback;
         this.kafkaTemplate = kafkaTemplate;
         this.auditTopic = auditTopic;
         this.timeoutSeconds = timeoutSeconds;
@@ -64,6 +92,7 @@ public class KafkaAuditPublisher implements AuditPublisher {
     @Override
     public void publish(AuditEvent event) {
         if (inCooldown(event)) {
+            fallbackPublish(event, "cooldown");
             return;
         }
         try {
@@ -82,6 +111,7 @@ public class KafkaAuditPublisher implements AuditPublisher {
         } catch (ExecutionException | TimeoutException e) {
             startCooldown(e);
             logger.error("Failed to publish audit event: {}", event.getAuditEventId(), e);
+            fallbackPublish(event, "send failure");
         } catch (RuntimeException e) {
             // send() itself can throw synchronously (metadata timeout after max.block.ms,
             // closed producer). Without arming the cooldown here, every sync publish
@@ -91,12 +121,14 @@ public class KafkaAuditPublisher implements AuditPublisher {
             startCooldown(e);
             logger.error("Failed to publish audit event (synchronous send failure): {}",
                     event.getAuditEventId(), e);
+            fallbackPublish(event, "send failure");
         }
     }
 
     @Override
     public void publishAsync(AuditEvent event) {
         if (inCooldown(event)) {
+            fallbackPublish(event, "cooldown");
             return;
         }
         try {
@@ -109,6 +141,7 @@ public class KafkaAuditPublisher implements AuditPublisher {
                             ex -> {
                                 startCooldown(ex);
                                 logger.error("Async audit failed: {}", event.getAuditEventId(), ex);
+                                fallbackPublish(event, "async send failure");
                             }
                     );
         } catch (Exception e) {
@@ -117,6 +150,24 @@ public class KafkaAuditPublisher implements AuditPublisher {
             // don't rely solely on the SafeAuditPublisher wrapper for that guarantee.
             startCooldown(e);
             logger.error("Failed to publish async audit event: {}", event.getAuditEventId(), e);
+            fallbackPublish(event, "async send failure");
+        }
+    }
+
+    /**
+     * Writes an event Kafka did not take to the audit file so the evidence survives the
+     * outage; reconciliation can then merge the file with the topic. Never throws.
+     */
+    private void fallbackPublish(AuditEvent event, String why) {
+        if (fallback == null) {
+            return;
+        }
+        try {
+            fallback.publish(event);
+            logger.debug("Audit event {} written to the file fallback ({})", event.getAuditEventId(), why);
+        } catch (RuntimeException e) {
+            logger.error("Audit event {} lost: Kafka {} and the file fallback failed too",
+                    event.getAuditEventId(), why, e);
         }
     }
 

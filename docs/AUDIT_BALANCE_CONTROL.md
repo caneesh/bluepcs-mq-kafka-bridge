@@ -20,35 +20,62 @@ Two checks, deliberately different questions — run both:
 
 ## The balance equations
 
-Each equation subtracts the *legitimate drains* at the stage where they occur, rather
-than expecting naive equality. Counts are `COUNT(DISTINCT event_id)` over
-`bridge_audit_event_deduped` — redeliveries re-emit the same deterministic `event_id`,
-so distinct-counting correctly collapses them to the one message they represent.
+The window selects a **cohort**: the messages whose `MESSAGE_RECEIVED` falls inside it.
+Every later stage of those messages is then counted wherever in time it happened (up
+to a day after the window), so a message received at 09:59 and completed at 10:01 is
+one message in the 09:00 window, never a loss in two. Stages are **per-event flags**
+over `bridge_audit_event_deduped`: a message "reached" a stage if it has at least one
+such event. Redeliveries re-emit stages for the same deterministic `event_id` and
+collapse to the one message they represent, and sets that overlap (a message both
+loaded and later skipped) can no longer cancel against a different message's loss.
+
+PMM+ funnel (`ABC_PIPELINE=bridge`, the default):
 
 | # | from → to | expected | tolerance |
 |---|---|---|---|
-| 1 | `MESSAGE_RECEIVED` → `MESSAGE_PARSED` | received − quarantined(`PARSE_ERROR`) | exact |
-| 2 | `MESSAGE_PARSED` → `ENRICHMENT_COMPLETED` | parsed − quarantined(`ENRICHMENT_ERROR`) | exact |
-| 3 | `ENRICHMENT_COMPLETED` → `HDFS_WRITE_COMPLETED`+`_SKIPPED` | enriched | exact |
-| 4 | HDFS written → `KAFKA_PUBLISH_COMPLETED` | hdfs_written | exact |
-| 5 | `KAFKA_PUBLISH_COMPLETED` → `PROCESSING_COMPLETED` | kafka_published | exact |
-| 6 | `PROCESSING_COMPLETED` → `HIVE_LOAD_COMPLETED` | completed − `CLAIM_CHECK_SKIPPED` | `ABC_TOLERANCE_PCT_HIVE_LOAD` (2%) |
+| 1 | `MESSAGE_RECEIVED` → `MESSAGE_PARSED` | received − quarantined(`PARSE_ERROR`) − poison-discarded | exact |
+| 2 | `MESSAGE_PARSED` → landed (`HDFS_WRITE_COMPLETED` or `_SKIPPED`) | parsed − quarantined(`ENRICHMENT_ERROR`) | exact |
+| 3 | landed → `KAFKA_PUBLISH_COMPLETED` | landed | exact |
+| 4 | `KAFKA_PUBLISH_COMPLETED` → `PROCESSING_COMPLETED` | published | exact |
+| 5 | `PROCESSING_COMPLETED` → `HIVE_LOAD_COMPLETED` | completed | `ABC_TOLERANCE_PCT_HIVE_LOAD` (2%) |
+| 6 | `CLAIM_CHECK_SKIPPED` without any `HIVE_LOAD_COMPLETED` | 0 | exact, **FAIL** when > 0 |
+
+`ENRICHMENT_COMPLETED` and `CLAIM_CHECK_SKIPPED` counts are printed as INFO rows.
+Equation 2 lands on "landed" rather than on `ENRICHMENT_COMPLETED` because a
+redelivery that resumes from an already-landed file never calls the API again (see
+RUNBOOK §6a); the landed flag is what every parsed, non-quarantined message must reach.
+
+PMM funnel (`ABC_PIPELINE=pmm`):
+
+| # | from → to | expected | tolerance |
+|---|---|---|---|
+| P1 | `MESSAGE_RECEIVED` → `MESSAGE_PARSED` | received − quarantined(`PARSE_ERROR`) − poison-discarded | exact |
+| P2 | `MESSAGE_PARSED` → landed | parsed − quarantined(`API_ERROR`) | exact |
+| P3 | landed → `PROCESSING_COMPLETED` | landed | exact |
+
+`API_CALL_COMPLETED` is an INFO row: a redelivery resolved by the pre-check lands
+without a web-service call. There is no consumer stage for PMM.
 
 Why each drain term sits where it does:
 
-- **Quarantines** leave the funnel at a specific stage. The stage is identified by the
-  `errorCode` metadata key (`PARSE_ERROR` / `ENRICHMENT_ERROR`) written by
-  `BridgeOrchestrator`; rows predating that key fall back to description matching.
-- **`CLAIM_CHECK_SKIPPED`** is the consumer reporting "the HDFS file was already gone —
-  this is a redelivery of something I already loaded". Expected behaviour, not loss.
-- **`MESSAGE_DISCARDED` is *not* a drain from `MESSAGE_RECEIVED`.** Both discard paths
-  (non-`TextMessage` and poison-threshold) run in `MqMessageListener` *before* the
-  orchestrator emits `MESSAGE_RECEIVED`, so those messages never enter the audited
-  funnel and carry a null `event_id`. They are reported as a separate INFO row,
-  counted as rows rather than distinct ids.
-- **Equation 6 is the only tolerant one**, because the consumer batches (default 300s)
+- **Quarantines** leave the funnel at a specific stage, identified by the `errorCode`
+  metadata key (`PARSE_ERROR` / `ENRICHMENT_ERROR` / `API_ERROR`); rows predating that
+  key fall back to description matching.
+- **Poison discards** (`MESSAGE_DISCARDED` with an `event_id` and `errorCode=POISON`)
+  are the terminal state of a message the listener gave up on after N deliveries; they
+  are subtracted in equation 1 because such a message never parsed. Discards **without**
+  an `event_id` (unsupported message type) never entered the funnel and are an INFO row.
+- **`CLAIM_CHECK_SKIPPED` is never a substitute for a load.** It means the consumer
+  found no file. After a successful load it is a benign duplicate redelivery; without a
+  load it is exactly the loss this check exists for (equation 6), and the gap check lists
+  the same message as `SKIPPED-WITHOUT-LOAD`.
+- **Equation 5 is the only tolerant one**, because the consumer batches (default 300s)
   and can legitimately lag the window edge. `ABC_WINDOW_LAG_MINUTES` (default 30) must
   exceed that batch interval plus its Hive write time.
+- **A window that received nothing** is reported as `NO_DATA` with exit 2 (WARN) unless
+  `ABC_EMPTY_WINDOW=pass`: an empty audit table during an audit outage looks identical
+  to an idle bridge, and a silent PASS would hide the outage. The gap check has the same
+  guard as `AUDIT_GAP_SILENCE_MINUTES`, off by default.
 
 ## Two pipelines on one topic
 
@@ -62,21 +89,10 @@ Kafka-publish stage.
 
 ### PMM bridge funnel
 
-Run a second balance job with `ABC_PIPELINE=pmm`. The equations that apply there:
-
-| # | from → to | expected | tolerance |
-|---|---|---|---|
-| P1 | `MESSAGE_RECEIVED` → `MESSAGE_PARSED` | received − quarantined(`PARSE_ERROR`) | exact |
-| P2 | `MESSAGE_PARSED` → `API_CALL_COMPLETED` + `HDFS_WRITE_SKIPPED`(pre-check) | parsed − quarantined(`API_ERROR`) | exact |
-| P3 | `API_CALL_COMPLETED` → `HDFS_WRITE_COMPLETED` + `HDFS_WRITE_SKIPPED` | api_completed | exact |
-| P4 | HDFS written/skipped → `PROCESSING_COMPLETED` | hdfs_written | exact |
-
-`HDFS_WRITE_SKIPPED` with `metadata.reason = target-exists-before-api-call` is a
-redelivery that was resolved *without* a web-service call (see AUDIT.md, PMM flow);
-it counts as landed. There is no consumer stage (no equation 6) — the PMM files are
-read directly from the windowed HDFS tree. The current `abc-balance-check.sh` only
-implements the PMM+ equations; the PMM equations above are the contract for the
-follow-up job.
+Run a second balance job with `ABC_PIPELINE=pmm`; its equations (P1–P3) are listed
+above and implemented in `abc-balance-check.sh`. `HDFS_WRITE_SKIPPED` with
+`metadata.reason = target-exists-before-api-call` is a redelivery resolved without a
+web-service call (see AUDIT.md, PMM flow) and counts as landed.
 
 ## Reading the verdict: the sign of the variance matters
 

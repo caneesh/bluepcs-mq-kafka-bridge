@@ -49,6 +49,12 @@ bridge:
     keystore-password: ${KAFKA_KEYSTORE_PASSWORD:}
     key-password: ${KAFKA_KEY_PASSWORD:}
 
+  audit:
+    enabled: ${AUDIT_ENABLED:true}
+    publisher: ${AUDIT_PUBLISHER:kafka}
+    # Events Kafka cannot take (send failure / cooldown) go to the JSON-lines audit file
+    file-fallback: ${AUDIT_FILE_FALLBACK:true}
+
   # HDFS Configuration
   hdfs:
     base-path: ${HDFS_BASE_PATH:/data/bridge/payloads}

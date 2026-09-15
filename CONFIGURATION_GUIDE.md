@@ -244,6 +244,7 @@ the LB isn't forwarding port 8020.
 
 | Variable | Default | Only change if... |
 |---|---|---|
+| `AUDIT_FILE_FALLBACK` | `true` | you do NOT want events Kafka could not take written to `<log>-audit.jsonl` (not recommended: an audit outage then leaves no evidence) |
 | `API_PLAN_ID_MISMATCH` | `reject` | the gateway is known to return a reformatted `marketingPlanIdentifier`; `warn` logs instead of quarantining |
 | `HDFS_ARCHIVE_PATH` | `<HDFS_BASE_PATH>/archive` | the consumer moves processed files somewhere else — a redelivery that finds its file there is treated as complete |
 | `AUDIT_HIVE_TABLE` | `bluepcs_mq_listener` | audit table name changes |

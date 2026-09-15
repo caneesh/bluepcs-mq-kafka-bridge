@@ -161,28 +161,54 @@ class BridgeOrchestratorTest {
          * match) — it is complete.
          */
         @Test
-        @DisplayName("a redelivery whose file was already archived does nothing and succeeds")
-        void archivedFileMeansDone() {
+        @DisplayName("a redelivery whose file was archived republishes from the archive path (never assumes completion)")
+        void archivedFileRepublishes() {
             ParsedPayload parsed = createParsedPayload("MSG-ARCHIVED-001", "TXN-001");
             when(eventIdGenerator.generateEventId("MSG-ARCHIVED-001")).thenReturn("archived-event-id");
             when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
             when(hdfsWriter.findLanded("archived-event-id")).thenReturn(
-                    new HdfsSafePayloadWriter.LandedPayload("/path/archive/archived-event-id.json", null, "sum", true));
+                    new HdfsSafePayloadWriter.LandedPayload("/path/archive/archived-event-id.json", LANDED_WRAPPER, "sum", true));
+            when(kafkaPublisher.publish(anyString(), anyString())).thenReturn("55");
             doNothing().when(auditPublisher).publishAsync(any());
 
             ProcessingResult result = orchestrator.process(createMqMessage("MSG-ARCHIVED-001"));
 
             assertThat(result.isSuccessful()).isTrue();
             assertThat(result.getHdfsPath()).isEqualTo("/path/archive/archived-event-id.json");
+            assertThat(result.getKafkaOffset()).isEqualTo("55");
             verify(apiClient, never()).enrich(any());
             verify(hdfsWriter, never()).write(any(EnrichedPayload.class), anyString());
-            verify(kafkaPublisher, never()).publish(anyString(), anyString());
+            ArgumentCaptor<String> value = ArgumentCaptor.forClass(String.class);
+            verify(kafkaPublisher).publish(eq("archived-event-id"), value.capture());
+            assertThat(value.getValue()).contains("\"hdfsPath\":\"/path/archive/archived-event-id.json\"")
+                    .contains("\"checksum\":\"sum\"");
             verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
             assertThat(auditEventCaptor.getAllValues())
                     .filteredOn(e -> e.getEventType() == AuditEventType.HDFS_WRITE_SKIPPED)
-                    .anySatisfy(e -> assertThat(e.getMetadata()).containsEntry("reason", "already-archived"));
+                    .anySatisfy(e -> assertThat(e.getMetadata()).containsEntry("reason", "resumed-from-archive"));
             assertThat(auditEventCaptor.getAllValues()).extracting(AuditEvent::getEventType)
-                    .contains(AuditEventType.PROCESSING_COMPLETED);
+                    .contains(AuditEventType.KAFKA_PUBLISH_COMPLETED, AuditEventType.PROCESSING_COMPLETED);
+        }
+
+        @Test
+        @DisplayName("a Kafka failure on the archived-resume path is still a failure (no completion claimed)")
+        void archivedResumeKafkaFailure() {
+            ParsedPayload parsed = createParsedPayload("MSG-ARCHIVED-002", "TXN-001");
+            when(eventIdGenerator.generateEventId("MSG-ARCHIVED-002")).thenReturn("archived-event-id-2");
+            when(messageParser.parse(any(MqMessage.class))).thenReturn(parsed);
+            when(hdfsWriter.findLanded("archived-event-id-2")).thenReturn(
+                    new HdfsSafePayloadWriter.LandedPayload("/path/archive/x.json", LANDED_WRAPPER, "sum", true));
+            when(kafkaPublisher.publish(anyString(), anyString()))
+                    .thenThrow(new KafkaPublishException("broker down", "x", "topic"));
+            doNothing().when(auditPublisher).publishAsync(any());
+
+            ProcessingResult result = orchestrator.process(createMqMessage("MSG-ARCHIVED-002"));
+
+            assertThat(result.isFailed()).isTrue();
+            assertThat(result.getErrorCode()).isEqualTo("KAFKA_ERROR");
+            verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
+            assertThat(auditEventCaptor.getAllValues()).extracting(AuditEvent::getEventType)
+                    .doesNotContain(AuditEventType.PROCESSING_COMPLETED);
         }
 
         @Test
@@ -234,6 +260,10 @@ class BridgeOrchestratorTest {
             assertThat(result.getErrorCode()).isEqualTo("ENRICHMENT_ERROR");
             verify(hdfsWriter, never()).write(any(EnrichedPayload.class), anyString());
             verify(kafkaPublisher, never()).publish(anyString(), anyString());
+            verify(auditPublisher, atLeastOnce()).publishAsync(auditEventCaptor.capture());
+            assertThat(auditEventCaptor.getAllValues()).extracting(AuditEvent::getEventType)
+                    .doesNotContain(AuditEventType.ENRICHMENT_COMPLETED)
+                    .contains(AuditEventType.ENRICHMENT_FAILED, AuditEventType.MESSAGE_QUARANTINED);
         }
 
         @Test

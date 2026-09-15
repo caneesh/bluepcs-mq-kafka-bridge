@@ -486,6 +486,23 @@ class MqMessageListenerTest {
         }
 
         @Test
+        @DisplayName("discard audit carries the message's eventId, the quarantine path and errorCode=POISON")
+        void discardAuditIsTerminalForTheEvent() throws JMSException {
+            ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);
+            stubTextMessage("MSG-POISON-T1", 4);
+            stubQuarantineSuccess("evt-poison-t1");
+
+            listener.onMessage(textMessage);
+
+            ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+            verify(auditPublisher).publishAsync(captor.capture());
+            assertThat(captor.getValue().getEventId()).isEqualTo("evt-poison-t1");
+            assertThat(captor.getValue().getMetadata()).containsEntry("errorCode", "POISON")
+                    .containsKey("hdfsPath");
+            assertThat(captor.getValue().getMetadata().get("hdfsPath").toString()).isNotEmpty();
+        }
+
+        @Test
         @DisplayName("should publish MESSAGE_DISCARDED audit event on discard")
         void shouldPublishAuditEventOnDiscard() throws JMSException {
             ReflectionTestUtils.setField(listener, "maxDeliveryAttempts", 3);

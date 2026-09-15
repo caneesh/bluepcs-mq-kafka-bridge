@@ -132,11 +132,11 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `PROCESSING_COMPLETED` | `BridgeOrchestrator` | Whole pipeline succeeded; the MQ message will be acked |
 | `PROCESSING_FAILED` | `BridgeOrchestrator` | Quarantine write failed after a parse failure, **or** an unexpected `RuntimeException` escaped the typed handlers (`UNEXPECTED_ERROR`) |
 | `MESSAGE_QUARANTINED` | `BridgeOrchestrator` | Unparseable payload durably preserved in the HDFS error dir; message acked |
-| `MESSAGE_DISCARDED` | `MqMessageListener` | Poison guard exceeded (`bridge.mq.max-delivery-attempts`) **or** unsupported (non-text) message type; message acked |
+| `MESSAGE_DISCARDED` | `MqMessageListener` / `PmmMqMessageListener` | Poison guard exceeded (`bridge.mq.max-delivery-attempts`): carries the message's `eventId`, `metadata.errorCode=POISON` and `metadata.hdfsPath` (the quarantine copy), and is that message's terminal event; acked only once that copy exists. Also emitted, without an `eventId`, for an unsupported message type |
 | `API_CALL_COMPLETED` | `PmmOrchestrator` (PMM bridge only) | Web-service POST returned 2xx with a body; `metadata.statusCode`, `responseBytes`, `durationMs` |
 | `API_CALL_FAILED` | `PmmOrchestrator` (PMM bridge only) | POST failed after client-side retries; `metadata.retryable` says whether the message redelivers (true) or was quarantined with `errorCode=API_ERROR` (false) |
 | `CLAIM_CHECK_RESOLVED` | DStream consumer | HDFS payload fetched and checksum-verified |
-| `CLAIM_CHECK_SKIPPED` | DStream consumer | HDFS file missing → treated as already-processed duplicate |
+| `CLAIM_CHECK_SKIPPED` | DStream consumer | HDFS file missing at read time. Benign only for a message that also has `HIVE_LOAD_COMPLETED` (a duplicate redelivery); without a load it is a **loss** and both checks report it as such |
 | `HIVE_LOAD_COMPLETED` | DStream consumer | Batch containing this eventId loaded into the Hive product tables (emitted before offset commit) |
 | `HIVE_LOAD_FAILED` | DStream consumer | Batch load failed for this eventId's batch; batch will retry |
 | `DUPLICATE_DETECTED` | — | **Reserved, never emitted today.** Consumers must tolerate it but should not expect it. Former `RECOVERY_*` / `RECONCILIATION_*` types were removed with the dormant ledger subsystem; rows carrying them can only predate that removal. |
@@ -157,6 +157,16 @@ The gap between `PROCESSING_COMPLETED` and `HIVE_LOAD_COMPLETED` is monitored by
 | `errorMessage` | Failure detail on `*_FAILED` / discard / quarantine events | null on success events |
 | `metadata` | Map of extras — used by discard events (`deliveryCount`, `maxDeliveryAttempts`, `sourceQueue`, `correlationId`, `messageClass`), by the balance check (`errorCode`, `hdfsPath`) and, on **every** PMM-bridge event, `pipeline: "pmm"` (absent on PMM+ events) | empty map when unused |
 | `timestamp` | Event creation time, serialized as an **ISO-8601 UTC string** (e.g. `2026-07-21T12:34:56.789Z`) — never an epoch number. The Hive consumer's `event_dt` partitioning and the gap check's cutoff comparison depend on this; the wire format is pinned by `KafkaAuditPublisherTest`/`LoggingAuditPublisherTest`. | never null |
+
+## File fallback during an audit outage
+
+`KafkaAuditPublisher` drops nothing silently any more: an event Kafka does not take
+(send failure, or the cooldown after one, including the 15-minute authorization
+cooldown) is written to the JSON-lines audit file (`<log>-audit.jsonl`, the same
+format as the topic) while `bridge.audit.file-fallback` is `true` (default). During an
+outage the file is the evidence; reconcile it against the topic afterwards. The gap
+check's `AUDIT_GAP_SILENCE_MINUTES` and the balance check's `NO_DATA` verdict exist
+because an audit outage otherwise looks exactly like an idle bridge.
 
 ## Publishers
 

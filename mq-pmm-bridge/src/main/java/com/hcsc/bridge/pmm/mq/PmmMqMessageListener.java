@@ -186,7 +186,8 @@ public class PmmMqMessageListener {
 
     private void discardPoisonMessage(Message message, String messageId, String correlationId,
                                       String payload, String queueName, int deliveryCount) {
-        String preservedAt = quarantineDiscardedPayload(messageId, payload);
+        String eventId = discardEventId(messageId, payload);
+        String preservedAt = quarantineDiscardedPayload(eventId, messageId, payload);
         if (payload != null && preservedAt == null) {
             // The whole point of the guard is to unblock the queue WITHOUT losing the
             // message. If the quarantine write failed (HDFS outage) there is no durable copy
@@ -207,12 +208,18 @@ public class PmmMqMessageListener {
         try {
             auditPublisher.publishAsync(AuditEvent.builder()
                     .auditEventId(UUID.randomUUID().toString())
+                    .eventId(eventId)
                     .originalMqMessageId(messageId)
                     .messageId(messageId)
                     .eventType(AuditEventType.MESSAGE_DISCARDED)
                     .description("Poison message discarded after " + deliveryCount
                             + " delivery attempts (max " + maxDeliveryAttempts + ")")
+                    // eventId + errorCode make this the message's TERMINAL event for the gap
+                    // and balance checks (its earlier MESSAGE_RECEIVED would otherwise read
+                    // as stuck forever); hdfsPath says where the payload was preserved
                     .metadata(Map.of(
+                            "errorCode", "POISON",
+                            "hdfsPath", preservedAt != null ? preservedAt : "",
                             "pipeline", PmmOrchestrator.PIPELINE,
                             "deliveryCount", deliveryCount,
                             "maxDeliveryAttempts", maxDeliveryAttempts,
@@ -226,13 +233,24 @@ public class PmmMqMessageListener {
         acknowledgeQuietly(message, "poison-message discard (messageId=" + messageId + ")");
     }
 
-    private String quarantineDiscardedPayload(String messageId, String payload) {
+    /** Same derivation as the orchestrator, so the discard event joins the message's other audit rows. */
+    private String discardEventId(String messageId, String payload) {
+        try {
+            if (messageId != null && !messageId.isEmpty()) {
+                return eventIdGenerator.generateEventId(messageId);
+            }
+            return eventIdGenerator.generateEventId(
+                    payload != null && !payload.isEmpty() ? payload : "<empty-mq-message>");
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private String quarantineDiscardedPayload(String eventId, String messageId, String payload) {
         if (payload == null) {
             return "<no payload - body unreadable>";
         }
         try {
-            String eventId = eventIdGenerator.generateEventId(
-                    messageId != null && !messageId.isEmpty() ? messageId : payload);
             HdfsWriteResult result = hdfsWriter.write(pathResolver.quarantinePath(eventId), payload, messageId);
             return result.getHdfsPath();
         } catch (RuntimeException e) {

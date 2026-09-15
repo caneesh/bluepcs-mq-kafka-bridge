@@ -200,11 +200,14 @@ Since September 2026 the orchestrator looks for `<base-path>/<eventId>.json` and
 after a Kafka failure or an ack failure therefore never asks the API again (which
 could return a newer plan version that the writer would refuse against the landed
 bytes): it republishes the claim-check notification from the landed file with that
-file's checksum (`HDFS_WRITE_SKIPPED`, `reason=resumed-from-landing`). A file the
-consumer has already moved to the archive means the message is complete
-(`reason=already-archived`): no re-land, no republish. `bridge.hdfs.archive-path`
-must therefore point where the consumer moves processed files (default
-`<base-path>/archive`, the same as the retention sweep).
+file's current path and checksum (`HDFS_WRITE_SKIPPED`, `reason=resumed-from-landing`
+or `resumed-from-archive`). The archive case republishes too: the bridge cannot tell
+whether the consumer moved the file after a load or the retention sweep moved it after
+a publish that never happened, and only a publish makes "processed" true in both
+cases (the consumer dedupes a duplicate on `eventId`). No stage is ever recorded as
+completed on the strength of a file's location. `bridge.hdfs.archive-path` must point
+where the consumer moves processed files (default `<base-path>/archive`, the same as
+the retention sweep).
 
 The checksum wedge in §6 can now only arise if someone replaces a landed file by hand.
 

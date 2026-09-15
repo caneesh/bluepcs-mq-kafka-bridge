@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.mock;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -337,5 +341,48 @@ class KafkaAuditPublisherTest {
                 .eventType(eventType)
                 .timestamp(Instant.now())
                 .build();
+    }
+
+    @Nested
+    @DisplayName("file fallback")
+    class FileFallback {
+
+        @Test
+        @DisplayName("writes the event to the fallback when the synchronous send fails, and again while in cooldown")
+        void fallsBackOnFailureAndDuringCooldown() throws Exception {
+            AuditPublisher fallback = mock(AuditPublisher.class);
+            KafkaAuditPublisher withFallback = new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 1, 60_000L, fallback);
+            SettableListenableFuture<SendResult<String, String>> failed = new SettableListenableFuture<>();
+            failed.setException(new RuntimeException("broker down"));
+            when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenReturn(failed);
+            AuditEvent first = event("evt-1");
+            AuditEvent second = event("evt-2");
+
+            withFallback.publish(first);
+            withFallback.publish(second);
+
+            verify(fallback).publish(first);
+            verify(fallback).publish(second);
+            verify(kafkaTemplate, times(1)).send(anyString(), anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("does not touch the fallback when Kafka accepts the event")
+        void noFallbackOnSuccess() throws Exception {
+            AuditPublisher fallback = mock(AuditPublisher.class);
+            KafkaAuditPublisher withFallback = new KafkaAuditPublisher(kafkaTemplate, "audit-topic", 1, 60_000L, fallback);
+            SettableListenableFuture<SendResult<String, String>> ok = new SettableListenableFuture<>();
+            ok.set(null);
+            when(kafkaTemplate.send(anyString(), anyString(), anyString())).thenReturn(ok);
+
+            withFallback.publish(event("evt-3"));
+
+            verify(fallback, never()).publish(any());
+        }
+
+        private AuditEvent event(String id) {
+            return AuditEvent.builder().auditEventId(id).eventId("e-" + id)
+                    .eventType(AuditEventType.MESSAGE_RECEIVED).build();
+        }
     }
 }

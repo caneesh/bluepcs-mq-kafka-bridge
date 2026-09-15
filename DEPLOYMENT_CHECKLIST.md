@@ -593,9 +593,10 @@ CLI/beeline access — set `HIVE_CMD` in `.env`).
 |-----------|---------|---------------------------|
 | 0 | All checks passed | — |
 | 1 | Load gaps (eventIds in sysout) | Alert the consumer-job owner — the bridge already did its part |
-| 2 | Stuck messages (no terminal state) | Alert the bridge owner — look for `*_FAILED` events per eventId |
+| 2 | Stuck messages (no terminal state for longer than the grace period since first receipt) | Alert the bridge owner — look for `*_FAILED` events per eventId |
 | 3 | Quarantined payloads pending review | Review-queue task, not a page |
 | 4 | Query failed (Hive/Kerberos/connectivity) | Investigate the edge node / this job |
+| 5 | No audit evidence for `AUDIT_GAP_SILENCE_MINUTES` (off by default) | Audit outage or idle bridge — check the bridge's `<log>-audit.jsonl` fallback and the monitor; checks 1–3 are not trustworthy |
 
 Highest severity wins: 4 > 2 > 1 > 3.
 
@@ -633,7 +634,7 @@ hive -f audit-hive-consumer/hive/bridge_control_run.ddl     # control store
 |-----------|---------|---------------------------|
 | 0 | All stage balances tie out | — |
 | 1 | FAIL — possible message loss | Page the bridge owner; run the runbook in `docs/AUDIT_BALANCE_CONTROL.md` |
-| 2 | WARN — audit-stream loss or within-tolerance drift | Notify, not page. A negative variance means audit events were dropped, not messages |
+| 2 | WARN — audit-stream loss, within-tolerance drift, or `NO_DATA` (nothing received in the window) | Notify, not page. A negative variance means audit events were dropped, not messages; `NO_DATA` means idle bridge **or** audit outage — confirm with the monitor and the audit fallback file |
 | 3 | Could not evaluate (config/query error, or control write failed) | Investigate this job — the check is broken, not necessarily the data |
 
 Job definition: OS/Command, **cyclic hourly**, edge-node agent, Run As the service
