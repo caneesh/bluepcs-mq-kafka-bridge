@@ -17,9 +17,13 @@ import java.util.List;
 
 /**
  * Maps a message to its landing file in the time-partitioned tree
- * {@code <base-path>/<date>/<HH>/<eventId><ext>}, where {@code HH} is the start hour of
+ * {@code <base-path>/<date>_<HH>/<eventId><ext>}, where {@code HH} is the start hour of
  * the enclosing window (every {@code window-hours} from midnight in {@code window-zone}:
  * 00, 04, 08, 12, 16, 20 for the 4-hour default).
+ *
+ * <p>One directory level per window, named {@code 2026-09-16_04}, rather than a date
+ * directory containing hour directories: the downstream reader takes one window at a time,
+ * and the retention sweep moves and expires whole windows.
  *
  * <p>The anchor instant passed by the caller must be stable across redeliveries (the
  * broker's JMSTimestamp, not the receive time): the writer's idempotency check looks
@@ -30,6 +34,13 @@ import java.util.List;
 public class WindowedPathResolver {
 
     private static final Logger logger = LoggerFactory.getLogger(WindowedPathResolver.class);
+
+    /**
+     * Joins the date and the window's start hour into ONE directory name. Part of the
+     * downstream contract: readers list windows, and scripts/pmm-hdfs-cleanup.sh matches
+     * directories on {@code yyyy-MM-dd_HH}.
+     */
+    private static final String WINDOW_SEPARATOR = "_";
 
     private final String basePath;
     private final String errorPath;
@@ -73,25 +84,25 @@ public class WindowedPathResolver {
         String ext = extension == null ? "" : extension.trim();
         this.extension = ext.isEmpty() || ext.startsWith(".") ? ext : "." + ext;
         this.clock = clock;
-        logger.info("PMM landing tree: {}/<{}>/<HH>/<eventId>{} with {}-hour windows in {}; quarantine {}",
+        logger.info("PMM landing tree: {}/<{}>_<HH>/<eventId>{} with {}-hour windows in {}; quarantine {}",
                 this.basePath, this.dateFormatter.toString().isEmpty() ? datePattern : datePattern,
                 this.extension, windowHours, this.zone, this.errorPath);
     }
 
-    /** Target file for a message anchored at {@code anchor}. */
+    /** Target file for a message anchored at {@code anchor}: {@code <base>/<date>_<HH>/<eventId><ext>}. */
     public String resolve(String eventId, Instant anchor) {
         return windowDir(anchor) + "/" + eventId + extension;
     }
 
-    /** Directory of the window containing {@code anchor}: {@code <base>/<date>/<HH>}. */
+    /** Directory of the window containing {@code anchor}: {@code <base>/<date>_<HH>}. */
     public String windowDir(Instant anchor) {
         return basePath + "/" + windowLabel(anchor);
     }
 
-    /** {@code <date>/<HH>} for audit metadata and logs. */
+    /** {@code <date>_<HH>}: the window's directory name, used in audit metadata and logs. */
     public String windowLabel(Instant anchor) {
         ZonedDateTime start = windowStart(anchor);
-        return dateFormatter.format(start) + "/" + String.format("%02d", start.getHour());
+        return dateFormatter.format(start) + WINDOW_SEPARATOR + String.format("%02d", start.getHour());
     }
 
     /** Quarantine file for a message: {@code <error-path>/<eventId><ext>} (flat, unwindowed). */
@@ -107,7 +118,8 @@ public class WindowedPathResolver {
         List<String> dirs = new ArrayList<>();
         ZonedDateTime cursor = windowStart(clock.instant());
         for (int i = 0; i < Math.max(1, count); i++) {
-            String dir = basePath + "/" + dateFormatter.format(cursor) + "/" + String.format("%02d", cursor.getHour());
+            String dir = basePath + "/" + dateFormatter.format(cursor)
+                    + WINDOW_SEPARATOR + String.format("%02d", cursor.getHour());
             if (!dirs.contains(dir)) {
                 dirs.add(dir);
             }

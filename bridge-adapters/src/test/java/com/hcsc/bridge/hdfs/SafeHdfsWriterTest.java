@@ -49,8 +49,8 @@ class SafeHdfsWriterTest {
         @Test
         @DisplayName("puts the token before any other extension too")
         void xmlTarget() {
-            String temp = writer.buildTempPath("/data/pmm/2026-09-13/08/abc.xml");
-            assertThat(temp).startsWith("/data/pmm/2026-09-13/08/abc.").endsWith(".xml" + TEMP_SUFFIX);
+            String temp = writer.buildTempPath("/data/pmm/2026-09-13_08/abc.xml");
+            assertThat(temp).startsWith("/data/pmm/2026-09-13_08/abc.").endsWith(".xml" + TEMP_SUFFIX);
             assertThat(temp).doesNotContain("..");
         }
 
@@ -84,20 +84,20 @@ class SafeHdfsWriterTest {
         @DisplayName("creates the parent directory, writes a temp file and renames it to the target")
         void happyPath() throws IOException {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            when(hdfsFileOperations.exists("/data/pmm/2026-09-13/08/abc.xml")).thenReturn(false);
+            when(hdfsFileOperations.exists("/data/pmm/2026-09-13_08/abc.xml")).thenReturn(false);
             when(hdfsFileOperations.create(endsWith(".xml" + TEMP_SUFFIX))).thenReturn(out);
             when(hdfsFileOperations.getFileChecksum(anyString())).thenAnswer(inv ->
                     com.hcsc.bridge.core.DigestUtil.sha256Hex(out.toByteArray()));
             when(hdfsFileOperations.rename(anyString(), anyString())).thenReturn(true);
 
-            HdfsWriteResult result = writer.write("/data/pmm/2026-09-13/08/abc.xml", "<r/>", "MSG-1");
+            HdfsWriteResult result = writer.write("/data/pmm/2026-09-13_08/abc.xml", "<r/>", "MSG-1");
 
             assertThat(result.isNewWrite()).isTrue();
-            assertThat(result.getHdfsPath()).isEqualTo("/data/pmm/2026-09-13/08/abc.xml");
+            assertThat(result.getHdfsPath()).isEqualTo("/data/pmm/2026-09-13_08/abc.xml");
             assertThat(result.getBytesWritten()).isEqualTo(4);
-            verify(hdfsFileOperations).mkdirs("/data/pmm/2026-09-13/08");
+            verify(hdfsFileOperations).mkdirs("/data/pmm/2026-09-13_08");
             ArgumentCaptor<String> source = ArgumentCaptor.forClass(String.class);
-            verify(hdfsFileOperations).rename(source.capture(), org.mockito.ArgumentMatchers.eq("/data/pmm/2026-09-13/08/abc.xml"));
+            verify(hdfsFileOperations).rename(source.capture(), org.mockito.ArgumentMatchers.eq("/data/pmm/2026-09-13_08/abc.xml"));
             assertThat(source.getValue()).endsWith(".xml" + TEMP_SUFFIX);
         }
 

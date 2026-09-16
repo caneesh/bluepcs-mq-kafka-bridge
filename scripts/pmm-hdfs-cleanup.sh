@@ -4,13 +4,14 @@
 # =============================================================================
 # The PMM bridge lands one XML file per message under a time-partitioned tree:
 #
-#   <PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>/<HH>/<eventId>.xml      HH = window start hour
+#   <PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>_<HH>/<eventId>.xml      HH = window start hour
 #   <PMM_HDFS_BASE_PATH>/errors/<eventId>.xml                 quarantine (never swept)
 #
-# This sweep works on WHOLE DATE DIRECTORIES, never on individual landing files:
+# One directory per window (2026-09-16_04), and this sweep works on WHOLE WINDOW
+# DIRECTORIES, never on individual landing files:
 #
-#   <base>/<date>            date older than PMM_LANDING_RETENTION_DAYS
-#     └→ <archive>/<date>    date older than PMM_ARCHIVE_RETENTION_DAYS
+#   <base>/<date>_<HH>            window whose DATE is older than PMM_LANDING_RETENTION_DAYS
+#     └→ <archive>/<date>_<HH>    window whose DATE is older than PMM_ARCHIVE_RETENTION_DAYS
 #          └→ deleted
 #
 # and deletes orphaned *.xml.tmp files (crashed safe-writes) older than 1 day
@@ -67,8 +68,8 @@ echo "PMM HDFS Cleanup - $(date '+%Y-%m-%d %H:%M:%S')"
 echo "============================================"
 echo "Landing tree:       ${BASE}"
 echo "Archive tree:       ${ARCHIVE}"
-echo "Landing retention:  ${LANDING_DAYS} days (then archive the date directory)"
-echo "Archive retention:  ${ARCHIVE_DAYS} days (then delete the date directory)"
+echo "Landing retention:  ${LANDING_DAYS} days (then archive the window directory)"
+echo "Archive retention:  ${ARCHIVE_DAYS} days (then delete the window directory)"
 echo "Dry run:            ${DRY_RUN}"
 echo ""
 
@@ -91,8 +92,10 @@ run_or_echo() {
     fi
 }
 
-# Date directories directly under $1 whose name parses as yyyy-MM-dd, emitted as
-# "epoch<TAB>path". A FAILED listing (expired ticket, namenode down, ACL loss) must
+# Window directories directly under $1 whose name is yyyy-MM-dd_HH, emitted as
+# "epoch<TAB>path" where the epoch is midnight of the window's DATE (retention is
+# expressed in days, so every window of a day expires together). errors/ and archive/
+# never match the pattern, which is what keeps them out of the sweep. A FAILED listing (expired ticket, namenode down, ACL loss) must
 # abort the run with the real error: silently treating it as "no date directories"
 # would print "0 archived, 0 deleted ... Done" forever while retention quietly
 # stops. The function runs in a process-substitution subshell, where `exit` cannot
@@ -101,7 +104,7 @@ run_or_echo() {
 LS_ERR_FILE=$(mktemp)
 trap 'rm -f "$LS_ERR_FILE" "${LS_ERR_FILE}.failed"' EXIT
 
-list_date_dirs() {
+list_window_dirs() {
     local listing
     if ! listing=$(hdfs dfs -ls "$1" 2>"$LS_ERR_FILE"); then
         if hdfs dfs -test -d "$1" 2>/dev/null; then
@@ -112,8 +115,11 @@ list_date_dirs() {
     fi
     printf '%s\n' "$listing" | awk '$1 ~ /^d/ {print $NF}' | while read -r path; do
         name="${path##*/}"
-        if [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -u -d "$name" +%s >/dev/null 2>&1; then
-            printf '%s\t%s\n' "$(date -u -d "$name" +%s)" "$path"
+        if [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}$ ]]; then
+            day="${name%_*}"
+            if date -u -d "$day" +%s >/dev/null 2>&1; then
+                printf '%s\t%s\n' "$(date -u -d "$day" +%s)" "$path"
+            fi
         fi
     done
 }
@@ -148,8 +154,8 @@ remove_or_count() {
 
 archived=0; deleted=0; tmp_removed=0
 
-# 1. Landing -> archive: whole date directories older than the landing retention.
-#    Today's and the previous days' windows are never touched, so late arrivals
+# 1. Landing -> archive: whole window directories whose date is older than the landing
+#    retention. Today's and the previous days' windows are never touched, so late arrivals
 #    (a message whose put time falls in a "closed" window) still land in place.
 run_or_echo hdfs dfs -mkdir -p "$ARCHIVE"
 while IFS=$'\t' read -r epoch path; do
@@ -158,23 +164,23 @@ while IFS=$'\t' read -r epoch path; do
         echo "archive: ${path} -> ${ARCHIVE}/"
         if move_or_count "$path" "${ARCHIVE}/"; then archived=$((archived + 1)); fi
     fi
-done < <(list_date_dirs "$BASE")
+done < <(list_window_dirs "$BASE")
 abort_if_listing_failed "$BASE"
 
-# 2. Archive -> delete: date directories older than the archive retention.
+# 2. Archive -> delete: window directories older than the archive retention.
 while IFS=$'\t' read -r epoch path; do
     [ -z "$path" ] && continue
     if [ "$epoch" -lt "$ARCHIVE_CUTOFF" ]; then
         echo "delete: ${path}"
         if remove_or_count -r "$path"; then deleted=$((deleted + 1)); fi
     fi
-done < <(list_date_dirs "$ARCHIVE")
+done < <(list_window_dirs "$ARCHIVE")
 abort_if_listing_failed "$ARCHIVE"
 
-# 3. Orphaned temp files older than TMP_DAYS under the remaining date directories.
-#    Recursive listing is bounded by the retention window (at most LANDING_DAYS
-#    date directories x windows per day). errors/ and archive/ are excluded because
-#    only yyyy-MM-dd directories are walked. hdfs dfs -ls prints the cluster's
+# 3. Orphaned temp files older than TMP_DAYS under the remaining window directories.
+#    Recursive listing is bounded by the retention window (at most LANDING_DAYS x windows
+#    per day directories). errors/ and archive/ are excluded because only yyyy-MM-dd_HH
+#    directories are walked. hdfs dfs -ls prints the cluster's
 #    local date/time; -u keeps the comparison in the same frame as TMP_CUTOFF only
 #    when the cluster runs UTC, so a listing failure here is fatal but a timezone
 #    skew of a few hours on a 1-day threshold is tolerated.
@@ -194,11 +200,11 @@ while IFS=$'\t' read -r epoch path; do
             if remove_or_count "$file"; then tmp_removed=$((tmp_removed + 1)); fi
         fi
     done <<< "$recursive"
-done < <(list_date_dirs "$BASE")
+done < <(list_window_dirs "$BASE")
 abort_if_listing_failed "$BASE"
 
 echo ""
-echo "Done: ${archived} date dir(s) archived, ${deleted} deleted, ${tmp_removed} orphan temp file(s) removed, op_failures=${op_failures}, dry_run=${DRY_RUN}"
+echo "Done: ${archived} window dir(s) archived, ${deleted} deleted, ${tmp_removed} orphan temp file(s) removed, op_failures=${op_failures}, dry_run=${DRY_RUN}"
 if [ "$op_failures" -gt 0 ]; then
     echo "WARNING: ${op_failures} HDFS operation(s) failed — see WARN lines above"
     exit 1

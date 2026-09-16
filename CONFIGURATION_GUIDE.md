@@ -325,7 +325,7 @@ share an edge node with the PMM+ bridge.
 
 Pipeline: MQ (XML) → two XPath values → XML request template → `POST` with the STS
 token in `Authorization` → raw XML response written to
-`<PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>/<HH>/<eventId>.xml` (a new folder every 4 hours,
+`<PMM_HDFS_BASE_PATH>/<yyyy-MM-dd>_<HH>/<eventId>.xml` (a new folder every 4 hours,
 `HH` ∈ 00,04,08,12,16,20 in UTC) → audit events (no Kafka notification).
 
 ### 11.1 Values you MUST set (no defaults in `prod` / `test-env`)
@@ -372,7 +372,7 @@ scripts/pmm-hdfs-cleanup.sh --dry-run                          # retention on wh
 
 Local, no infrastructure: `PMM_LOCAL_SAMPLE_MESSAGE=docs/sample-pmm-message.xml
 BRIDGE_APP=mq-pmm-bridge scripts/run-local.sh` pushes one sample through the pipeline
-and writes `./data/hdfs/pmm/<date>/<HH>/<eventId>.xml`.
+and writes `./data/hdfs/pmm/<date>_<HH>/<eventId>.xml`.
 
 Startup fails fast (like section 1) when a `PMM_*` value is missing, an XPath does not
 compile, the template is missing or contains an unknown or unsafely placed placeholder,

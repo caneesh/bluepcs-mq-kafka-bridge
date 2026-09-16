@@ -853,7 +853,7 @@ The PMM (canonical XML) feed is a second JVM built from this repository. Deploy 
       `MONITOR_HEALTH_URL`); no default exists for the `PMM_*` identity values
 - [ ] Port: `PMM_SERVER_PORT` (default 8081) is free — the PMM+ bridge owns 8080
 - [ ] HDFS: the landing root exists and the service account can create
-      `<root>/<yyyy-MM-dd>/<HH>/` (the bridge `mkdir -p`s per window) and `<root>/errors/`
+      `<root>/<yyyy-MM-dd>_<HH>/` (the bridge `mkdir -p`s per window) and `<root>/errors/`
 - [ ] `BRIDGE_APP=mq-pmm-bridge scripts/validate-only.sh <profile>` passes, including
       `PMM_API_REACHABLE` and `PMM_TEMPLATE`
 - [ ] Safe start, then enable: Steps 8–9 above with `BRIDGE_APP=mq-pmm-bridge` and

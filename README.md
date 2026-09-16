@@ -258,7 +258,7 @@ scripts/test/                    # Hive-to-SQLite harness for the reconciliation
 
 A second bootable application in the same reactor for the BluePCS **PMM** canonical XML
 feed: MQ (XML) → two XPath values → XML request template → `POST` with the STS token →
-raw XML response landed as `<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml` (new folder every
+raw XML response landed as `<base>/<yyyy-MM-dd>_<HH>/<eventId>.xml` (new folder every
 4 hours) → audit only. It runs as its own JVM (port 8081, own `.env`, own systemd unit)
 and reuses the shared modules. See `CONFIGURATION_GUIDE.md` §11 and
 `DEPLOYMENT_CHECKLIST.md` "Second application".

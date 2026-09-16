@@ -56,7 +56,7 @@ bridge:
     # kafka = publish to bridge.kafka.audit-topic; log = JSON lines to the 'audit' logger
     publisher: ${AUDIT_PUBLISHER:kafka}
 
-  # HDFS: base-path is the ROOT of the windowed tree (<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml)
+  # HDFS: base-path is the ROOT of the windowed tree (<base>/<yyyy-MM-dd>_<HH>/<eventId>.xml)
   hdfs:
     base-path: ${PMM_HDFS_BASE_PATH:/data/pmm/payloads}
     # Quarantine dir for unparseable / permanently rejected messages; empty = <base-path>/errors
@@ -125,7 +125,7 @@ bridge:
       content-type: ${PMM_API_CONTENT_TYPE:application/xml}
       accept: ${PMM_API_ACCEPT:application/xml}
     hdfs:
-      # Folder rotation: <base>/<date-pattern>/<HH>/ where HH is the window start hour
+      # Folder rotation: one directory per window, <base>/<date-pattern>_<HH>/, HH = window start hour
       window-hours: ${PMM_WINDOW_HOURS:4}
       window-zone: ${PMM_WINDOW_ZONE:UTC}
       date-pattern: ${PMM_DATE_PATTERN:yyyy-MM-dd}

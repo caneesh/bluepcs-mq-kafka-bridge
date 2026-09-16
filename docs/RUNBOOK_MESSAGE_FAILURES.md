@@ -242,7 +242,7 @@ Everything in sections 1–7 applies to the PMM bridge with these substitutions:
 |---|---|
 | Parse = JSON (`JsonMessageParser`) | Parse = XML + two XPaths (`PmmXmlExtractor`); a DOCTYPE, a non-matching XPath or a blank value is a parse failure |
 | Enrichment GET, `ENRICHMENT_*` audit, quarantine `errorCode=ENRICHMENT_ERROR` | Web-service POST, `API_CALL_*` audit, quarantine `errorCode=API_ERROR` |
-| Landing `<base>/<eventId>.json` (flat) | Landing `<base>/<yyyy-MM-dd>/<HH>/<eventId>.xml`, `HH` = 4-hour window start of the **JMS put time** |
+| Landing `<base>/<eventId>.json` (flat) | Landing `<base>/<yyyy-MM-dd>_<HH>/<eventId>.xml`, `HH` = 4-hour window start of the **JMS put time** |
 | Quarantine `<error-path>/<eventId>.json` | Quarantine `<error-path>/<eventId>.xml` (flat) |
 | Only `TextMessage` accepted | `TextMessage` and `BytesMessage` (charset from `JMS_IBM_Character_Set`, UTF-8 fallback) |
 | Redelivery re-calls the API and relies on identical bytes (§6 wedge) | Redelivery **does not call the API** when the target file already exists (`HDFS_WRITE_SKIPPED`, `reason=target-exists-before-api-call`). The §6 wedge can therefore only occur if the file was replaced by hand. |

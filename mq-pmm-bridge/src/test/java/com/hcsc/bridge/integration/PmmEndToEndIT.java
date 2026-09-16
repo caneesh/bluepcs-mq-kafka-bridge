@@ -91,18 +91,18 @@ class PmmEndToEndIT {
     class HappyPath {
 
         @Test
-        @DisplayName("lands the raw response at <base>/<date>/<HH>/<eventId>.xml and posts the rendered request")
+        @DisplayName("lands the raw response at <base>/<date>_<HH>/<eventId>.xml and posts the rendered request")
         void landsResponse() throws Exception {
             server.enqueue(new MockResponse().setBody(RESPONSE));
 
             ProcessingResult result = orchestrator.process(message("MSG-1", MESSAGE));
 
             String eventId = eventIdGenerator.generateEventId("MSG-1");
-            String expected = BASE + "/2026-09-13/04/" + eventId + ".xml";
+            String expected = BASE + "/2026-09-13_04/" + eventId + ".xml";
             assertThat(result.isSuccessful()).isTrue();
             assertThat(result.getHdfsPath()).isEqualTo(expected);
             assertThat(hdfs.readFile(expected)).isEqualTo(RESPONSE);
-            assertThat(hdfs.listFiles(BASE + "/2026-09-13/04")).hasSize(1);
+            assertThat(hdfs.listFiles(BASE + "/2026-09-13_04")).hasSize(1);
             RecordedRequest request = server.takeRequest();
             assertThat(request.getBody().readUtf8()).isEqualTo("<Req><Id>PRD-9</Id><Date>2026-09-13</Date></Req>");
             assertThat(request.getHeader("Authorization")).isEqualTo("Bearer tok");
@@ -170,7 +170,7 @@ class PmmEndToEndIT {
 
             assertThat(result.isFailed()).isTrue();
             assertThat(result.getErrorCode()).isEqualTo("HDFS_ERROR");
-            assertThat(hdfs.listFiles(BASE + "/2026-09-13/04")).isEmpty();
+            assertThat(hdfs.listFiles(BASE + "/2026-09-13_04")).isEmpty();
         }
     }
 }

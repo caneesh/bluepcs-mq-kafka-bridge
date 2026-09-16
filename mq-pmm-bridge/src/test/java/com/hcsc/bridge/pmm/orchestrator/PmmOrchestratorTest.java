@@ -109,7 +109,7 @@ class PmmOrchestratorTest {
 
             assertThat(result.isSuccessful()).isTrue();
             assertThat(result.getEventId()).isEqualTo(eventIdOf("MSG-1"));
-            assertThat(result.getHdfsPath()).isEqualTo("/data/pmm/2026-09-13/04/" + eventIdOf("MSG-1") + ".xml");
+            assertThat(result.getHdfsPath()).isEqualTo("/data/pmm/2026-09-13_04/" + eventIdOf("MSG-1") + ".xml");
             assertThat(result.getKafkaOffset()).isNull();
             assertThat(eventTypes()).containsExactly(
                     AuditEventType.MESSAGE_RECEIVED, AuditEventType.MESSAGE_PARSED,
@@ -118,7 +118,7 @@ class PmmOrchestratorTest {
             assertThat(audit.getEvents()).allSatisfy(e ->
                     assertThat(e.getMetadata()).containsEntry("pipeline", "pmm"));
             assertThat(audit.getEventsByType(AuditEventType.MESSAGE_RECEIVED).get(0).getMetadata())
-                    .containsEntry("anchorSource", "jmsTimestamp").containsEntry("window", "2026-09-13/04");
+                    .containsEntry("anchorSource", "jmsTimestamp").containsEntry("window", "2026-09-13_04");
             assertThat(audit.getEventsByType(AuditEventType.API_CALL_COMPLETED).get(0).getMetadata())
                     .containsEntry("statusCode", 200).containsEntry("durationMs", 12L);
         }
@@ -130,7 +130,7 @@ class PmmOrchestratorTest {
 
             ProcessingResult result = orchestrator.process(message("MSG-1", null));
 
-            assertThat(result.getHdfsPath()).contains("/2026-09-13/08/");
+            assertThat(result.getHdfsPath()).contains("/2026-09-13_08/");
             assertThat(audit.getEventsByType(AuditEventType.MESSAGE_RECEIVED).get(0).getMetadata())
                     .containsEntry("anchorSource", "receivedAt");
         }

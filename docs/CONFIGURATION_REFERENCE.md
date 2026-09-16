@@ -103,7 +103,7 @@ directory.
 | Variable | Property | What to supply |
 |---|---|---|
 | `PMM_MQ_QUEUE` | `bridge.mq.queue` | The PMM queue name |
-| `PMM_HDFS_BASE_PATH` | `bridge.hdfs.base-path` | Root of the landing tree. Files land at `<root>/<yyyy-MM-dd>/<HH>/<eventId>.xml` |
+| `PMM_HDFS_BASE_PATH` | `bridge.hdfs.base-path` | Root of the landing tree. Files land at `<root>/<yyyy-MM-dd>_<HH>/<eventId>.xml` |
 | `PMM_API_URL` | `bridge.pmm.api.url` | Full URL the request is POSTed to |
 | `PMM_TEMPLATE_LOCATION` | `bridge.pmm.template.location` | `file:/path/to/pmm-request-template.xml`. The large XML request, containing `${value1}` and `${value2}` in element text or quoted attribute values only |
 | `PMM_XPATH_VALUE1` | `bridge.pmm.xpath.value1` | XPath 1.0 selecting the first value. Must match **exactly one** node |
